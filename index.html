@@ -194,6 +194,19 @@
   .modal-confirm { flex: 1; background: #29b6f5; color: #0a0e16; border-radius: 10px; padding: 14px; font-size: 14px; font-weight: 700; }
   .modal-skip { padding: 14px 18px; border-radius: 10px; background: transparent; border: 1px solid #283441; color: #8da2b8; font-size: 13px; font-weight: 600; }
   .modal-danger { flex: 1; background: #f87171; color: #0a0e16; border-radius: 10px; padding: 14px; font-size: 14px; font-weight: 700; }
+
+  /* Login screen */
+  .login-screen { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
+  .login-box { width: 100%; max-width: 360px; }
+  .login-logo { font-size: 36px; text-align: center; margin-bottom: 8px; }
+  .login-heading { font-size: 22px; font-weight: 800; color: #f1f5f9; text-align: center; margin-bottom: 4px; }
+  .login-sub { font-size: 13px; color: #5d748c; text-align: center; margin-bottom: 28px; }
+  .login-label { font-size: 11px; letter-spacing: 0.1em; color: #5d748c; font-weight: 700; text-transform: uppercase; margin-bottom: 6px; }
+  .login-input { width: 100%; background: #141b28; color: #e2e8f0; border: 1px solid #283441; border-radius: 10px; padding: 13px 14px; font-size: 15px; margin-bottom: 16px; outline: none; }
+  .login-input:focus { border-color: #29b6f5; }
+  .login-input.error { border-color: #f87171; }
+  .login-btn { width: 100%; background: #29b6f5; color: #0a0e16; border-radius: 10px; padding: 14px; font-size: 15px; font-weight: 700; margin-top: 4px; }
+  .login-error { font-size: 12px; color: #f87171; text-align: center; margin-top: 12px; font-weight: 600; }
 </style>
 </head>
 <body>
@@ -820,6 +833,12 @@ function viewSettings() {
     list.forEach(a => wrap.appendChild(areaCard(a)));
   });
 
+  // --- Logout ---
+  wrap.appendChild(el(`<div style="margin-top:32px;padding-top:16px;border-top:1px solid #1e2733"></div>`));
+  const logoutBtn = el(`<button class="reset-btn" style="color:#f87171;border-color:#3a1a1a">Sign Out</button>`);
+  logoutBtn.onclick = () => showConfirm('Sign out?', 'You will need to log in again.', () => logout());
+  wrap.appendChild(logoutBtn);
+
   return wrap;
 }
 
@@ -1220,8 +1239,56 @@ function render() {
   app.appendChild(nav);
 }
 
-load();
-render();
+// ============================================================
+// LOGIN
+// ============================================================
+const AUTH_KEY = 'cleaning_app_auth';
+const CREDENTIALS = { username: 'admin', password: 'admin123' };
+
+function isLoggedIn() { return localStorage.getItem(AUTH_KEY) === 'true'; }
+function logout() { localStorage.removeItem(AUTH_KEY); renderLogin(); }
+
+function attemptLogin() {
+  const u = document.getElementById('loginUser').value.trim();
+  const p = document.getElementById('loginPass').value;
+  const errEl = document.getElementById('loginErr');
+  if (u === CREDENTIALS.username && p === CREDENTIALS.password) {
+    localStorage.setItem(AUTH_KEY, 'true');
+    load();
+    render();
+  } else {
+    errEl.textContent = 'Invalid username or password';
+    document.getElementById('loginUser').classList.add('error');
+    document.getElementById('loginPass').classList.add('error');
+  }
+}
+
+function renderLogin() {
+  const app = document.getElementById('app');
+  app.innerHTML = '';
+  const screen = el(`<div class="login-screen"></div>`);
+  const box = el(`<div class="login-box"></div>`);
+  box.appendChild(el(`<div class="login-logo">✦</div>`));
+  box.appendChild(el(`<div class="login-heading">Cleaning Ops</div>`));
+  box.appendChild(el(`<div class="login-sub">Sign in to continue</div>`));
+  box.appendChild(el(`<div class="login-label">Username</div>`));
+  const uIn = el(`<input class="login-input" id="loginUser" type="text" placeholder="Enter username" autocomplete="username" autocapitalize="none" autocorrect="off">`);
+  uIn.addEventListener('focus', () => uIn.classList.remove('error'));
+  box.appendChild(uIn);
+  box.appendChild(el(`<div class="login-label">Password</div>`));
+  const pIn = el(`<input class="login-input" id="loginPass" type="password" placeholder="Enter password" autocomplete="current-password">`);
+  pIn.addEventListener('focus', () => pIn.classList.remove('error'));
+  pIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') attemptLogin(); });
+  box.appendChild(pIn);
+  const btn = el(`<button class="login-btn">Sign In</button>`);
+  btn.onclick = attemptLogin;
+  box.appendChild(btn);
+  box.appendChild(el(`<div class="login-error" id="loginErr"></div>`));
+  screen.appendChild(box);
+  app.appendChild(screen);
+}
+
+if (isLoggedIn()) { load(); render(); } else { renderLogin(); }
 </script>
 </body>
 </html>
