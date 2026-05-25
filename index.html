@@ -362,6 +362,7 @@ let state = {
   editingArea: null,          // id of area being renamed inline
   editingEmp: null,           // id of employee being edited inline
   staff: null,         // populated in load(); persisted employee list
+  teams: null,         // populated in load(); persisted team list
 };
 
 function load() {
@@ -376,8 +377,10 @@ function load() {
   // First run: seed staff from defaults. After that, use saved staff.
   if (!Array.isArray(state.staff)) state.staff = DEFAULT_STAFF.map(p => ({ ...p }));
   if (!Array.isArray(state.areas)) state.areas = DEFAULT_AREAS.map(a => ({ ...a }));
+  if (!Array.isArray(state.teams)) state.teams = DEFAULT_TEAMS.map(t => ({ ...t }));
   if (typeof state.floors !== 'number' || state.floors < 1) state.floors = DEFAULT_FLOORS;
-  STAFF = state.staff; // point the global reference at the live, persisted list
+  STAFF = state.staff;
+  refreshTeamColors();
   STAFF.forEach(p => { if (!state.attendance[p.id]) state.attendance[p.id] = 'present'; });
 }
 function save() { try { localStorage.setItem(STORE, JSON.stringify(state)); } catch (e) {} }
@@ -504,8 +507,37 @@ function toggleServicedDone(id) {
 }
 const servicedDone = (id) => !!state.completions['su:' + id + '::' + todayKey()];
 
+// --- Team actions ---
+const DEFAULT_TEAMS = [
+  { name: 'Team A', color: '#29b6f5' },
+  { name: 'Team B', color: '#34d399' },
+  { name: 'Team C', color: '#a78bfa' },
+  { name: 'Lead',   color: '#d4a72c' },
+];
+const TEAM_PALETTE = ['#29b6f5','#34d399','#a78bfa','#d4a72c','#f87171','#fb923c','#e879f9','#38bdf8','#4ade80','#facc15'];
+function getTeams() { return state.teams || DEFAULT_TEAMS; }
+function teamColor(name) { const t = getTeams().find(t => t.name === name); return t ? t.color : '#5d748c'; }
+function addTeam(name) {
+  if (!name || !name.trim()) return;
+  const teams = getTeams();
+  if (teams.find(t => t.name.toLowerCase() === name.trim().toLowerCase())) return;
+  const usedColors = teams.map(t => t.color);
+  const color = TEAM_PALETTE.find(c => !usedColors.includes(c)) || TEAM_PALETTE[teams.length % TEAM_PALETTE.length];
+  teams.push({ name: name.trim(), color });
+  state.teams = teams;
+  save(); render();
+}
+function removeTeam(name) {
+  const members = STAFF.filter(p => p.crew === name);
+  if (members.length) return;
+  state.teams = getTeams().filter(t => t.name !== name);
+  save(); render();
+}
+
 // --- Employee actions ---
-const TEAM_COLORS = { 'Team A':'#29b6f5', 'Team B':'#34d399', 'Team C':'#a78bfa', 'Lead':'#d4a72c' };
+const TEAM_COLORS = {};
+function refreshTeamColors() { getTeams().forEach(t => { TEAM_COLORS[t.name] = t.color; }); }
+
 function parseFloors(str) {
   const max = state.floors || 11;
   return (str || '').split(/[,\s]+/).map(x => parseInt(x,10)).filter(n => !isNaN(n) && n>=1 && n<=max);
@@ -517,7 +549,7 @@ function addEmployee(name, crew, floorsStr) {
     id: pid,
     name: name.trim(),
     crew: crew || 'Team A',
-    color: TEAM_COLORS[crew] || '#29b6f5',
+    color: teamColor(crew),
     floors: parseFloors(floorsStr),
   });
   state.attendance[pid] = 'present';
@@ -527,7 +559,7 @@ function editEmployee(id, name, crew, floorsStr) {
   const p = state.staff.find(s => s.id === id);
   if (!p) return;
   if (name != null && name.trim()) p.name = name.trim();
-  if (crew) { p.crew = crew; p.color = TEAM_COLORS[crew] || p.color; }
+  if (crew) { p.crew = crew; p.color = teamColor(crew); }
   if (floorsStr != null) p.floors = parseFloors(floorsStr);
   state.editingEmp = null;
   save(); render();
@@ -781,8 +813,32 @@ function viewRollCall() {
 function viewSettings() {
   const wrap = el('<div class="body"></div>');
 
+  // --- Teams ---
+  wrap.appendChild(el(`<div class="section-label">Teams</div>`));
+  const tbox = el(`<div class="addbox"></div>`);
+  const tRow = el(`<div style="display:flex;gap:8px;margin-bottom:10px"></div>`);
+  const tIn = el(`<input id="newTeam" placeholder="New team name" style="flex:1">`);
+  const tBtn = el(`<button class="add-btn" style="flex:0 0 auto;width:auto;padding:12px 18px">+ Add</button>`);
+  tBtn.onclick = () => { const v = document.getElementById('newTeam').value; if (!v.trim()) { document.getElementById('newTeam').focus(); return; } addTeam(v); };
+  tIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') tBtn.onclick(); });
+  tRow.appendChild(tIn); tRow.appendChild(tBtn); tbox.appendChild(tRow);
+  getTeams().forEach(t => {
+    const memberCount = STAFF.filter(p => p.crew === t.name).length;
+    const tr = el(`<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid #1e2733"></div>`);
+    tr.appendChild(el(`<div class="crew-dot" style="background:${t.color}"></div>`));
+    tr.appendChild(el(`<div style="flex:1;font-size:14px;font-weight:600;color:#f1f5f9">${esc(t.name)}</div>`));
+    tr.appendChild(el(`<div style="font-size:11px;color:#5d748c">${memberCount} member${memberCount!==1?'s':''}</div>`));
+    if (memberCount === 0) {
+      const rmBtn = el(`<button class="su-rm">Remove</button>`);
+      rmBtn.onclick = () => removeTeam(t.name);
+      tr.appendChild(rmBtn);
+    }
+    tbox.appendChild(tr);
+  });
+  wrap.appendChild(tbox);
+
   // --- Employees ---
-  wrap.appendChild(el(`<div class="section-label">Employees</div>`));
+  wrap.appendChild(el(`<div class="section-label" style="margin-top:22px">Employees</div>`));
   wrap.appendChild(employeeAddForm());
   employeeGroups(wrap);
 
@@ -1011,13 +1067,14 @@ function employeeAddForm() {
   const form = el(`<div class="addbox"></div>`);
   form.appendChild(el(`<div class="section-label" style="margin:0 0 10px">Add an employee</div>`));
   form.appendChild(el(`<input id="empName" placeholder="Employee name" style="margin-bottom:8px">`));
-  let chosenTeam = 'Team A';
+  const teams = getTeams();
+  let chosenTeam = teams.length ? teams[0].name : 'Team A';
   const teamRow = el(`<div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap"></div>`);
   const teamBtns = {};
-  ['Team A','Team B','Team C','Lead'].forEach(t => {
-    const b = el(`<button class="freqpick ${t==='Team A'?'on':''}" style="flex:1 1 22%">${t}</button>`);
-    b.onclick = () => { chosenTeam = t; Object.values(teamBtns).forEach(x=>x.classList.remove('on')); b.classList.add('on'); };
-    teamBtns[t] = b; teamRow.appendChild(b);
+  teams.forEach((t, i) => {
+    const b = el(`<button class="freqpick ${i===0?'on':''}" style="flex:1 1 22%">${esc(t.name)}</button>`);
+    b.onclick = () => { chosenTeam = t.name; Object.values(teamBtns).forEach(x=>x.classList.remove('on')); b.classList.add('on'); };
+    teamBtns[t.name] = b; teamRow.appendChild(b);
   });
   form.appendChild(teamRow);
   form.appendChild(el(`<input id="empFloors" placeholder="Floors (e.g. 1, 2, 3) — optional" style="margin-bottom:10px">`));
@@ -1043,10 +1100,10 @@ function employeeCard(p) {
     let chosenTeam = p.crew;
     const teamRow = el(`<div style="display:flex;gap:6px;flex-wrap:wrap"></div>`);
     const teamBtns = {};
-    ['Team A','Team B','Team C','Lead'].forEach(t => {
-      const b = el(`<button class="freqpick ${t===p.crew?'on':''}" style="flex:1 1 22%">${t}</button>`);
-      b.onclick = () => { chosenTeam = t; Object.values(teamBtns).forEach(x=>x.classList.remove('on')); b.classList.add('on'); };
-      teamBtns[t] = b; teamRow.appendChild(b);
+    getTeams().forEach(t => {
+      const b = el(`<button class="freqpick ${t.name===p.crew?'on':''}" style="flex:1 1 22%">${esc(t.name)}</button>`);
+      b.onclick = () => { chosenTeam = t.name; Object.values(teamBtns).forEach(x=>x.classList.remove('on')); b.classList.add('on'); };
+      teamBtns[t.name] = b; teamRow.appendChild(b);
     });
     card.appendChild(teamRow);
     const floorsIn = el(`<input id="eeFloors_${p.id}" value="${esc((p.floors||[]).join(', '))}" placeholder="Floors (e.g. 1, 2, 3)">`);
