@@ -207,6 +207,14 @@
   .login-input.error { border-color: #f87171; }
   .login-btn { width: 100%; background: #29b6f5; color: #0a0e16; border-radius: 10px; padding: 14px; font-size: 15px; font-weight: 700; margin-top: 4px; }
   .login-error { font-size: 12px; color: #f87171; text-align: center; margin-top: 12px; font-weight: 600; }
+
+  /* Backup buttons */
+  .backup-btn { width: 100%; border-radius: 10px; padding: 13px; font-size: 13px; font-weight: 700; margin-bottom: 8px; display: flex; align-items: center; justify-content: center; gap: 8px; }
+  .backup-export { background: #141b28; color: #29b6f5; border: 1px solid #1f4a63; }
+  .backup-import { background: #141b28; color: #d4a72c; border: 1px solid #4a3a10; }
+  .backup-msg { font-size: 12px; text-align: center; margin-top: 8px; font-weight: 600; padding: 8px; border-radius: 8px; }
+  .backup-msg.ok { color: #34d399; background: #0f2620; }
+  .backup-msg.err { color: #f87171; background: #2a1515; }
 </style>
 </head>
 <body>
@@ -593,6 +601,49 @@ function setAreaAssign(id, pid) { const a = state.areas.find(x=>x.id===id); if (
 function renameArea(id, label) { const a = state.areas.find(x=>x.id===id); if (a && label.trim()) a.label = label.trim(); state.editingArea=null; save(); render(); }
 function startEditArea(id){ state.editingArea = id; render(); }
 
+// --- Backup actions ---
+function exportBackup() {
+  try {
+    const data = localStorage.getItem(STORE);
+    if (!data) { showBackupMsg('Nothing to export yet.', true); return; }
+    const blob = new Blob([data], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'cleaning-backup-' + todayKey() + '.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showBackupMsg('Backup downloaded successfully.', false);
+  } catch (e) { showBackupMsg('Export failed: ' + e.message, true); }
+}
+function importBackup(file) {
+  if (!file) return;
+  if (!file.name.endsWith('.json')) { showBackupMsg('Please select a .json backup file.', true); return; }
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const parsed = JSON.parse(e.target.result);
+      if (typeof parsed !== 'object' || parsed === null) throw new Error('Invalid backup format');
+      showConfirm('Replace all data?', 'This will overwrite everything on this device with the backup file.', () => {
+        localStorage.setItem(STORE, JSON.stringify(parsed));
+        location.reload();
+      });
+    } catch (err) { showBackupMsg('Invalid file — could not read backup data.', true); }
+  };
+  reader.onerror = () => { showBackupMsg('Could not read the file. Please try again.', true); };
+  reader.readAsText(file);
+}
+function showBackupMsg(msg, isErr) {
+  const el = document.getElementById('backupMsg');
+  if (!el) return;
+  el.textContent = msg;
+  el.className = 'backup-msg ' + (isErr ? 'err' : 'ok');
+  el.style.display = 'block';
+  setTimeout(() => { el.style.display = 'none'; }, 4000);
+}
+
 // --- Floor count action ---
 function setFloors(n) {
   n = parseInt(n, 10);
@@ -888,6 +939,22 @@ function viewSettings() {
     if (!list.length) wrap.appendChild(el(`<div class="empty">None yet.</div>`));
     list.forEach(a => wrap.appendChild(areaCard(a)));
   });
+
+  // --- Backup & Restore ---
+  wrap.appendChild(el(`<div class="section-label" style="margin-top:28px">Backup &amp; Restore</div>`));
+  const bbox = el(`<div class="addbox"></div>`);
+  bbox.appendChild(el(`<div style="font-size:13px;color:#8da2b8;margin-bottom:12px">Export your data to a file, or import a backup from another device.</div>`));
+  const expBtn = el(`<button class="backup-btn backup-export">↓ Export Backup</button>`);
+  expBtn.onclick = () => exportBackup();
+  bbox.appendChild(expBtn);
+  const impBtn = el(`<button class="backup-btn backup-import">↑ Import Backup</button>`);
+  const fileIn = el(`<input type="file" accept=".json" style="display:none" id="backupFileInput">`);
+  fileIn.onchange = (e) => { if (e.target.files[0]) importBackup(e.target.files[0]); e.target.value = ''; };
+  impBtn.onclick = () => fileIn.click();
+  bbox.appendChild(impBtn);
+  bbox.appendChild(fileIn);
+  bbox.appendChild(el(`<div class="backup-msg" id="backupMsg" style="display:none"></div>`));
+  wrap.appendChild(bbox);
 
   // --- Logout ---
   wrap.appendChild(el(`<div style="margin-top:32px;padding-top:16px;border-top:1px solid #1e2733"></div>`));
