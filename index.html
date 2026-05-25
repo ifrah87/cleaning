@@ -1,0 +1,1193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#0d1b2a">
+<title>Cleaning Ops</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    background: #0a0e16;
+    color: #e2e8f0;
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    overscroll-behavior: none;
+  }
+  button { font-family: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+  input { font-family: inherit; font-size: 16px; }
+  ::-webkit-scrollbar { display: none; }
+
+  /* Brand palette
+     navy   #29b6f5   teal #29b6f5   teal-soft #e3f2f4
+     ink    #e2e8f0   slate #8da2b8  line #1e2733
+     green  #34d399   amber #d4a72c  red #f87171
+  */
+
+  #app { min-height: 100vh; padding-bottom: 78px; }
+
+  .header {
+    background: linear-gradient(180deg, #141b28 0%, #0d141f 100%);
+    color: #e2e8f0;
+    padding: 18px 16px 16px;
+    position: sticky; top: 0; z-index: 20;
+    border-bottom: 1px solid #1e2733;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.25);
+  }
+  .h-eyebrow { font-size: 10px; letter-spacing: 0.18em; color: #5d8aa8; font-weight: 600; margin-bottom: 3px; }
+  .h-title { font-size: 21px; font-weight: 800; letter-spacing: -0.01em; color: #f1f5f9; }
+  .h-date { font-size: 11px; color: #8da2b8; margin-top: 3px; font-weight: 500; }
+
+  .stats { display: flex; gap: 8px; margin-top: 14px; }
+  .stat {
+    background: #0d141f; border: 1px solid #1e2733;
+    border-radius: 10px; padding: 8px 12px; flex: 1;
+  }
+  .stat .lbl { font-size: 9px; letter-spacing: 0.12em; color: #5d748c; font-weight: 600; margin-bottom: 1px; }
+  .stat .val { font-size: 19px; font-weight: 800; color: #f1f5f9; }
+
+  .nav {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    background: #141b28; border-top: 1px solid #1e2733;
+    display: flex; z-index: 30;
+    padding-bottom: env(safe-area-inset-bottom, 0);
+    box-shadow: 0 -2px 12px rgba(15,58,95,0.06);
+  }
+  .nav button {
+    flex: 1; padding: 10px 4px 12px; text-align: center;
+    color: #5d748c; font-size: 10px; font-weight: 600;
+    display: flex; flex-direction: column; align-items: center; gap: 3px;
+  }
+  .nav button.active { color: #29b6f5; }
+  .nav .ico { font-size: 19px; line-height: 1; }
+
+  .body { padding: 16px; }
+
+  /* Roll call */
+  .crew-group { margin-bottom: 16px; }
+  .crew-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; padding: 0 2px; }
+  .crew-dot { width: 10px; height: 10px; border-radius: 3px; }
+  .crew-name { font-size: 13px; font-weight: 700; color: #f1f5f9; }
+  .crew-sub { font-size: 11px; color: #5d748c; font-weight: 600; margin-left: auto; }
+
+  .person {
+    background: #141b28; border: 1px solid #1e2733; border-radius: 12px;
+    padding: 13px 14px; margin-bottom: 8px;
+    display: flex; align-items: center; gap: 12px;
+    box-shadow: 0 1px 3px rgba(15,58,95,0.04);
+  }
+  .person-info { flex: 1; min-width: 0; }
+  .person-name { font-size: 15px; font-weight: 600; color: #f1f5f9; }
+  .person-floors { font-size: 12px; color: #8da2b8; margin-top: 1px; }
+  .status-btn {
+    padding: 9px 14px; border-radius: 8px;
+    font-size: 11px; font-weight: 700; letter-spacing: 0.03em;
+    min-width: 96px; text-align: center; color: #141b28;
+  }
+
+  .alert {
+    background: #141b28; border: 1px solid #3a1a1a; border-left: 4px solid #f87171;
+    border-radius: 12px; padding: 14px; margin-bottom: 10px;
+    box-shadow: 0 1px 3px rgba(212,73,63,0.08);
+  }
+  .alert-title { font-size: 12px; color: #f87171; font-weight: 700; }
+  .alert-body { font-size: 13px; color: #f0a8a0; margin-top: 5px; line-height: 1.5; }
+  .cover-suggest {
+    background: #0f2620; border: 1px solid #1c4035; border-radius: 9px;
+    padding: 10px 12px; margin-top: 10px;
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  }
+  .cover-text { font-size: 12px; color: #34d399; flex: 1; }
+  .cover-btn {
+    background: #34d399; color: #141b28; padding: 9px 14px; border-radius: 8px;
+    font-size: 11px; font-weight: 700; white-space: nowrap;
+  }
+
+  .confirm {
+    background: #0f2620; border: 1px solid #1c4035; border-radius: 9px;
+    padding: 10px 12px; margin-bottom: 8px;
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  }
+  .confirm-text { font-size: 12px; color: #34d399; flex: 1; }
+  .undo-btn { font-size: 11px; color: #8da2b8; border: 1px solid #283441; border-radius: 7px; padding: 7px 11px; font-weight: 600; }
+
+  /* Floors */
+  .floor { background: #141b28; border: 1px solid #1e2733; border-radius: 12px; margin-bottom: 9px; overflow: hidden; box-shadow: 0 1px 3px rgba(15,58,95,0.04); }
+  .floor-head { width: 100%; padding: 13px 14px; display: flex; align-items: center; gap: 12px; text-align: left; }
+  .floor-badge {
+    width: 38px; height: 38px; border-radius: 9px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 15px; font-weight: 800; color: #141b28;
+  }
+  .floor-info { flex: 1; min-width: 0; }
+  .floor-name { font-size: 15px; font-weight: 700; color: #f1f5f9; }
+  .floor-sub { font-size: 11px; color: #8da2b8; margin-top: 1px; font-weight: 500; }
+  .floor-prog { width: 48px; height: 6px; border-radius: 3px; background: #1e2733; position: relative; flex-shrink: 0; overflow: hidden; }
+  .floor-prog > div { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; }
+  .chev { color: #5d748c; font-size: 12px; width: 14px; text-align: center; }
+
+  .unit-grid { padding: 4px 14px 14px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .unit { background: #10161f; border: 1px solid #1e2733; border-radius: 10px; padding: 11px 8px; display: flex; flex-direction: column; gap: 8px; align-items: center; }
+  .unit.done { background: #0f2620; border-color: #1c4035; }
+  .unit-num { font-size: 15px; font-weight: 800; color: #f1f5f9; }
+  .unit.done .unit-num { color: #34d399; }
+  .unit-mark { width: 100%; padding: 7px; border-radius: 7px; font-size: 11px; font-weight: 700; color: #141b28; background: #29b6f5; }
+  .unit.done .unit-mark { background: #34d399; }
+
+  /* Zones */
+  .zone { background: #141b28; border: 1px solid #1e2733; border-radius: 12px; padding: 13px 14px; margin-bottom: 8px; display: flex; align-items: center; gap: 12px; box-shadow: 0 1px 3px rgba(15,58,95,0.04); }
+  .zone.done { background: #0f2620; border-color: #1c4035; }
+  .zone-info { flex: 1; min-width: 0; }
+  .zone-freq { font-size: 10px; letter-spacing: 0.08em; font-weight: 700; }
+  .zone-name { font-size: 14px; font-weight: 600; color: #f1f5f9; margin-top: 2px; }
+  .zone.done .zone-name { color: #34d399; }
+  .zone-mark { padding: 9px 16px; border-radius: 8px; font-size: 11px; font-weight: 700; color: #141b28; background: #29b6f5; white-space: nowrap; }
+  .zone.done .zone-mark { background: #34d399; }
+
+  .section-label { font-size: 11px; letter-spacing: 0.1em; color: #5d748c; font-weight: 700; margin: 2px 0 12px; text-transform: uppercase; }
+  .note { font-size: 13px; color: #8da2b8; line-height: 1.55; margin-bottom: 14px; }
+  .reset-btn { width: 100%; background: #141b28; color: #8da2b8; border: 1px solid #283441; border-radius: 10px; padding: 11px; font-size: 12px; font-weight: 600; margin-bottom: 14px; }
+  .owner-tag { font-size: 9px; letter-spacing: 0.04em; padding: 4px 9px; border-radius: 6px; font-weight: 700; color: #141b28; }
+  .footer { padding: 18px 16px 8px; font-size: 11px; color: #aab8c6; text-align: center; font-weight: 500; }
+  .hint { font-size: 11px; color: #aab8c6; text-align: center; margin-top: 6px; font-weight: 500; }
+
+  /* Serviced units */
+  .addbox { background: #141b28; border: 1px solid #1e2733; border-radius: 12px; padding: 14px; margin-bottom: 8px; }
+  .addbox input { width: 100%; background: #0a0e16; color: #e2e8f0; border: 1px solid #283441; border-radius: 8px; padding: 11px; }
+  .addbox input::placeholder { color: #5d748c; }
+  .freqpick { flex: 1; padding: 9px 4px; border-radius: 8px; font-size: 11px; font-weight: 600; color: #8da2b8; background: #0a0e16; border: 1px solid #283441; }
+  .freqpick.on { color: #0a0e16; background: #29b6f5; border-color: #29b6f5; }
+  .add-btn { width: 100%; background: #29b6f5; color: #0a0e16; border-radius: 9px; padding: 12px; font-size: 13px; font-weight: 700; }
+  .su-card { background: #141b28; border: 1px solid #1e2733; border-radius: 12px; padding: 13px 14px; margin-bottom: 8px; }
+  .su-card.done { background: #0f2620; border-color: #1c4035; }
+  .su-top { display: flex; align-items: center; gap: 12px; }
+  .su-unit { font-size: 16px; font-weight: 700; color: #f1f5f9; }
+  .su-guest { font-size: 12px; color: #8da2b8; margin-top: 1px; }
+  .su-mark { padding: 9px 14px; border-radius: 8px; font-size: 12px; font-weight: 700; color: #0a0e16; background: #29b6f5; white-space: nowrap; }
+  .su-card.done .su-mark { background: #34d399; }
+  .su-next { font-size: 11px; color: #8da2b8; font-weight: 600; padding: 6px 10px; border: 1px solid #283441; border-radius: 7px; white-space: nowrap; }
+  .su-ctl { display: flex; gap: 6px; margin-top: 11px; padding-top: 11px; border-top: 1px solid #1e2733; }
+  .freqmini { flex: 1; padding: 7px 4px; border-radius: 7px; font-size: 10px; font-weight: 600; color: #8da2b8; background: #0a0e16; border: 1px solid #283441; }
+  .freqmini.on { color: #0a0e16; background: #8da2b8; border-color: #8da2b8; }
+  .su-rm { padding: 7px 12px; border-radius: 7px; font-size: 10px; font-weight: 600; color: #f87171; background: transparent; border: 1px solid #3a1a1a; }
+  .su-edit { padding: 7px 12px; border-radius: 7px; font-size: 10px; font-weight: 600; color: #29b6f5; background: transparent; border: 1px solid #1f4a63; }
+  .area-select { width: 100%; background: #0a0e16; color: #e2e8f0; border: 1px solid #283441; border-radius: 8px; padding: 10px; font-size: 13px; }
+  .su-card input { width: 100%; background: #0a0e16; color: #e2e8f0; border: 1px solid #283441; border-radius: 8px; padding: 11px; }
+  .su-card input::placeholder { color: #5d748c; }
+  .su-assign { font-size: 11px; font-weight: 600; margin-top: 3px; }
+  .su-card.needs-cover { border-color: #f87171; }
+
+  /* Cover confirmation popup */
+  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: flex; align-items: flex-end; justify-content: center; z-index: 100; padding: 16px; }
+  .modal { background: #141b28; border: 1px solid #283441; border-radius: 16px 16px 0 0; width: 100%; max-width: 480px; padding: 20px 18px calc(20px + env(safe-area-inset-bottom,0)); }
+  .modal-title { font-size: 18px; font-weight: 800; color: #f1f5f9; }
+  .modal-sub { font-size: 13px; color: #8da2b8; margin-top: 6px; line-height: 1.5; }
+  .modal-label { font-size: 11px; letter-spacing: 0.1em; color: #5d748c; font-weight: 700; text-transform: uppercase; margin: 16px 0 8px; }
+  .cover-picker { display: flex; flex-direction: column; gap: 6px; max-height: 220px; overflow-y: auto; }
+  .cover-opt { display: flex; justify-content: space-between; align-items: center; padding: 13px 14px; border-radius: 10px; background: #0d141f; border: 1px solid #283441; color: #e2e8f0; font-size: 14px; font-weight: 600; }
+  .cover-opt.on { border-color: #29b6f5; background: #0f2433; }
+  .cover-load { font-size: 11px; color: #8da2b8; font-weight: 500; }
+  .modal-btns { display: flex; gap: 8px; margin-top: 16px; }
+  .modal-confirm { flex: 1; background: #29b6f5; color: #0a0e16; border-radius: 10px; padding: 14px; font-size: 14px; font-weight: 700; }
+  .modal-skip { padding: 14px 18px; border-radius: 10px; background: transparent; border: 1px solid #283441; color: #8da2b8; font-size: 13px; font-weight: 600; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script>
+// ============================================================
+// DATA MODEL — Edit STAFF to match your real team (one-time).
+// ============================================================
+const DEFAULT_STAFF = [
+  { id: 'p1', name: 'Sofia Reyes',   crew: 'Team A', color: '#29b6f5', floors: [1, 2] },
+  { id: 'p2', name: 'Daniel Chen',   crew: 'Team A', color: '#29b6f5', floors: [3, 4] },
+  { id: 'p3', name: 'Priya Shah',    crew: 'Team B', color: '#29b6f5', floors: [5, 6] },
+  { id: 'p4', name: 'Jamal Brooks',  crew: 'Team B', color: '#29b6f5', floors: [7, 8] },
+  { id: 'p5', name: 'Elena Volkov',  crew: 'Team C', color: '#a78bfa', floors: [9, 10, 11] },
+  { id: 'p6', name: 'Marcus Hill',   crew: 'Lead',   color: '#c2410c', floors: [], special: ['ground', 'rooftop'] },
+];
+// STAFF is a live reference into state.staff (set in load()). Using a getter
+// so all existing code that reads STAFF keeps working unchanged.
+let STAFF = DEFAULT_STAFF;
+
+const DEFAULT_AREAS = [
+  // Interior — ground/common
+  { id: 'lobby', label: 'Main Lobby', freq: 'daily', kind: 'interior', assignedTo: null },
+  { id: 'mail', label: 'Mail Room', freq: 'daily', kind: 'interior', assignedTo: null },
+  { id: 'gym', label: 'Fitness Room', freq: 'daily', kind: 'interior', assignedTo: null },
+  { id: 'laundry', label: 'Laundry Room', freq: 'daily', kind: 'interior', assignedTo: null },
+  { id: 'trash', label: 'Trash / Recycling', freq: 'daily', kind: 'interior', assignedTo: null },
+  { id: 'elevator', label: 'Elevators / Lifts', freq: 'daily', kind: 'interior', assignedTo: null },
+  { id: 'stairs', label: 'Stairwells', freq: 'weekly', kind: 'interior', assignedTo: null },
+  { id: 'corridors', label: 'Corridors', freq: 'daily', kind: 'interior', assignedTo: null },
+  { id: 'windowsint', label: 'Interior Windows', freq: 'monthly', kind: 'interior', assignedTo: null },
+  // Exterior
+  { id: 'entrance', label: 'Entrance & Walkway', freq: 'daily', kind: 'exterior', assignedTo: null },
+  { id: 'dumpster', label: 'Dumpster / Bin Store', freq: 'daily', kind: 'exterior', assignedTo: null },
+  { id: 'sidewalks', label: 'Sidewalks', freq: 'weekly', kind: 'exterior', assignedTo: null },
+  { id: 'landscape', label: 'Landscaping Edges', freq: 'weekly', kind: 'exterior', assignedTo: null },
+  { id: 'windowsext', label: 'Exterior Windows', freq: 'monthly', kind: 'exterior', assignedTo: null },
+  { id: 'rooftopcheck', label: 'Rooftop Check', freq: 'weekly', kind: 'exterior', assignedTo: null },
+];
+const DEFAULT_FLOORS = 11;
+
+const FREQ = {
+  daily:   { label: 'DAILY', tint: '#29b6f5' },
+  weekly:  { label: 'WEEKLY', tint: '#d4a72c' },
+  monthly: { label: 'MONTHLY', tint: '#a78bfa' },
+};
+const STATUS = {
+  present: { label: 'PRESENT', color: '#34d399' },
+  late:    { label: 'LATE', color: '#d4a72c' },
+  noshow:  { label: 'NO-SHOW', color: '#f87171' },
+  off:     { label: 'OFF', color: '#5d748c' },
+};
+const STATUS_ORDER = ['present', 'late', 'noshow', 'off'];
+
+// Areas live in state (editable). Helpers to read them:
+function areasInterior() { return (state.areas || []).filter(a => a.kind === 'interior'); }
+function areasExterior() { return (state.areas || []).filter(a => a.kind === 'exterior'); }
+function buildUnits() {
+  const u = [];
+  const floors = (state && state.floors) ? state.floors : DEFAULT_FLOORS;
+  for (let f = 1; f <= floors; f++)
+    for (let n = 1; n <= 6; n++)
+      u.push({ id: 'u' + (f * 100 + n), num: f * 100 + n, floor: f });
+  return u;
+}
+
+// ============================================================
+// STATE
+// ============================================================
+const STORE = 'cleaning_app_v5';
+const todayKey = () => new Date().toISOString().slice(0, 10);
+const weekKey = () => { const d=new Date(),o=new Date(d.getFullYear(),0,1); return d.getFullYear()+'-W'+Math.ceil(((d-o)/864e5+o.getDay()+1)/7); };
+const monthKey = () => new Date().toISOString().slice(0,7);
+const freqKey = f => f==='daily'?todayKey():f==='weekly'?weekKey():f==='monthly'?monthKey():'perm';
+
+// Days difference between an ISO date and today (whole days)
+const daysSince = (iso) => {
+  const a = new Date(iso + 'T00:00:00');
+  const b = new Date(todayKey() + 'T00:00:00');
+  return Math.round((b - a) / 864e5);
+};
+
+// Is a serviced unit due for cleaning today?
+function unitDueToday(u) {
+  if (u.freq === 'nightly') return true;
+  if (u.freq === 'daily') return true;
+  if (u.freq === 'eod') { const d = daysSince(u.startDate); return d >= 0 && d % 2 === 0; }
+  if (u.freq === 'weekly') {
+    const start = new Date(u.startDate + 'T00:00:00');
+    return start.getDay() === new Date().getDay();
+  }
+  return false;
+}
+const FREQ_LABEL = { nightly: 'Nightly', daily: 'Daily', eod: 'Every other day', weekly: 'Weekly' };
+
+// Infer floor from unit number: 906->9, 1106->11, 506->5
+function floorOfUnit(unitStr) {
+  const n = parseInt(String(unitStr).replace(/\D/g, ''), 10);
+  if (isNaN(n)) return null;
+  return Math.floor(n / 100) || null;
+}
+function ownerOfFloor(floor) {
+  if (floor == null) return null;
+  return STAFF.find(p => (p.floors || []).includes(floor)) || null;
+}
+// Who cleans this unit today: override > confirmed cover > floor owner
+function cleanerForUnit(u) {
+  if (u.assignedTo) { const p = STAFF.find(s => s.id === u.assignedTo); if (p) return { person: p, reason: 'override' }; }
+  if (state.unitCover && state.unitCover[u.id]) { const p = STAFF.find(s => s.id === state.unitCover[u.id]); if (p) return { person: p, reason: 'cover' }; }
+  const owner = ownerOfFloor(floorOfUnit(u.unit));
+  if (owner) return { person: owner, reason: state.attendance[owner.id] === 'noshow' ? 'owner-absent' : 'owner' };
+  return null;
+}
+// Count today's units per present person (for lightest-load suggestion)
+function unitLoads() {
+  const load = {};
+  STAFF.forEach(p => { if (state.attendance[p.id] !== 'noshow') load[p.id] = 0; });
+  state.servicedUnits.forEach(u => {
+    const c = cleanerForUnit(u);
+    if (c && c.reason !== 'owner-absent' && load[c.person.id] != null) load[c.person.id]++;
+  });
+  return load;
+}
+// Suggest lightest-loaded present person (excluding the absent owner)
+function suggestCoverPerson(excludeId) {
+  const load = unitLoads();
+  const cands = Object.keys(load).filter(pid => pid !== excludeId);
+  if (!cands.length) return null;
+  cands.sort((a, b) => load[a] - load[b]);
+  return STAFF.find(p => p.id === cands[0]) || null;
+}
+// Units a given person owns (via their floors) that are serviced
+function unitsOwnedBy(personId) {
+  const p = STAFF.find(s => s.id === personId);
+  if (!p) return [];
+  return state.servicedUnits.filter(u => (p.floors || []).includes(floorOfUnit(u.unit)) && !u.assignedTo);
+}
+
+let state = {
+  tab: 'cleaning',
+  attendance: {},
+  completions: {},
+  coverage: {},
+  coverageDay: todayKey(),
+  expandedFloors: {},
+  servicedUnits: [],   // [{id, unit, guest, freq, startDate, assignedTo?}]
+  unitCover: {},       // confirmed cover today: unitId -> personId
+  pendingCover: null,  // {absentId, suggestId} -> drives the confirm popup
+  editingUnit: null,   // id of unit currently being edited inline
+  floors: DEFAULT_FLOORS,     // editable number of residential floors
+  areas: null,                // editable cleanable areas (seeded in load)
+  editingArea: null,          // id of area being renamed inline
+  editingEmp: null,           // id of employee being edited inline
+  staff: null,         // populated in load(); persisted employee list
+};
+
+function load() {
+  try {
+    const raw = localStorage.getItem(STORE);
+    if (raw) {
+      const saved = JSON.parse(raw);
+      state = { ...state, ...saved, tab: 'cleaning' };
+      if (state.coverageDay !== todayKey()) { state.coverage = {}; state.unitCover = {}; state.pendingCover = null; state.coverageDay = todayKey(); }
+    }
+  } catch (e) {}
+  // First run: seed staff from defaults. After that, use saved staff.
+  if (!Array.isArray(state.staff)) state.staff = DEFAULT_STAFF.map(p => ({ ...p }));
+  if (!Array.isArray(state.areas)) state.areas = DEFAULT_AREAS.map(a => ({ ...a }));
+  if (typeof state.floors !== 'number' || state.floors < 1) state.floors = DEFAULT_FLOORS;
+  STAFF = state.staff; // point the global reference at the live, persisted list
+  STAFF.forEach(p => { if (!state.attendance[p.id]) state.attendance[p.id] = 'present'; });
+}
+function save() { try { localStorage.setItem(STORE, JSON.stringify(state)); } catch (e) {} }
+
+// ============================================================
+// LOGIC
+// ============================================================
+function personFloors(p) {
+  const parts = [];
+  if (p.floors && p.floors.length) parts.push('Floors ' + p.floors.join(', '));
+  if (p.special) parts.push(p.special.map(s => s==='ground'?'Ground':'Rooftop').join(' + '));
+  return parts.join(' · ') || 'No assignment';
+}
+function gaps() {
+  const out = [];
+  STAFF.forEach(p => {
+    if (state.attendance[p.id] === 'noshow' && p.floors && p.floors.length) {
+      p.floors.forEach(f => { if (!state.coverage[f]) out.push({ person: p, floor: f }); });
+    }
+  });
+  return out;
+}
+function suggestCover(floor) {
+  const candidates = STAFF.filter(p =>
+    (state.attendance[p.id]==='present' || state.attendance[p.id]==='late') && p.floors && p.floors.length);
+  if (!candidates.length) return null;
+  const load = {};
+  candidates.forEach(p => load[p.id] = (p.floors||[]).length);
+  Object.values(state.coverage).forEach(pid => { if (load[pid]!=null) load[pid]++; });
+  candidates.sort((a,b) => load[a.id]-load[b.id]);
+  return candidates[0];
+}
+function whoCleansFloor(floor) {
+  if (state.coverage[floor]) {
+    const c = STAFF.find(p => p.id===state.coverage[floor]);
+    if (c) return { person: c, covering: true };
+  }
+  const owner = STAFF.find(p => (p.floors||[]).includes(floor));
+  return owner ? { person: owner, covering: false } : null;
+}
+
+// ============================================================
+// ACTIONS
+// ============================================================
+function cycleStatus(pid) {
+  const cur = state.attendance[pid] || 'present';
+  const next = STATUS_ORDER[(STATUS_ORDER.indexOf(cur)+1) % STATUS_ORDER.length];
+  state.attendance[pid] = next;
+
+  if (next === 'noshow') {
+    // Does this person own any serviced units (via their floors)?
+    const affected = unitsOwnedBy(pid);
+    if (affected.length) {
+      const sug = suggestCoverPerson(pid);
+      state.pendingCover = { absentId: pid, suggestId: sug ? sug.id : null };
+    }
+  } else {
+    // Back to present/late/off — release any cover they were given and clear pending
+    if (state.unitCover) {
+      Object.keys(state.unitCover).forEach(uid => {
+        const u = state.servicedUnits.find(x => x.id === uid);
+        if (u && ownerOfFloor(floorOfUnit(u.unit))?.id === pid) delete state.unitCover[uid];
+      });
+    }
+    if (state.pendingCover && state.pendingCover.absentId === pid) state.pendingCover = null;
+  }
+  save(); render();
+}
+// Apply the confirmed cover: all the absent person's units -> chosen covererer
+function confirmCover(coverId) {
+  const pc = state.pendingCover;
+  if (!pc) return;
+  if (!state.unitCover) state.unitCover = {};
+  unitsOwnedBy(pc.absentId).forEach(u => { state.unitCover[u.id] = coverId; });
+  state.coverageDay = todayKey();
+  state.pendingCover = null;
+  save(); render();
+}
+function dismissCover() { state.pendingCover = null; save(); render(); }
+function assignCover(floor, pid) { state.coverage[floor]=pid; state.coverageDay=todayKey(); save(); render(); }
+function toggleUnit(uid) { const k=uid+'::perm'; if(state.completions[k])delete state.completions[k];else state.completions[k]=true; save(); render(); }
+function toggleZone(zid, freq) { const k=zid+'::'+freqKey(freq); if(state.completions[k])delete state.completions[k];else state.completions[k]=true; save(); render(); }
+function toggleFloorExpand(fid) { state.expandedFloors[fid]=!state.expandedFloors[fid]; save(); render(); }
+function setTab(t) { state.tab=t; save(); render(); }
+function resetCompletions() { if(confirm('Reset all completion checkmarks? Attendance and assignments are kept.')){ state.completions={}; save(); render(); } }
+
+// --- Serviced unit actions ---
+function addServicedUnit(unit, guest, freq) {
+  if (!unit) return;
+  state.servicedUnits.push({
+    id: 'su' + Date.now(),
+    unit: unit.trim(),
+    guest: (guest||'').trim(),
+    freq: freq || 'daily',
+    startDate: todayKey(),
+  });
+  save(); render();
+}
+function removeServicedUnit(id) {
+  if (!confirm('Remove this unit from cleaning service?')) return;
+  state.servicedUnits = state.servicedUnits.filter(u => u.id !== id);
+  save(); render();
+}
+function setUnitFreq(id, freq) {
+  const u = state.servicedUnits.find(x => x.id === id);
+  if (u) { u.freq = freq; u.startDate = todayKey(); } // reset cycle anchor to today
+  save(); render();
+}
+function editServicedUnit(id, newUnit, newGuest) {
+  const u = state.servicedUnits.find(x => x.id === id);
+  if (!u) return;
+  if (newUnit != null && newUnit.trim()) u.unit = newUnit.trim();
+  u.guest = (newGuest || '').trim();   // allow clearing the name too
+  if (state.editingUnit === id) state.editingUnit = null;
+  save(); render();
+}
+function startEditUnit(id) { state.editingUnit = id; render(); }
+function cancelEditUnit() { state.editingUnit = null; render(); }
+function toggleServicedDone(id) {
+  const k = 'su:' + id + '::' + todayKey();
+  if (state.completions[k]) delete state.completions[k]; else state.completions[k] = true;
+  save(); render();
+}
+const servicedDone = (id) => !!state.completions['su:' + id + '::' + todayKey()];
+
+// --- Employee actions ---
+const TEAM_COLORS = { 'Team A':'#29b6f5', 'Team B':'#34d399', 'Team C':'#a78bfa', 'Lead':'#d4a72c' };
+function parseFloors(str) {
+  const max = state.floors || 11;
+  return (str || '').split(/[,\s]+/).map(x => parseInt(x,10)).filter(n => !isNaN(n) && n>=1 && n<=max);
+}
+function addEmployee(name, crew, floorsStr) {
+  if (!name || !name.trim()) return;
+  const pid = 'p' + Date.now();
+  state.staff.push({
+    id: pid,
+    name: name.trim(),
+    crew: crew || 'Team A',
+    color: TEAM_COLORS[crew] || '#29b6f5',
+    floors: parseFloors(floorsStr),
+  });
+  state.attendance[pid] = 'present';
+  save(); render();
+}
+function editEmployee(id, name, crew, floorsStr) {
+  const p = state.staff.find(s => s.id === id);
+  if (!p) return;
+  if (name != null && name.trim()) p.name = name.trim();
+  if (crew) { p.crew = crew; p.color = TEAM_COLORS[crew] || p.color; }
+  if (floorsStr != null) p.floors = parseFloors(floorsStr);
+  state.editingEmp = null;
+  save(); render();
+}
+function startEditEmp(id) { state.editingEmp = id; render(); }
+function cancelEditEmp() { state.editingEmp = null; render(); }
+function removeEmployee(id) {
+  if (!confirm('Remove this employee?')) return;
+  state.staff = state.staff.filter(p => p.id !== id);
+  STAFF = state.staff;
+  delete state.attendance[id];
+  save(); render();
+}
+
+// --- Area actions ---
+function addArea(label, kind, freq) {
+  if (!label || !label.trim()) return;
+  state.areas.push({ id: 'a' + Date.now(), label: label.trim(), kind: kind||'interior', freq: freq||'daily', assignedTo: null });
+  save(); render();
+}
+function removeArea(id) {
+  if (!confirm('Remove this area?')) return;
+  state.areas = state.areas.filter(a => a.id !== id);
+  save(); render();
+}
+function setAreaFreq(id, freq) { const a = state.areas.find(x=>x.id===id); if (a) a.freq = freq; save(); render(); }
+function setAreaKind(id, kind) { const a = state.areas.find(x=>x.id===id); if (a) a.kind = kind; save(); render(); }
+function setAreaAssign(id, pid) { const a = state.areas.find(x=>x.id===id); if (a) a.assignedTo = pid || null; save(); render(); }
+function renameArea(id, label) { const a = state.areas.find(x=>x.id===id); if (a && label.trim()) a.label = label.trim(); state.editingArea=null; save(); render(); }
+function startEditArea(id){ state.editingArea = id; render(); }
+
+// --- Floor count action ---
+function setFloors(n) {
+  n = parseInt(n, 10);
+  if (isNaN(n) || n < 1 || n > 99) return;
+  state.floors = n;
+  save(); render();
+}
+
+// ============================================================
+// HELPERS
+// ============================================================
+const el = (html) => { const d=document.createElement('div'); d.innerHTML=html.trim(); return d.firstChild; };
+const esc = (s) => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+function statsBar() {
+  const recurring = state.areas || [];
+  const done = recurring.filter(z => state.completions[z.id+'::'+freqKey(z.freq)]).length;
+  const unitsDone = buildUnits().filter(u => state.completions[u.id+'::perm']).length;
+  const present = STAFF.filter(p => state.attendance[p.id]==='present').length;
+  const late = STAFF.filter(p => state.attendance[p.id]==='late').length;
+  const noshow = STAFF.filter(p => state.attendance[p.id]==='noshow').length;
+  return { done, total: recurring.length, unitsDone, present, late, noshow, onShift: present+late, crew: STAFF.length };
+}
+
+// ============================================================
+// VIEWS
+// ============================================================
+function viewCleaning() {
+  const wrap = el('<div class="body"></div>');
+
+  // Add-unit form
+  const form = el(`<div class="addbox"></div>`);
+  form.appendChild(el(`<div class="section-label" style="margin:0 0 10px">Add a unit to clean</div>`));
+  const rowU = el(`<div style="display:flex;gap:6px;margin-bottom:8px"></div>`);
+  const inU = el(`<input id="newUnit" placeholder="Unit (e.g. 906)" style="flex:1;min-width:0">`);
+  const inG = el(`<input id="newGuest" placeholder="Guest name (optional)" style="flex:1.4;min-width:0">`);
+  rowU.appendChild(inU); rowU.appendChild(inG); form.appendChild(rowU);
+
+  const freqRow = el(`<div style="display:flex;gap:6px;margin-bottom:10px"></div>`);
+  let chosenFreq = 'daily';
+  const freqBtns = {};
+  ['nightly','daily','eod','weekly'].forEach(fk => {
+    const b = el(`<button class="freqpick ${fk==='daily'?'on':''}" data-f="${fk}">${FREQ_LABEL[fk]}</button>`);
+    b.onclick = () => { chosenFreq = fk; Object.values(freqBtns).forEach(x=>x.classList.remove('on')); b.classList.add('on'); };
+    freqBtns[fk] = b; freqRow.appendChild(b);
+  });
+  form.appendChild(freqRow);
+
+  const addBtn = el(`<button class="add-btn">+ Add unit</button>`);
+  addBtn.onclick = () => {
+    const u = document.getElementById('newUnit').value;
+    const g = document.getElementById('newGuest').value;
+    if (!u.trim()) { document.getElementById('newUnit').focus(); return; }
+    addServicedUnit(u, g, chosenFreq);
+  };
+  form.appendChild(addBtn);
+  wrap.appendChild(form);
+
+  const units = state.servicedUnits;
+  if (!units.length) {
+    wrap.appendChild(el(`<div class="empty" style="text-align:center;padding:30px 0">No units added yet. Add your first cleaning unit above.</div>`));
+    return wrap;
+  }
+
+  const due = units.filter(unitDueToday);
+  const notDue = units.filter(u => !unitDueToday(u));
+
+  // DUE TODAY section
+  wrap.appendChild(el(`<div class="section-label" style="color:#29b6f5;margin-top:18px">Due today (${due.length})</div>`));
+  if (!due.length) wrap.appendChild(el(`<div class="empty">Nothing scheduled for today.</div>`));
+  due.forEach(u => wrap.appendChild(servicedCard(u, true)));
+
+  // NOT DUE / all others
+  if (notDue.length) {
+    wrap.appendChild(el(`<div class="section-label" style="margin-top:20px">Not due today (${notDue.length})</div>`));
+    notDue.forEach(u => wrap.appendChild(servicedCard(u, false)));
+  }
+  return wrap;
+}
+
+function servicedCard(u, isDue) {
+  const done = servicedDone(u.id);
+  const c = cleanerForUnit(u);
+  const pendingAbsent = c && c.reason === 'owner-absent';
+  const editing = state.editingUnit === u.id;
+  const card = el(`<div class="su-card ${done?'done':''} ${pendingAbsent?'needs-cover':''}"></div>`);
+
+  // --- EDIT MODE ---
+  if (editing) {
+    card.appendChild(el(`<div class="section-label" style="margin:0 0 8px">Edit unit</div>`));
+    const eU = el(`<input id="edUnit_${u.id}" value="${esc(u.unit)}" placeholder="Unit number" style="margin-bottom:8px">`);
+    const eG = el(`<input id="edGuest_${u.id}" value="${esc(u.guest||'')}" placeholder="Guest / customer name" style="margin-bottom:10px">`);
+    card.appendChild(eU); card.appendChild(eG);
+    const row = el(`<div style="display:flex;gap:8px"></div>`);
+    const saveB = el(`<button class="add-btn" style="flex:1">Save</button>`);
+    saveB.onclick = () => editServicedUnit(u.id, document.getElementById('edUnit_'+u.id).value, document.getElementById('edGuest_'+u.id).value);
+    const cancelB = el(`<button class="modal-skip">Cancel</button>`);
+    cancelB.onclick = () => cancelEditUnit();
+    row.appendChild(saveB); row.appendChild(cancelB);
+    card.appendChild(row);
+    return card;
+  }
+
+  const top = el(`<div class="su-top"></div>`);
+  const info = el(`<div style="flex:1;min-width:0"></div>`);
+  info.appendChild(el(`<div class="su-unit">Unit ${esc(u.unit)}</div>`));
+  if (u.guest) info.appendChild(el(`<div class="su-guest">${esc(u.guest)}</div>`));
+
+  // Assigned cleaner line
+  if (c) {
+    const fname = c.person.name.split(' ')[0];
+    if (pendingAbsent) {
+      info.appendChild(el(`<div class="su-assign" style="color:#f87171">⚠ ${esc(fname)} absent — needs cover</div>`));
+    } else if (c.reason === 'cover') {
+      info.appendChild(el(`<div class="su-assign" style="color:#34d399">↪ Covered by ${esc(fname)}</div>`));
+    } else if (c.reason === 'override') {
+      info.appendChild(el(`<div class="su-assign" style="color:#8da2b8">Assigned: ${esc(fname)}</div>`));
+    } else {
+      info.appendChild(el(`<div class="su-assign" style="color:#8da2b8">${esc(fname)} (Floor ${floorOfUnit(u.unit)})</div>`));
+    }
+  } else {
+    info.appendChild(el(`<div class="su-assign" style="color:#5d748c">No cleaner assigned to Floor ${floorOfUnit(u.unit)||'?'}</div>`));
+  }
+  top.appendChild(info);
+
+  if (isDue) {
+    const mark = el(`<button class="su-mark">${done?'✓ Cleaned':'Mark clean'}</button>`);
+    mark.onclick = () => toggleServicedDone(u.id);
+    top.appendChild(mark);
+  } else {
+    top.appendChild(el(`<div class="su-next">${FREQ_LABEL[u.freq]}</div>`));
+  }
+  card.appendChild(top);
+
+  // frequency selector + edit + remove
+  const ctl = el(`<div class="su-ctl"></div>`);
+  ['nightly','daily','eod','weekly'].forEach(fk => {
+    const b = el(`<button class="freqmini ${u.freq===fk?'on':''}">${FREQ_LABEL[fk]}</button>`);
+    b.onclick = () => setUnitFreq(u.id, fk);
+    ctl.appendChild(b);
+  });
+  const edit = el(`<button class="su-edit">Edit</button>`);
+  edit.onclick = () => startEditUnit(u.id);
+  ctl.appendChild(edit);
+  const rm = el(`<button class="su-rm">Remove</button>`);
+  rm.onclick = () => removeServicedUnit(u.id);
+  ctl.appendChild(rm);
+  card.appendChild(ctl);
+
+  return card;
+}
+
+function viewRollCall() {
+  const s = statsBar();
+  const wrap = el('<div></div>');
+  const body = el('<div class="body"></div>');
+
+  const g = gaps();
+  if (g.length) {
+    g.forEach(({person, floor}) => {
+      const sug = suggestCover(floor);
+      const alert = el(`<div class="alert"></div>`);
+      alert.appendChild(el(`<div class="alert-title">⚠ ${esc(person.name.split(' ')[0])} out — Floor ${floor} uncovered</div>`));
+      if (sug) {
+        const row = el(`<div class="cover-suggest"></div>`);
+        row.appendChild(el(`<div class="cover-text">Cover with <b>${esc(sug.name.split(' ')[0])}</b> — lightest load today</div>`));
+        const btn = el(`<button class="cover-btn">Assign →</button>`);
+        btn.onclick = () => assignCover(floor, sug.id);
+        row.appendChild(btn); alert.appendChild(row);
+      } else {
+        alert.appendChild(el(`<div class="alert-body">No one available to cover. Adjust attendance or handle manually.</div>`));
+      }
+      body.appendChild(alert);
+    });
+  }
+
+  Object.entries(state.coverage).forEach(([floor, pid]) => {
+    const c = STAFF.find(p => p.id===pid);
+    if (c) {
+      const ok = el(`<div class="confirm"></div>`);
+      ok.appendChild(el(`<div class="confirm-text">✓ Floor ${floor} covered by <b>${esc(c.name.split(' ')[0])}</b> today</div>`));
+      const undo = el(`<button class="undo-btn">Undo</button>`);
+      undo.onclick = () => { delete state.coverage[floor]; save(); render(); };
+      ok.appendChild(undo); body.appendChild(ok);
+    }
+  });
+
+  const crews = [...new Set(STAFF.map(p => p.crew))];
+  crews.forEach(crewName => {
+    const members = STAFF.filter(p => p.crew===crewName);
+    const color = members[0].color;
+    const group = el(`<div class="crew-group"></div>`);
+    const head = el(`<div class="crew-head"></div>`);
+    head.appendChild(el(`<div class="crew-dot" style="background:${color}"></div>`));
+    head.appendChild(el(`<div class="crew-name">${esc(crewName)}</div>`));
+    const present = members.filter(m => ['present','late'].includes(state.attendance[m.id])).length;
+    head.appendChild(el(`<div class="crew-sub">${present}/${members.length} in</div>`));
+    group.appendChild(head);
+    members.forEach(p => {
+      const st = STATUS[state.attendance[p.id] || 'present'];
+      const row = el(`<div class="person"></div>`);
+      const info = el(`<div class="person-info"></div>`);
+      info.appendChild(el(`<div class="person-name">${esc(p.name)}</div>`));
+      info.appendChild(el(`<div class="person-floors">${esc(personFloors(p))}</div>`));
+      row.appendChild(info);
+      const btn = el(`<button class="status-btn" style="background:${st.color}">${st.label}</button>`);
+      btn.onclick = () => cycleStatus(p.id);
+      row.appendChild(btn); group.appendChild(row);
+    });
+    body.appendChild(group);
+  });
+
+  body.appendChild(el(`<div class="hint">Tap a status to cycle · Present → Late → No-show → Off</div>`));
+  wrap.appendChild(body);
+  return wrap;
+}
+
+function viewSettings() {
+  const wrap = el('<div class="body"></div>');
+
+  // --- Employees ---
+  wrap.appendChild(el(`<div class="section-label">Employees</div>`));
+  wrap.appendChild(employeeAddForm());
+  employeeGroups(wrap);
+
+  // --- Floors ---
+  wrap.appendChild(el(`<div class="section-label" style="margin-top:22px">Building · floors</div>`));
+  const fbox = el(`<div class="addbox"></div>`);
+  fbox.appendChild(el(`<div style="font-size:13px;color:#8da2b8;margin-bottom:8px">Number of residential floors (6 units each)</div>`));
+  const frow = el(`<div style="display:flex;gap:8px;align-items:center"></div>`);
+  const fIn = el(`<input id="floorCount" type="number" min="1" max="99" value="${state.floors}" style="flex:1">`);
+  const fBtn = el(`<button class="add-btn" style="flex:0 0 auto;width:auto;padding:12px 18px">Set</button>`);
+  fBtn.onclick = () => setFloors(document.getElementById('floorCount').value);
+  frow.appendChild(fIn); frow.appendChild(fBtn); fbox.appendChild(frow);
+  fbox.appendChild(el(`<div style="font-size:11px;color:#5d748c;margin-top:8px">Currently ${state.floors} floors · ${state.floors*6} units</div>`));
+  wrap.appendChild(fbox);
+
+  // --- Add area ---
+  wrap.appendChild(el(`<div class="section-label" style="margin-top:20px">Add a cleaning area</div>`));
+  const abox = el(`<div class="addbox"></div>`);
+  const aName = el(`<input id="newArea" placeholder="Area name (e.g. Lift lobby, Bin store)" style="margin-bottom:8px">`);
+  abox.appendChild(aName);
+  let aKind = 'interior', aFreq = 'daily';
+  const kindRow = el(`<div style="display:flex;gap:6px;margin-bottom:8px"></div>`);
+  const kindBtns = {};
+  [['interior','Interior'],['exterior','Exterior']].forEach(([k,lbl]) => {
+    const b = el(`<button class="freqpick ${k==='interior'?'on':''}">${lbl}</button>`);
+    b.onclick = () => { aKind=k; Object.values(kindBtns).forEach(x=>x.classList.remove('on')); b.classList.add('on'); };
+    kindBtns[k]=b; kindRow.appendChild(b);
+  });
+  abox.appendChild(kindRow);
+  const freqRow = el(`<div style="display:flex;gap:6px;margin-bottom:10px"></div>`);
+  const freqBtns = {};
+  ['daily','weekly','monthly'].forEach(fk => {
+    const b = el(`<button class="freqpick ${fk==='daily'?'on':''}">${FREQ[fk].label}</button>`);
+    b.onclick = () => { aFreq=fk; Object.values(freqBtns).forEach(x=>x.classList.remove('on')); b.classList.add('on'); };
+    freqBtns[fk]=b; freqRow.appendChild(b);
+  });
+  abox.appendChild(freqRow);
+  const aBtn = el(`<button class="add-btn">+ Add area</button>`);
+  aBtn.onclick = () => { const v=document.getElementById('newArea').value; if(!v.trim()){document.getElementById('newArea').focus();return;} addArea(v, aKind, aFreq); };
+  abox.appendChild(aBtn);
+  wrap.appendChild(abox);
+
+  // --- Existing areas (interior then exterior) ---
+  [['interior','Interior areas'],['exterior','Exterior areas']].forEach(([kind,title]) => {
+    const list = state.areas.filter(a => a.kind===kind);
+    wrap.appendChild(el(`<div class="section-label" style="margin-top:20px">${title} (${list.length})</div>`));
+    if (!list.length) wrap.appendChild(el(`<div class="empty">None yet.</div>`));
+    list.forEach(a => wrap.appendChild(areaCard(a)));
+  });
+
+  return wrap;
+}
+
+function areaCard(a) {
+  const editing = state.editingArea === a.id;
+  const card = el(`<div class="su-card"></div>`);
+
+  if (editing) {
+    const inp = el(`<input id="edArea_${a.id}" value="${esc(a.label)}" style="margin-bottom:10px">`);
+    card.appendChild(inp);
+    const row = el(`<div style="display:flex;gap:8px"></div>`);
+    const sv = el(`<button class="add-btn" style="flex:1">Save</button>`);
+    sv.onclick = () => renameArea(a.id, document.getElementById('edArea_'+a.id).value);
+    const cn = el(`<button class="modal-skip">Cancel</button>`);
+    cn.onclick = () => { state.editingArea=null; render(); };
+    row.appendChild(sv); row.appendChild(cn); card.appendChild(row);
+    return card;
+  }
+
+  const top = el(`<div class="su-top"></div>`);
+  const info = el(`<div style="flex:1;min-width:0"></div>`);
+  info.appendChild(el(`<div class="su-unit" style="font-size:15px">${esc(a.label)}</div>`));
+  const assigned = a.assignedTo ? STAFF.find(p=>p.id===a.assignedTo) : null;
+  info.appendChild(el(`<div class="su-assign" style="color:#8da2b8">${FREQ[a.freq].label} · ${assigned ? esc(assigned.name.split(' ')[0]) : 'Unassigned'}</div>`));
+  top.appendChild(info);
+  card.appendChild(top);
+
+  // freq row
+  const fctl = el(`<div class="su-ctl" style="border-top:none;padding-top:8px;margin-top:4px"></div>`);
+  ['daily','weekly','monthly'].forEach(fk => {
+    const b = el(`<button class="freqmini ${a.freq===fk?'on':''}">${FREQ[fk].label}</button>`);
+    b.onclick = () => setAreaFreq(a.id, fk);
+    fctl.appendChild(b);
+  });
+  card.appendChild(fctl);
+
+  // assignment dropdown
+  const assignRow = el(`<div style="display:flex;gap:6px;margin-top:8px;align-items:center"></div>`);
+  const sel = el(`<select class="area-select"></select>`);
+  sel.appendChild(el(`<option value="">Unassigned</option>`));
+  STAFF.forEach(p => {
+    const o = el(`<option value="${p.id}">${esc(p.name)}</option>`);
+    if (a.assignedTo===p.id) o.setAttribute('selected','');
+    sel.appendChild(o);
+  });
+  sel.onchange = (e) => setAreaAssign(a.id, e.target.value);
+  assignRow.appendChild(sel);
+  card.appendChild(assignRow);
+
+  // edit + remove
+  const ctl = el(`<div class="su-ctl"></div>`);
+  const kindToggle = el(`<button class="freqmini ${a.kind==='exterior'?'on':''}" style="flex:0 0 auto;padding:7px 12px">${a.kind==='interior'?'→ Make exterior':'→ Make interior'}</button>`);
+  kindToggle.onclick = () => setAreaKind(a.id, a.kind==='interior'?'exterior':'interior');
+  ctl.appendChild(kindToggle);
+  const ed = el(`<button class="su-edit">Rename</button>`);
+  ed.onclick = () => startEditArea(a.id);
+  ctl.appendChild(ed);
+  const rm = el(`<button class="su-rm">Remove</button>`);
+  rm.onclick = () => removeArea(a.id);
+  ctl.appendChild(rm);
+  card.appendChild(ctl);
+
+  return card;
+}
+
+function viewBuilding() {
+  const wrap = el('<div class="body"></div>');
+  wrap.appendChild(el(`<div class="section-label">Building · top to bottom</div>`));
+  const reset = el(`<button class="reset-btn">Reset completions</button>`);
+  reset.onclick = resetCompletions; wrap.appendChild(reset);
+  wrap.appendChild(floorCommon('rooftop', 'Rooftop', areasExterior(), '⛰'));
+  for (let f=state.floors; f>=1; f--) wrap.appendChild(floorResidential(f));
+  wrap.appendChild(floorCommon('ground', 'Ground Floor', areasInterior(), '⌂'));
+  return wrap;
+}
+
+function floorResidential(f) {
+  const units = buildUnits().filter(u => u.floor===f);
+  const doneCount = units.filter(u => state.completions[u.id+'::perm']).length;
+  const who = whoCleansFloor(f);
+  const color = who ? who.person.color : '#5d748c';
+  const fid = 'floor-'+f;
+  const open = state.expandedFloors[fid];
+  const card = el(`<div class="floor"></div>`);
+  const head = el(`<button class="floor-head"></button>`);
+  head.appendChild(el(`<div class="floor-badge" style="background:${color}">${f}</div>`));
+  const info = el(`<div class="floor-info"></div>`);
+  info.appendChild(el(`<div class="floor-name">Floor ${f}</div>`));
+  let sub = `${doneCount}/6 units · `;
+  sub += who ? esc(who.person.name.split(' ')[0]) + (who.covering?' (cover)':'') : 'Unassigned';
+  info.appendChild(el(`<div class="floor-sub">${sub}</div>`));
+  head.appendChild(info);
+  const prog = el(`<div class="floor-prog"></div>`);
+  prog.appendChild(el(`<div style="width:${(doneCount/6)*100}%;background:${doneCount===6?'#34d399':'#d4a72c'}"></div>`));
+  head.appendChild(prog);
+  head.appendChild(el(`<div class="chev">${open?'▲':'▼'}</div>`));
+  head.onclick = () => toggleFloorExpand(fid);
+  card.appendChild(head);
+  if (open) {
+    const grid = el(`<div class="unit-grid"></div>`);
+    units.forEach(u => {
+      const done = !!state.completions[u.id+'::perm'];
+      const unit = el(`<div class="unit ${done?'done':''}"></div>`);
+      unit.appendChild(el(`<div class="unit-num">${u.num}</div>`));
+      const mark = el(`<button class="unit-mark">${done?'✓ Done':'Mark'}</button>`);
+      mark.onclick = (e) => { e.stopPropagation(); toggleUnit(u.id); };
+      unit.appendChild(mark); grid.appendChild(unit);
+    });
+    card.appendChild(grid);
+  }
+  return card;
+}
+
+function floorCommon(id, label, zones, icon) {
+  const doneCount = zones.filter(z => state.completions[z.id+'::'+freqKey(z.freq)]).length;
+  const open = state.expandedFloors[id];
+  const card = el(`<div class="floor"></div>`);
+  const head = el(`<button class="floor-head"></button>`);
+  head.appendChild(el(`<div class="floor-badge" style="background:#eef2f6;color:#5e7488;font-size:18px">${icon}</div>`));
+  const info = el(`<div class="floor-info"></div>`);
+  info.appendChild(el(`<div class="floor-name">${esc(label)}</div>`));
+  info.appendChild(el(`<div class="floor-sub">${doneCount}/${zones.length} zones complete</div>`));
+  head.appendChild(info);
+  const prog = el(`<div class="floor-prog"></div>`);
+  prog.appendChild(el(`<div style="width:${(doneCount/zones.length)*100}%;background:${doneCount===zones.length?'#34d399':'#d4a72c'}"></div>`));
+  head.appendChild(prog);
+  head.appendChild(el(`<div class="chev">${open?'▲':'▼'}</div>`));
+  head.onclick = () => toggleFloorExpand(id);
+  card.appendChild(head);
+  if (open) {
+    const list = el(`<div style="padding:4px 14px 14px"></div>`);
+    zones.forEach(z => {
+      const done = !!state.completions[z.id+'::'+freqKey(z.freq)];
+      const fr = FREQ[z.freq];
+      const row = el(`<div class="zone ${done?'done':''}"></div>`);
+      const zinfo = el(`<div class="zone-info"></div>`);
+      zinfo.appendChild(el(`<div class="zone-freq" style="color:${fr.tint}">${fr.label}</div>`));
+      zinfo.appendChild(el(`<div class="zone-name">${esc(z.label)}</div>`));
+      row.appendChild(zinfo);
+      const mark = el(`<button class="zone-mark">${done?'✓':'Mark'}</button>`);
+      mark.onclick = (e) => { e.stopPropagation(); toggleZone(z.id, z.freq); };
+      row.appendChild(mark); list.appendChild(row);
+    });
+    card.appendChild(list);
+  }
+  return card;
+}
+
+function viewExterior() {
+  const wrap = el('<div class="body"></div>');
+  wrap.appendChild(el(`<div class="section-label">Exterior / grounds</div>`));
+  areasExterior().forEach(z => {
+    const done = !!state.completions[z.id+'::'+freqKey(z.freq)];
+    const fr = FREQ[z.freq];
+    const row = el(`<div class="zone ${done?'done':''}"></div>`);
+    const zinfo = el(`<div class="zone-info"></div>`);
+    zinfo.appendChild(el(`<div class="zone-freq" style="color:${fr.tint}">${fr.label}</div>`));
+    zinfo.appendChild(el(`<div class="zone-name">${esc(z.label)}</div>`));
+    if (z.assignedTo) { const p = STAFF.find(s=>s.id===z.assignedTo); if (p) zinfo.appendChild(el(`<div class="su-assign" style="color:#8da2b8">${esc(p.name.split(' ')[0])}</div>`)); }
+    row.appendChild(zinfo);
+    const mark = el(`<button class="zone-mark">${done?'✓ Done':'Mark'}</button>`);
+    mark.onclick = () => toggleZone(z.id, z.freq);
+    row.appendChild(mark); wrap.appendChild(row);
+  });
+  return wrap;
+}
+
+// Shared add-employee form (used in Team tab and Settings)
+function employeeAddForm() {
+  const form = el(`<div class="addbox"></div>`);
+  form.appendChild(el(`<div class="section-label" style="margin:0 0 10px">Add an employee</div>`));
+  form.appendChild(el(`<input id="empName" placeholder="Employee name" style="margin-bottom:8px">`));
+  let chosenTeam = 'Team A';
+  const teamRow = el(`<div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap"></div>`);
+  const teamBtns = {};
+  ['Team A','Team B','Team C','Lead'].forEach(t => {
+    const b = el(`<button class="freqpick ${t==='Team A'?'on':''}" style="flex:1 1 22%">${t}</button>`);
+    b.onclick = () => { chosenTeam = t; Object.values(teamBtns).forEach(x=>x.classList.remove('on')); b.classList.add('on'); };
+    teamBtns[t] = b; teamRow.appendChild(b);
+  });
+  form.appendChild(teamRow);
+  form.appendChild(el(`<input id="empFloors" placeholder="Floors (e.g. 1, 2, 3) — optional" style="margin-bottom:10px">`));
+  const addBtn = el(`<button class="add-btn">+ Add employee</button>`);
+  addBtn.onclick = () => {
+    const n = document.getElementById('empName').value;
+    const f = document.getElementById('empFloors').value;
+    if (!n.trim()) { document.getElementById('empName').focus(); return; }
+    addEmployee(n, chosenTeam, f);
+  };
+  form.appendChild(addBtn);
+  return form;
+}
+
+// Shared editable employee card
+function employeeCard(p) {
+  const editing = state.editingEmp === p.id;
+  const card = el(`<div class="person" style="flex-direction:column;align-items:stretch;gap:10px"></div>`);
+
+  if (editing) {
+    const nameIn = el(`<input id="eeName_${p.id}" value="${esc(p.name)}" placeholder="Name">`);
+    card.appendChild(nameIn);
+    let chosenTeam = p.crew;
+    const teamRow = el(`<div style="display:flex;gap:6px;flex-wrap:wrap"></div>`);
+    const teamBtns = {};
+    ['Team A','Team B','Team C','Lead'].forEach(t => {
+      const b = el(`<button class="freqpick ${t===p.crew?'on':''}" style="flex:1 1 22%">${t}</button>`);
+      b.onclick = () => { chosenTeam = t; Object.values(teamBtns).forEach(x=>x.classList.remove('on')); b.classList.add('on'); };
+      teamBtns[t] = b; teamRow.appendChild(b);
+    });
+    card.appendChild(teamRow);
+    const floorsIn = el(`<input id="eeFloors_${p.id}" value="${esc((p.floors||[]).join(', '))}" placeholder="Floors (e.g. 1, 2, 3)">`);
+    card.appendChild(floorsIn);
+    const row = el(`<div style="display:flex;gap:8px"></div>`);
+    const sv = el(`<button class="add-btn" style="flex:1">Save</button>`);
+    sv.onclick = () => editEmployee(p.id, document.getElementById('eeName_'+p.id).value, chosenTeam, document.getElementById('eeFloors_'+p.id).value);
+    const cn = el(`<button class="modal-skip">Cancel</button>`);
+    cn.onclick = () => cancelEditEmp();
+    row.appendChild(sv); row.appendChild(cn);
+    card.appendChild(row);
+    return card;
+  }
+
+  const top = el(`<div style="display:flex;align-items:center;gap:10px"></div>`);
+  const info = el(`<div class="person-info"></div>`);
+  info.appendChild(el(`<div class="person-name">${esc(p.name)}</div>`));
+  info.appendChild(el(`<div class="person-floors">${esc(personFloors(p))}</div>`));
+  top.appendChild(info);
+  card.appendChild(top);
+
+  const ctl = el(`<div class="su-ctl" style="border-top:none;padding-top:0;margin-top:0"></div>`);
+  const ed = el(`<button class="su-edit">Edit</button>`);
+  ed.onclick = () => startEditEmp(p.id);
+  const rm = el(`<button class="su-rm">Remove</button>`);
+  rm.onclick = () => removeEmployee(p.id);
+  ctl.appendChild(ed); ctl.appendChild(rm);
+  card.appendChild(ctl);
+  return card;
+}
+
+// Render staff grouped by team, using editable cards
+function employeeGroups(wrap) {
+  if (!STAFF.length) {
+    wrap.appendChild(el(`<div class="empty" style="text-align:center;padding:24px 0">No employees yet. Add your first above.</div>`));
+    return;
+  }
+  const crews = [...new Set(STAFF.map(p => p.crew))];
+  crews.forEach(crewName => {
+    const members = STAFF.filter(p => p.crew===crewName);
+    const color = members[0].color;
+    const group = el(`<div class="crew-group"></div>`);
+    const head = el(`<div class="crew-head"></div>`);
+    head.appendChild(el(`<div class="crew-dot" style="background:${color}"></div>`));
+    head.appendChild(el(`<div class="crew-name">${esc(crewName)}</div>`));
+    head.appendChild(el(`<div class="crew-sub">${members.length}</div>`));
+    group.appendChild(head);
+    members.forEach(p => group.appendChild(employeeCard(p)));
+    wrap.appendChild(group);
+  });
+}
+
+function viewTeam() {
+  const wrap = el('<div class="body"></div>');
+  wrap.appendChild(employeeAddForm());
+  employeeGroups(wrap);
+  return wrap;
+}
+
+// ============================================================
+// MAIN RENDER
+// ============================================================
+function render() {
+  const app = document.getElementById('app');
+  app.innerHTML = '';
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'});
+  const s = statsBar();
+
+  const header = el(`<div class="header"></div>`);
+  header.appendChild(el(`<div class="h-eyebrow">66-UNIT BUILDING · 11 FLOORS</div>`));
+  const titles = { cleaning:'Unit Cleaning', rollcall:'Morning Roll Call', building:'Building', exterior:'Exterior', team:'Team', settings:'Settings' };
+  header.appendChild(el(`<div class="h-title">${titles[state.tab]}</div>`));
+  header.appendChild(el(`<div class="h-date">${dateStr}</div>`));
+  if (state.tab === 'cleaning') {
+    const dueCount = state.servicedUnits.filter(unitDueToday).length;
+    const doneCount = state.servicedUnits.filter(u => unitDueToday(u) && servicedDone(u.id)).length;
+    const strip = el(`<div class="stats"></div>`);
+    strip.appendChild(el(`<div class="stat"><div class="lbl">DUE TODAY</div><div class="val">${dueCount}</div></div>`));
+    strip.appendChild(el(`<div class="stat"><div class="lbl">CLEANED</div><div class="val">${doneCount}</div></div>`));
+    strip.appendChild(el(`<div class="stat"><div class="lbl">SERVICED</div><div class="val">${state.servicedUnits.length}</div></div>`));
+    header.appendChild(strip);
+  }
+  if (state.tab === 'rollcall') {
+    const strip = el(`<div class="stats"></div>`);
+    strip.appendChild(el(`<div class="stat"><div class="lbl">ON SHIFT</div><div class="val">${s.onShift}/${s.crew}</div></div>`));
+    strip.appendChild(el(`<div class="stat"><div class="lbl">NO-SHOW</div><div class="val">${s.noshow}</div></div>`));
+    strip.appendChild(el(`<div class="stat"><div class="lbl">AREAS</div><div class="val">${s.done}/${s.total}</div></div>`));
+    header.appendChild(strip);
+  }
+  app.appendChild(header);
+
+  if (state.tab==='cleaning') app.appendChild(viewCleaning());
+  else if (state.tab==='rollcall') app.appendChild(viewRollCall());
+  else if (state.tab==='building') app.appendChild(viewBuilding());
+  else if (state.tab==='exterior') app.appendChild(viewExterior());
+  else if (state.tab==='team') app.appendChild(viewTeam());
+  else if (state.tab==='settings') app.appendChild(viewSettings());
+
+  app.appendChild(el(`<div class="footer">Changes save on this device · Daily tasks reset each day</div>`));
+
+  // --- Cover confirmation popup ---
+  if (state.pendingCover) {
+    const pc = state.pendingCover;
+    const absent = STAFF.find(p => p.id === pc.absentId);
+    const affected = unitsOwnedBy(pc.absentId);
+    if (absent && affected.length) {
+      const overlay = el(`<div class="modal-overlay"></div>`);
+      const modal = el(`<div class="modal"></div>`);
+      modal.appendChild(el(`<div class="modal-title">${esc(absent.name.split(' ')[0])} is absent</div>`));
+      const unitList = affected.map(u => 'Unit ' + esc(u.unit)).join(', ');
+      modal.appendChild(el(`<div class="modal-sub">${affected.length} unit${affected.length>1?'s':''} need cover: ${unitList}</div>`));
+
+      // chosen coverer (default = suggestion), selectable
+      let chosen = pc.suggestId;
+      modal.appendChild(el(`<div class="modal-label">Assign cover to:</div>`));
+      const picker = el(`<div class="cover-picker"></div>`);
+      const present = STAFF.filter(p => p.id !== pc.absentId && state.attendance[p.id] !== 'noshow');
+      const loads = unitLoads();
+      if (!present.length) {
+        modal.appendChild(el(`<div class="modal-sub" style="color:#f87171">No one else is present to cover.</div>`));
+      }
+      present
+        .sort((a,b) => (loads[a.id]||0)-(loads[b.id]||0))
+        .forEach(p => {
+          const isSug = p.id === pc.suggestId;
+          const btn = el(`<button class="cover-opt ${p.id===chosen?'on':''}">${esc(p.name.split(' ')[0])}<span class="cover-load">${loads[p.id]||0} units${isSug?' · lightest':''}</span></button>`);
+          btn.onclick = () => { chosen = p.id; picker.querySelectorAll('.cover-opt').forEach(x=>x.classList.remove('on')); btn.classList.add('on'); };
+          picker.appendChild(btn);
+        });
+      modal.appendChild(picker);
+
+      const btnRow = el(`<div class="modal-btns"></div>`);
+      const confirmB = el(`<button class="modal-confirm">Confirm cover</button>`);
+      confirmB.onclick = () => { if (chosen) confirmCover(chosen); else dismissCover(); };
+      const skipB = el(`<button class="modal-skip">Skip for now</button>`);
+      skipB.onclick = () => dismissCover();
+      if (present.length) btnRow.appendChild(confirmB);
+      btnRow.appendChild(skipB);
+      modal.appendChild(btnRow);
+
+      overlay.appendChild(modal);
+      app.appendChild(overlay);
+    }
+  }
+
+  const nav = el(`<div class="nav"></div>`);
+  const tabs = [
+    { id:'cleaning', label:'Cleaning', ico:'✦' },
+    { id:'rollcall', label:'Roll Call', ico:'☀' },
+    { id:'building', label:'Building', ico:'▦' },
+    { id:'team', label:'Team', ico:'☰' },
+    { id:'settings', label:'Settings', ico:'⚙' },
+  ];
+  tabs.forEach(t => {
+    const b = el(`<button class="${state.tab===t.id?'active':''}"><div class="ico">${t.ico}</div><div>${t.label}</div></button>`);
+    b.onclick = () => setTab(t.id);
+    nav.appendChild(b);
+  });
+  app.appendChild(nav);
+}
+
+load();
+render();
+</script>
+</body>
+</html>
