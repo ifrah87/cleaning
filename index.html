@@ -193,6 +193,7 @@
   .modal-btns { display: flex; gap: 8px; margin-top: 16px; }
   .modal-confirm { flex: 1; background: #29b6f5; color: #0a0e16; border-radius: 10px; padding: 14px; font-size: 14px; font-weight: 700; }
   .modal-skip { padding: 14px 18px; border-radius: 10px; background: transparent; border: 1px solid #283441; color: #8da2b8; font-size: 13px; font-weight: 600; }
+  .modal-danger { flex: 1; background: #f87171; color: #0a0e16; border-radius: 10px; padding: 14px; font-size: 14px; font-weight: 700; }
 </style>
 </head>
 <body>
@@ -448,7 +449,7 @@ function toggleUnit(uid) { const k=uid+'::perm'; if(state.completions[k])delete 
 function toggleZone(zid, freq) { const k=zid+'::'+freqKey(freq); if(state.completions[k])delete state.completions[k];else state.completions[k]=true; save(); render(); }
 function toggleFloorExpand(fid) { state.expandedFloors[fid]=!state.expandedFloors[fid]; save(); render(); }
 function setTab(t) { state.tab=t; save(); render(); }
-function resetCompletions() { if(confirm('Reset all completion checkmarks? Attendance and assignments are kept.')){ state.completions={}; save(); render(); } }
+function resetCompletions() { showConfirm('Reset all completion checkmarks?', 'Attendance and assignments are kept.', () => { state.completions={}; save(); render(); }); }
 
 // --- Serviced unit actions ---
 function addServicedUnit(unit, guest, freq) {
@@ -463,9 +464,10 @@ function addServicedUnit(unit, guest, freq) {
   save(); render();
 }
 function removeServicedUnit(id) {
-  if (!confirm('Remove this unit from cleaning service?')) return;
-  state.servicedUnits = state.servicedUnits.filter(u => u.id !== id);
-  save(); render();
+  showConfirm('Remove this unit?', 'This unit will be removed from cleaning service.', () => {
+    state.servicedUnits = state.servicedUnits.filter(u => u.id !== id);
+    save(); render();
+  });
 }
 function setUnitFreq(id, freq) {
   const u = state.servicedUnits.find(x => x.id === id);
@@ -520,11 +522,12 @@ function editEmployee(id, name, crew, floorsStr) {
 function startEditEmp(id) { state.editingEmp = id; render(); }
 function cancelEditEmp() { state.editingEmp = null; render(); }
 function removeEmployee(id) {
-  if (!confirm('Remove this employee?')) return;
-  state.staff = state.staff.filter(p => p.id !== id);
-  STAFF = state.staff;
-  delete state.attendance[id];
-  save(); render();
+  showConfirm('Remove this employee?', 'They will be removed from all teams and assignments.', () => {
+    state.staff = state.staff.filter(p => p.id !== id);
+    STAFF = state.staff;
+    delete state.attendance[id];
+    save(); render();
+  });
 }
 
 // --- Area actions ---
@@ -534,9 +537,10 @@ function addArea(label, kind, freq) {
   save(); render();
 }
 function removeArea(id) {
-  if (!confirm('Remove this area?')) return;
-  state.areas = state.areas.filter(a => a.id !== id);
-  save(); render();
+  showConfirm('Remove this area?', 'This cleaning area will be permanently deleted.', () => {
+    state.areas = state.areas.filter(a => a.id !== id);
+    save(); render();
+  });
 }
 function setAreaFreq(id, freq) { const a = state.areas.find(x=>x.id===id); if (a) a.freq = freq; save(); render(); }
 function setAreaKind(id, kind) { const a = state.areas.find(x=>x.id===id); if (a) a.kind = kind; save(); render(); }
@@ -1081,6 +1085,36 @@ function viewTeam() {
   wrap.appendChild(employeeAddForm());
   employeeGroups(wrap);
   return wrap;
+}
+
+// ============================================================
+// CUSTOM CONFIRM MODAL
+// ============================================================
+let _confirmState = null;
+function showConfirm(title, message, onConfirm) {
+  _confirmState = { title, message, onConfirm };
+  renderConfirmModal();
+}
+function dismissConfirmModal() { _confirmState = null; const e = document.getElementById('confirmModal'); if (e) e.remove(); }
+function renderConfirmModal() {
+  if (!_confirmState) return;
+  const existing = document.getElementById('confirmModal');
+  if (existing) existing.remove();
+  const overlay = el(`<div class="modal-overlay" id="confirmModal" style="align-items:center"></div>`);
+  const modal = el(`<div class="modal" style="border-radius:16px"></div>`);
+  modal.appendChild(el(`<div class="modal-title">${esc(_confirmState.title)}</div>`));
+  modal.appendChild(el(`<div class="modal-sub">${esc(_confirmState.message)}</div>`));
+  const btnRow = el(`<div class="modal-btns"></div>`);
+  const cancelBtn = el(`<button class="modal-skip">Cancel</button>`);
+  cancelBtn.onclick = () => dismissConfirmModal();
+  const confirmBtn = el(`<button class="modal-danger">Remove</button>`);
+  confirmBtn.onclick = () => { const cb = _confirmState.onConfirm; dismissConfirmModal(); cb(); };
+  btnRow.appendChild(cancelBtn);
+  btnRow.appendChild(confirmBtn);
+  modal.appendChild(btnRow);
+  overlay.appendChild(modal);
+  overlay.onclick = (e) => { if (e.target === overlay) dismissConfirmModal(); };
+  document.getElementById('app').appendChild(overlay);
 }
 
 // ============================================================
