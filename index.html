@@ -1671,38 +1671,66 @@ function render() {
 }
 
 // ============================================================
-// LOGIN
+// LOGIN  (real accounts via Supabase Auth; the local gate is only a
+// fallback for when the server isn't configured)
 // ============================================================
-const AUTH_KEY = 'cleaning_app_auth';
-const CREDENTIALS = { username: 'admin', password: 'admin123' };
+const AUTH_KEY = 'cleaning_app_auth';                              // legacy fallback flag
+const CREDENTIALS = { username: 'admin', password: 'admin123' };   // fallback only (no server)
+let authed = false;                                                // true when a real Supabase session exists
 
-function isLoggedIn() { return localStorage.getItem(AUTH_KEY) === 'true'; }
-function logout() { localStorage.removeItem(AUTH_KEY); renderLogin(); }
+// Synchronous "is someone signed in?" used by route()/boot().
+function isLoggedIn() { return db ? authed : (localStorage.getItem(AUTH_KEY) === 'true'); }
 
-function attemptLogin() {
-  const u = document.getElementById('loginUser').value.trim();
-  const p = document.getElementById('loginPass').value;
+async function logout() {
+  try { if (db) await db.auth.signOut(); } catch (e) {}
+  authed = false;
+  localStorage.removeItem(AUTH_KEY);
+  renderLogin();
+}
+
+async function attemptLogin() {
+  const uEl = document.getElementById('loginUser');
+  const pEl = document.getElementById('loginPass');
   const errEl = document.getElementById('loginErr');
+  const u = uEl.value.trim();
+  const p = pEl.value;
+  const fail = (msg) => { errEl.textContent = msg; uEl.classList.add('error'); pEl.classList.add('error'); };
+
+  if (db) {
+    const btn = document.getElementById('loginBtn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Signing in…'; }
+    try {
+      const { error } = await db.auth.signInWithPassword({ email: u, password: p });
+      if (error) throw error;
+      authed = true;
+      boot();
+    } catch (e) {
+      if (btn) { btn.disabled = false; btn.textContent = 'Sign In'; }
+      fail('Invalid email or password');
+    }
+    return;
+  }
+
+  // Fallback: server not configured → legacy local gate.
   if (u === CREDENTIALS.username && p === CREDENTIALS.password) {
     localStorage.setItem(AUTH_KEY, 'true');
     boot();
   } else {
-    errEl.textContent = 'Invalid username or password';
-    document.getElementById('loginUser').classList.add('error');
-    document.getElementById('loginPass').classList.add('error');
+    fail('Invalid username or password');
   }
 }
 
 function renderLogin() {
   const app = document.getElementById('app');
   app.innerHTML = '';
+  const usingEmail = !!db;
   const screen = el(`<div class="login-screen"></div>`);
   const box = el(`<div class="login-box"></div>`);
   box.appendChild(el(`<div class="login-logo">✦</div>`));
   box.appendChild(el(`<div class="login-heading">Cleaning Ops</div>`));
-  box.appendChild(el(`<div class="login-sub">Sign in to continue</div>`));
-  box.appendChild(el(`<div class="login-label">Username</div>`));
-  const uIn = el(`<input class="login-input" id="loginUser" type="text" placeholder="Enter username" autocomplete="username" autocapitalize="none" autocorrect="off">`);
+  box.appendChild(el(`<div class="login-sub">Office sign in</div>`));
+  box.appendChild(el(`<div class="login-label">${usingEmail ? 'Email' : 'Username'}</div>`));
+  const uIn = el(`<input class="login-input" id="loginUser" type="${usingEmail ? 'email' : 'text'}" placeholder="${usingEmail ? 'name@company.com' : 'Enter username'}" autocomplete="username" autocapitalize="none" autocorrect="off">`);
   uIn.addEventListener('focus', () => uIn.classList.remove('error'));
   box.appendChild(uIn);
   box.appendChild(el(`<div class="login-label">Password</div>`));
@@ -1710,7 +1738,7 @@ function renderLogin() {
   pIn.addEventListener('focus', () => pIn.classList.remove('error'));
   pIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') attemptLogin(); });
   box.appendChild(pIn);
-  const btn = el(`<button class="login-btn">Sign In</button>`);
+  const btn = el(`<button class="login-btn" id="loginBtn">Sign In</button>`);
   btn.onclick = attemptLogin;
   box.appendChild(btn);
   box.appendChild(el(`<div class="login-error" id="loginErr"></div>`));
@@ -1726,7 +1754,22 @@ function boot() {
   refreshHistory();
   subscribeHistory();
 }
-if (isLoggedIn()) { boot(); } else { renderLogin(); }
+
+// Startup: restore any existing Supabase session, then show the right screen.
+async function startup() {
+  if (!db) { if (isLoggedIn()) boot(); else renderLogin(); return; }
+  try {
+    const { data } = await db.auth.getSession();
+    authed = !!(data && data.session);
+  } catch (e) { authed = false; }
+  db.auth.onAuthStateChange((_event, session) => {
+    const was = authed;
+    authed = !!session;
+    if (!authed && was) renderLogin();   // signed out / session expired → back to login
+  });
+  if (authed) boot(); else renderLogin();
+}
+startup();
 </script>
 </body>
 </html>
