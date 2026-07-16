@@ -36,3 +36,39 @@ begin
 exception
   when duplicate_object then null;   -- already a member → fine
 end $$;
+
+
+-- ============================================================
+-- CLEANING HISTORY LOG — append-only record of who cleaned which
+-- guest room and when. This is separate from app_state so entries
+-- can never be clobbered by a concurrent state save.
+-- ============================================================
+create table if not exists public.cleaning_log (
+  id           bigint generated always as identity primary key,
+  building     text not null,
+  unit_id      text not null,
+  unit_label   text,
+  cleaner_id   text,
+  cleaner_name text,
+  cleaned_at   timestamptz not null default now()
+);
+
+create index if not exists cleaning_log_lookup_idx
+  on public.cleaning_log (building, unit_id, cleaned_at desc);
+
+alter table public.cleaning_log enable row level security;
+
+drop policy if exists "log read"   on public.cleaning_log;
+drop policy if exists "log insert" on public.cleaning_log;
+drop policy if exists "log delete" on public.cleaning_log;
+
+create policy "log read"   on public.cleaning_log for select using (true);
+create policy "log insert" on public.cleaning_log for insert with check (true);
+create policy "log delete" on public.cleaning_log for delete using (true);  -- lets a mis-tap be undone
+
+do $$
+begin
+  alter publication supabase_realtime add table public.cleaning_log;
+exception
+  when duplicate_object then null;
+end $$;

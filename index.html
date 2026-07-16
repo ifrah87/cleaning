@@ -377,6 +377,7 @@ let state = {
   tab: 'cleaning',
   attendance: {},
   completions: {},
+  logRefs: {},         // completion key -> cleaning_log row id (so un-marking removes the history entry)
   coverage: {},
   coverageDay: todayKey(),
   expandedFloors: {},
@@ -477,7 +478,7 @@ function applyRemote(saved) {
   if (state.coverageDay !== todayKey()) { state.coverage = {}; state.unitCover = {}; state.pendingCover = null; state.coverageDay = todayKey(); }
   finalizeState();
   try { localStorage.setItem(STORE, JSON.stringify(state)); } catch (e) {}
-  render();
+  route();
 }
 
 function subscribeRealtime() {
@@ -505,6 +506,124 @@ function showStorageWarn(msg) {
 function hideStorageWarn() {
   const el = document.getElementById('storageWarn');
   if (el) el.style.display = 'none';
+}
+
+// ============================================================
+// WHO AM I  (per-device — deliberately NOT synced; each phone is
+// whichever cleaner is holding it, so covers get logged correctly)
+// ============================================================
+const ME_KEY = 'cleaning_app_me';
+function getMe() {
+  try { const r = localStorage.getItem(ME_KEY); return r ? JSON.parse(r) : null; } catch (e) { return null; }
+}
+function setMe(id) {
+  const p = (state.staff || []).find(s => s.id === id);
+  if (!p) return;
+  try { localStorage.setItem(ME_KEY, JSON.stringify({ id: p.id, name: p.name })); } catch (e) {}
+  route();
+}
+function switchMe() { try { localStorage.removeItem(ME_KEY); } catch (e) {} route(); }
+
+// Which screen: login → pick-your-name → the app.
+function route() {
+  if (!isLoggedIn()) { renderLogin(); return; }
+  if (!getMe()) { renderCleanerPicker(); return; }
+  render();
+}
+
+function renderCleanerPicker() {
+  const app = document.getElementById('app');
+  app.innerHTML = '';
+  const screen = el(`<div class="login-screen"></div>`);
+  const box = el(`<div class="login-box"></div>`);
+  box.appendChild(el(`<div class="login-logo">✦</div>`));
+  box.appendChild(el(`<div class="login-heading">Who's cleaning?</div>`));
+  box.appendChild(el(`<div class="login-sub">Tap your name — the rooms you mark clean get logged to you.</div>`));
+  const list = state.staff || [];
+  if (!list.length) {
+    box.appendChild(el(`<div class="login-error" style="color:#8da2b8">No staff yet. Add employees in Settings first.</div>`));
+  }
+  list.forEach(p => {
+    const b = el(`<button class="cover-opt" style="width:100%;margin-bottom:8px">${esc(p.name)}<span class="cover-load">${esc(p.crew || '')}</span></button>`);
+    b.onclick = () => setMe(p.id);
+    box.appendChild(b);
+  });
+  screen.appendChild(box);
+  app.appendChild(screen);
+}
+
+// ============================================================
+// CLEANING HISTORY LOG  (append-only table in Supabase)
+// ============================================================
+let cleaningHistory = [];        // recent log rows, newest first
+let lastCleanedByUnit = {};      // unit_id -> newest row (drives the "last cleaned" line)
+let historyFilter = 'all';       // History view room filter (per-device UI state)
+
+async function logClean(unit) {
+  if (!db) return null;
+  const me = getMe();
+  try {
+    const { data, error } = await db.from('cleaning_log')
+      .insert({
+        building: BUILDING,
+        unit_id: unit.id,
+        unit_label: unit.unit,
+        cleaner_id: me ? me.id : null,
+        cleaner_name: me ? me.name : null,
+      })
+      .select('id')
+      .single();
+    if (error) throw error;
+    refreshHistory();
+    return data.id;
+  } catch (e) {
+    showStorageWarn('Could not log this cleaning to history (' + (e.message || e) + ').');
+    return null;
+  }
+}
+
+async function unlogClean(logId) {
+  if (!db || !logId) return;
+  try { await db.from('cleaning_log').delete().eq('id', logId); refreshHistory(); } catch (e) {}
+}
+
+async function refreshHistory() {
+  if (!db) return;
+  try {
+    const { data, error } = await db.from('cleaning_log')
+      .select('id,unit_id,unit_label,cleaner_name,cleaned_at')
+      .eq('building', BUILDING)
+      .order('cleaned_at', { ascending: false })
+      .limit(1000);
+    if (error) throw error;
+    cleaningHistory = data || [];
+    const map = {};
+    for (const row of cleaningHistory) { if (!map[row.unit_id]) map[row.unit_id] = row; } // first seen = newest
+    lastCleanedByUnit = map;
+    if (getMe()) render();
+  } catch (e) {}
+}
+
+function subscribeHistory() {
+  if (!db) return;
+  db.channel('cleaning_log_' + BUILDING)
+    .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'cleaning_log', filter: 'building=eq.' + BUILDING },
+        () => refreshHistory())
+    .subscribe();
+}
+
+// Friendly timestamp: "Today 2:30 PM", "Yesterday 9:05 AM", "Jul 14, 2:30 PM".
+function fmtWhen(iso) {
+  try {
+    const d = new Date(iso);
+    const now = new Date();
+    const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    if (d.toDateString() === now.toDateString()) return 'Today ' + time;
+    const y = new Date(now); y.setDate(now.getDate() - 1);
+    if (d.toDateString() === y.toDateString()) return 'Yesterday ' + time;
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ', ' + time;
+  } catch (e) { return iso; }
 }
 
 // ============================================================
@@ -624,8 +743,22 @@ function startEditUnit(id) { state.editingUnit = id; render(); }
 function cancelEditUnit() { state.editingUnit = null; render(); }
 function toggleServicedDone(id) {
   const k = 'su:' + id + '::' + todayKey();
-  if (state.completions[k]) delete state.completions[k]; else state.completions[k] = true;
-  save(); render();
+  const unit = state.servicedUnits.find(u => u.id === id);
+  if (!state.logRefs) state.logRefs = {};
+  if (state.completions[k]) {
+    // Un-mark: clear the checkmark and remove the history entry we created for it.
+    delete state.completions[k];
+    const ref = state.logRefs[k];
+    if (ref) { unlogClean(ref); delete state.logRefs[k]; }
+    save(); render();
+  } else {
+    // Mark clean: check it off now, then log who + when to history.
+    state.completions[k] = true;
+    save(); render();
+    if (unit) logClean(unit).then((logId) => {
+      if (logId) { if (!state.logRefs) state.logRefs = {}; state.logRefs[k] = logId; save(); }
+    });
+  }
 }
 const servicedDone = (id) => !!state.completions['su:' + id + '::' + todayKey()];
 
@@ -865,6 +998,12 @@ function servicedCard(u, isDue) {
   const info = el(`<div style="flex:1;min-width:0"></div>`);
   info.appendChild(el(`<div class="su-unit">Unit ${esc(u.unit)}</div>`));
   if (u.guest) info.appendChild(el(`<div class="su-guest">${esc(u.guest)}</div>`));
+
+  // Last cleaned (from the shared history log)
+  const lastClean = lastCleanedByUnit[u.id];
+  if (lastClean) {
+    info.appendChild(el(`<div class="su-assign" style="color:#5d8aa8">🧹 Last: ${esc(fmtWhen(lastClean.cleaned_at))} · ${esc(lastClean.cleaner_name || '—')}</div>`));
+  }
 
   // Assigned cleaner line
   if (c) {
@@ -1337,6 +1476,51 @@ function employeeGroups(wrap) {
   });
 }
 
+function viewHistory() {
+  const wrap = el('<div class="body"></div>');
+
+  if (!db) {
+    wrap.appendChild(el(`<div class="empty" style="text-align:center;padding:30px 0">History needs the shared server, which isn't connected on this build.</div>`));
+    return wrap;
+  }
+
+  // Room filter
+  const sel = el(`<select class="area-select" style="margin-bottom:14px"></select>`);
+  sel.appendChild(el(`<option value="all">All rooms</option>`));
+  (state.servicedUnits || []).slice()
+    .sort((a, b) => String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }))
+    .forEach(u => {
+      const o = el(`<option value="${esc(u.id)}">Unit ${esc(u.unit)}${u.guest ? ' · ' + esc(u.guest) : ''}</option>`);
+      if (historyFilter === u.id) o.setAttribute('selected', '');
+      sel.appendChild(o);
+    });
+  sel.onchange = (e) => { historyFilter = e.target.value; render(); };
+  wrap.appendChild(sel);
+
+  let rows = cleaningHistory;
+  if (historyFilter !== 'all') rows = rows.filter(r => r.unit_id === historyFilter);
+
+  wrap.appendChild(el(`<div class="section-label">${rows.length} cleaning${rows.length === 1 ? '' : 's'} logged</div>`));
+
+  if (!rows.length) {
+    wrap.appendChild(el(`<div class="empty" style="text-align:center;padding:24px 0">Nothing logged yet. Mark a room clean and it shows up here.</div>`));
+    return wrap;
+  }
+
+  rows.forEach(r => {
+    const card = el(`<div class="su-card"></div>`);
+    const top = el(`<div class="su-top"></div>`);
+    const info = el(`<div style="flex:1;min-width:0"></div>`);
+    info.appendChild(el(`<div class="su-unit" style="font-size:15px">Unit ${esc(r.unit_label || r.unit_id)}</div>`));
+    info.appendChild(el(`<div class="su-guest">by ${esc(r.cleaner_name || 'Unknown')}</div>`));
+    top.appendChild(info);
+    top.appendChild(el(`<div class="su-next">${esc(fmtWhen(r.cleaned_at))}</div>`));
+    card.appendChild(top);
+    wrap.appendChild(card);
+  });
+  return wrap;
+}
+
 function viewTeam() {
   const wrap = el('<div class="body"></div>');
   wrap.appendChild(employeeAddForm());
@@ -1386,9 +1570,16 @@ function render() {
 
   const header = el(`<div class="header"></div>`);
   header.appendChild(el(`<div class="h-eyebrow">66-UNIT BUILDING · 11 FLOORS</div>`));
-  const titles = { cleaning:'Unit Cleaning', rollcall:'Morning Roll Call', building:'Building', exterior:'Exterior', team:'Team', settings:'Settings' };
+  const titles = { cleaning:'Unit Cleaning', rollcall:'Morning Roll Call', building:'Building', exterior:'Exterior', history:'Cleaning History', team:'Team', settings:'Settings' };
   header.appendChild(el(`<div class="h-title">${titles[state.tab]}</div>`));
   header.appendChild(el(`<div class="h-date">${dateStr}</div>`));
+  const _me = getMe();
+  if (_me) {
+    const meRow = el(`<div class="h-date" style="margin-top:4px">Cleaning as <b style="color:#29b6f5">${esc(_me.name)}</b> · <span style="text-decoration:underline">switch</span></div>`);
+    meRow.style.cursor = 'pointer';
+    meRow.onclick = () => switchMe();
+    header.appendChild(meRow);
+  }
   if (state.tab === 'cleaning') {
     const dueCount = state.servicedUnits.filter(unitDueToday).length;
     const doneCount = state.servicedUnits.filter(u => unitDueToday(u) && servicedDone(u.id)).length;
@@ -1411,6 +1602,7 @@ function render() {
   else if (state.tab==='rollcall') app.appendChild(viewRollCall());
   else if (state.tab==='building') app.appendChild(viewBuilding());
   else if (state.tab==='exterior') app.appendChild(viewExterior());
+  else if (state.tab==='history') app.appendChild(viewHistory());
   else if (state.tab==='team') app.appendChild(viewTeam());
   else if (state.tab==='settings') app.appendChild(viewSettings());
 
@@ -1466,6 +1658,7 @@ function render() {
     { id:'cleaning', label:'Cleaning', ico:'✦' },
     { id:'rollcall', label:'Roll Call', ico:'☀' },
     { id:'building', label:'Building', ico:'▦' },
+    { id:'history', label:'History', ico:'◷' },
     { id:'team', label:'Team', ico:'☰' },
     { id:'settings', label:'Settings', ico:'⚙' },
   ];
@@ -1525,7 +1718,14 @@ function renderLogin() {
   app.appendChild(screen);
 }
 
-function boot() { load(); render(); remotePull(); subscribeRealtime(); }
+function boot() {
+  load();
+  route();              // login → pick-your-name → app
+  remotePull();
+  subscribeRealtime();
+  refreshHistory();
+  subscribeHistory();
+}
 if (isLoggedIn()) { boot(); } else { renderLogin(); }
 </script>
 </body>
