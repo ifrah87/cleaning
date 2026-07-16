@@ -1692,15 +1692,17 @@ async function attemptLogin() {
   const uEl = document.getElementById('loginUser');
   const pEl = document.getElementById('loginPass');
   const errEl = document.getElementById('loginErr');
-  const u = uEl.value.trim();
+  const raw = uEl.value.trim();
   const p = pEl.value;
+  // Allow a bare username like "admin" — map it to the office email domain.
+  const email = raw.includes('@') ? raw : (raw.toLowerCase() + '@orfanerealestate.so');
   const fail = (msg) => { errEl.textContent = msg; uEl.classList.add('error'); pEl.classList.add('error'); };
 
   if (db) {
     const btn = document.getElementById('loginBtn');
     if (btn) { btn.disabled = true; btn.textContent = 'Signing in…'; }
     try {
-      const { error } = await db.auth.signInWithPassword({ email: u, password: p });
+      const { error } = await db.auth.signInWithPassword({ email, password: p });
       if (error) throw error;
       authed = true;
       boot();
@@ -1712,7 +1714,7 @@ async function attemptLogin() {
   }
 
   // Fallback: server not configured → legacy local gate.
-  if (u === CREDENTIALS.username && p === CREDENTIALS.password) {
+  if (raw === CREDENTIALS.username && p === CREDENTIALS.password) {
     localStorage.setItem(AUTH_KEY, 'true');
     boot();
   } else {
@@ -1723,14 +1725,13 @@ async function attemptLogin() {
 function renderLogin() {
   const app = document.getElementById('app');
   app.innerHTML = '';
-  const usingEmail = !!db;
   const screen = el(`<div class="login-screen"></div>`);
   const box = el(`<div class="login-box"></div>`);
   box.appendChild(el(`<div class="login-logo">✦</div>`));
   box.appendChild(el(`<div class="login-heading">Cleaning Ops</div>`));
   box.appendChild(el(`<div class="login-sub">Office sign in</div>`));
-  box.appendChild(el(`<div class="login-label">${usingEmail ? 'Email' : 'Username'}</div>`));
-  const uIn = el(`<input class="login-input" id="loginUser" type="${usingEmail ? 'email' : 'text'}" placeholder="${usingEmail ? 'name@company.com' : 'Enter username'}" autocomplete="username" autocapitalize="none" autocorrect="off">`);
+  box.appendChild(el(`<div class="login-label">Username</div>`));
+  const uIn = el(`<input class="login-input" id="loginUser" type="text" placeholder="admin" autocomplete="username" autocapitalize="none" autocorrect="off">`);
   uIn.addEventListener('focus', () => uIn.classList.remove('error'));
   box.appendChild(uIn);
   box.appendChild(el(`<div class="login-label">Password</div>`));
