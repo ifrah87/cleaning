@@ -744,6 +744,44 @@ function setUnitAssignee(id, pid) {
   if (u) u.assignedTo = pid || null;   // '' → auto (by floor owner)
   save(); render();
 }
+
+// --- Hik-Connect staff sync ---
+let hikSyncMsg = null;
+async function syncFromHik() {
+  if (!db) { hikSyncMsg = { err: true, text: 'Server not connected.' }; render(); return; }
+  hikSyncMsg = { text: 'Syncing staff from Hik-Connect…' };
+  render();
+  try {
+    const { data, error } = await db.functions.invoke('hik-sync', { body: {} });
+    if (error) throw error;
+    if (!data || !data.ok) throw new Error(data && data.error ? data.error : 'Sync failed');
+    const persons = data.persons || [];
+    if (!Array.isArray(state.staff)) state.staff = [];
+    const defaultCrew = (getTeams()[0] && getTeams()[0].name) || 'Team A';
+    let added = 0, matched = 0;
+    for (const p of persons) {
+      // Match existing staff by Hik id, then badge code, then name — so re-syncs don't duplicate.
+      const s = state.staff.find((x) => x.hikPersonId && x.hikPersonId === p.personId)
+        || state.staff.find((x) => x.hikCode && p.personCode && x.hikCode === p.personCode)
+        || state.staff.find((x) => (x.name || '').trim().toLowerCase() === (p.name || '').trim().toLowerCase());
+      if (s) {
+        s.hikPersonId = p.personId; s.hikCode = p.personCode; if (p.name) s.name = p.name;
+        matched++;
+      } else {
+        state.staff.push({ id: 'p' + p.personId, name: p.name, crew: defaultCrew, color: teamColor(defaultCrew), floors: [], hikPersonId: p.personId, hikCode: p.personCode });
+        added++;
+      }
+    }
+    STAFF = state.staff;
+    STAFF.forEach((pp) => { if (!state.attendance[pp.id]) state.attendance[pp.id] = 'present'; });
+    save();
+    hikSyncMsg = { text: `Synced ${persons.length} staff from Hik-Connect — ${added} added, ${matched} matched.` };
+    render();
+  } catch (e) {
+    hikSyncMsg = { err: true, text: 'Sync failed: ' + ((e && e.message) || e) };
+    render();
+  }
+}
 function editServicedUnit(id, newUnit, newGuest) {
   const u = state.servicedUnits.find(x => x.id === id);
   if (!u) return;
@@ -1080,6 +1118,16 @@ function viewRollCall() {
   const s = statsBar();
   const wrap = el('<div></div>');
   const body = el('<div class="body"></div>');
+
+  // Sync Now — pull today's staff roster from Hik-Connect
+  const syncBox = el('<div style="margin-bottom:16px"></div>');
+  const syncBtn = el('<button class="add-btn" style="background:#29b6f5">⟳ Sync Now (Hik-Connect)</button>');
+  syncBtn.onclick = () => syncFromHik();
+  syncBox.appendChild(syncBtn);
+  if (hikSyncMsg) {
+    syncBox.appendChild(el(`<div style="font-size:12px;margin-top:8px;font-weight:600;color:${hikSyncMsg.err ? '#f87171' : '#34d399'}">${esc(hikSyncMsg.text)}</div>`));
+  }
+  body.appendChild(syncBox);
 
   const g = gaps();
   if (g.length) {
