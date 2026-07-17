@@ -289,6 +289,12 @@ const STATUS_ORDER = ['present', 'late', 'noshow', 'off'];
 // Areas live in state (editable). Helpers to read them:
 function areasInterior() { return (state.areas || []).filter(a => a.kind === 'interior'); }
 function areasExterior() { return (state.areas || []).filter(a => a.kind === 'exterior'); }
+// The cleaning crew = staff tagged as cleaners. Until anyone is tagged, fall
+// back to everyone so cleaning screens are never empty after a Hik import.
+function cleaningStaff() {
+  const tagged = (state.staff || []).filter((p) => p.isCleaner);
+  return tagged.length ? tagged : (state.staff || []);
+}
 function buildUnits() {
   const u = [];
   const floors = (state && state.floors) ? state.floors : DEFAULT_FLOORS;
@@ -410,7 +416,7 @@ function load() {
     const raw = localStorage.getItem(STORE);
     if (raw) {
       const saved = JSON.parse(raw);
-      state = { ...state, ...saved, tab: 'cleaning' };
+      state = { ...state, ...saved, tab: 'rollcall' };
       if (state.coverageDay !== todayKey()) { state.coverage = {}; state.unitCover = {}; state.pendingCover = null; state.coverageDay = todayKey(); }
     }
   } catch (e) {}
@@ -745,6 +751,28 @@ function setUnitAssignee(id, pid) {
   save(); render();
 }
 
+// One-tap: split every room evenly (in number order) among the people clocked in today.
+function autoAssignRooms() {
+  const people = Object.keys(hikArrivals)
+    .filter((id) => (state.staff || []).some((s) => s.id === id))
+    .map((id) => ({ id, t: hikArrivals[id].time }))
+    .sort((a, b) => String(a.t || '').localeCompare(String(b.t || '')));
+  const rooms = (state.servicedUnits || []).slice()
+    .sort((a, b) => String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }));
+  if (!people.length) { hikSyncMsg = { err: true, text: 'No one clocked in to assign rooms to.' }; render(); return; }
+  if (!rooms.length) { hikSyncMsg = { err: true, text: 'No rooms yet — add units on the Cleaning tab first.' }; render(); return; }
+  rooms.forEach((u) => { u.assignedTo = null; });          // start fresh
+  const per = Math.floor(rooms.length / people.length);
+  const extra = rooms.length % people.length;              // first people get one extra
+  let idx = 0;
+  people.forEach((p, i) => {
+    const count = per + (i < extra ? 1 : 0);
+    for (let k = 0; k < count && idx < rooms.length; k++, idx++) rooms[idx].assignedTo = p.id;
+  });
+  hikSyncMsg = { text: `Split ${rooms.length} rooms among ${people.length} clocked-in cleaners.` };
+  save(); render();
+}
+
 // --- Hik-Connect staff sync ---
 let hikSyncMsg = null;
 async function syncFromHik() {
@@ -775,12 +803,50 @@ async function syncFromHik() {
     STAFF = state.staff;
     STAFF.forEach((pp) => { if (!state.attendance[pp.id]) state.attendance[pp.id] = 'present'; });
     save();
-    hikSyncMsg = { text: `Synced ${persons.length} staff from Hik-Connect — ${added} added, ${matched} matched.` };
+    await loadHikArrivals();
+    const arr = Object.keys(hikArrivals).length;
+    hikSyncMsg = { text: `Synced ${persons.length} staff — ${added} added, ${matched} matched. ${arr} badged in today${hikUnknown.length ? `, ${hikUnknown.length} unknown` : ''}.` };
     render();
   } catch (e) {
     hikSyncMsg = { err: true, text: 'Sync failed: ' + ((e && e.message) || e) };
     render();
   }
+}
+
+// Today's badge-in events → first arrival per person, matched to staff by name.
+let hikArrivals = {};   // staff id -> { time }
+let hikUnknown = [];    // [{ name, time }] badged in but no matching staff (the "unknown" alert)
+function fmtEventTime(v) {
+  if (!v) return '';
+  const d = /^\d{10,}$/.test(String(v)) ? new Date(Number(v)) : new Date(v);
+  if (isNaN(d.getTime())) return String(v);
+  return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+}
+async function loadHikArrivals() {
+  if (!db) return;
+  try {
+    const since = new Date(Date.now() - 18 * 3600 * 1000).toISOString(); // this workday
+    const { data, error } = await db.from('hik_events')
+      .select('person_name,person_code,event_time,received_at')
+      .gte('received_at', since)
+      .order('received_at', { ascending: true });
+    if (error) throw error;
+    const firstByName = {};
+    for (const e of (data || [])) {
+      const key = (e.person_name || '').trim().toLowerCase();
+      if (key && !firstByName[key]) firstByName[key] = e;
+    }
+    const staffByName = {};
+    for (const s of (state.staff || [])) staffByName[(s.name || '').trim().toLowerCase()] = s;
+    hikArrivals = {}; hikUnknown = [];
+    for (const key in firstByName) {
+      const e = firstByName[key];
+      const t = fmtEventTime(e.event_time || e.received_at);
+      const s = staffByName[key];            // case-insensitive name match
+      if (s) hikArrivals[s.id] = { time: t };
+      else hikUnknown.push({ name: e.person_name, time: t });   // mismatch → flagged
+    }
+  } catch (e) { /* keep previous arrivals */ }
 }
 function editServicedUnit(id, newUnit, newGuest) {
   const u = state.servicedUnits.find(x => x.id === id);
@@ -872,6 +938,11 @@ function editEmployee(id, name, crew, floorsStr) {
 }
 function startEditEmp(id) { state.editingEmp = id; render(); }
 function cancelEditEmp() { state.editingEmp = null; render(); }
+function toggleCleaner(id) {
+  const p = state.staff.find((s) => s.id === id);
+  if (p) p.isCleaner = !p.isCleaner;
+  save(); render();
+}
 function removeEmployee(id) {
   showConfirm('Remove this employee?', 'They will be removed from all teams and assignments.', () => {
     state.staff = state.staff.filter(p => p.id !== id);
@@ -1000,7 +1071,7 @@ function viewCleaning() {
   form.appendChild(addBtn);
   wrap.appendChild(form);
 
-  const units = state.servicedUnits;
+  const units = state.servicedUnits.slice().sort((a, b) => String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }));
   if (!units.length) {
     wrap.appendChild(el(`<div class="empty" style="text-align:center;padding:30px 0">No units added yet. Add your first cleaning unit above.</div>`));
     return wrap;
@@ -1087,7 +1158,7 @@ function servicedCard(u, isDue) {
   assignRow.appendChild(el(`<div style="font-size:11px;color:#5d748c;font-weight:600;white-space:nowrap">Cleaned by</div>`));
   const asel = el(`<select class="area-select" style="flex:1"></select>`);
   asel.appendChild(el(`<option value="">Auto (by floor)</option>`));
-  (state.staff || []).forEach(p => {
+  cleaningStaff().forEach(p => {
     const o = el(`<option value="${esc(p.id)}">${esc(p.name)}</option>`);
     if (u.assignedTo === p.id) o.setAttribute('selected', '');
     asel.appendChild(o);
@@ -1129,62 +1200,71 @@ function viewRollCall() {
   }
   body.appendChild(syncBox);
 
-  const g = gaps();
-  if (g.length) {
-    g.forEach(({person, floor}) => {
-      const sug = suggestCover(floor);
-      const alert = el(`<div class="alert"></div>`);
-      alert.appendChild(el(`<div class="alert-title">⚠ ${esc(person.name.split(' ')[0])} out — Floor ${floor} uncovered</div>`));
-      if (sug) {
-        const row = el(`<div class="cover-suggest"></div>`);
-        row.appendChild(el(`<div class="cover-text">Cover with <b>${esc(sug.name.split(' ')[0])}</b> — lightest load today</div>`));
-        const btn = el(`<button class="cover-btn">Assign →</button>`);
-        btn.onclick = () => assignCover(floor, sug.id);
-        row.appendChild(btn); alert.appendChild(row);
-      } else {
-        alert.appendChild(el(`<div class="alert-body">No one available to cover. Adjust attendance or handle manually.</div>`));
-      }
-      body.appendChild(alert);
-    });
+  // Unknown-staff alert: badged in but not in the staff list
+  if (hikUnknown.length) {
+    const al = el(`<div class="alert"></div>`);
+    al.appendChild(el(`<div class="alert-title">⚠ ${hikUnknown.length} badged in but not in your staff list</div>`));
+    al.appendChild(el(`<div class="alert-body">${esc(hikUnknown.map((u) => u.name + (u.time ? ` (${u.time})` : '')).join(', '))}</div>`));
+    body.appendChild(al);
   }
 
-  Object.entries(state.coverage).forEach(([floor, pid]) => {
-    const c = STAFF.find(p => p.id===pid);
-    if (c) {
-      const ok = el(`<div class="confirm"></div>`);
-      ok.appendChild(el(`<div class="confirm-text">✓ Floor ${floor} covered by <b>${esc(c.name.split(' ')[0])}</b> today</div>`));
-      const undo = el(`<button class="undo-btn">Undo</button>`);
-      undo.onclick = () => { delete state.coverage[floor]; save(); render(); };
-      ok.appendChild(undo); body.appendChild(ok);
-    }
-  });
+  // WHO'S IN TODAY — only people who badged in (the room-allocation list), with clock-in times.
+  const arrIds = Object.keys(hikArrivals);
+  const staffById = {};
+  for (const s of (state.staff || [])) staffById[s.id] = s;
+  const whoIn = el('<div style="margin-bottom:18px"></div>');
+  whoIn.appendChild(el(`<div class="section-label" style="color:#34d399">✓ Clocked in today (${arrIds.length})</div>`));
+  if (arrIds.length && (state.servicedUnits || []).length) {
+    const autoBtn = el('<button class="add-btn" style="background:#34d399;color:#0a0e16;margin-bottom:12px">⚡ Auto-assign rooms evenly</button>');
+    autoBtn.onclick = () => autoAssignRooms();
+    whoIn.appendChild(autoBtn);
+  }
+  if (!arrIds.length) {
+    whoIn.appendChild(el(`<div class="empty" style="text-align:center;padding:16px 0;color:#5d748c">No clock-ins yet. Tap Sync Now once people have badged in at the terminal.</div>`));
+  } else {
+    arrIds
+      .map((id) => ({ s: staffById[id], t: hikArrivals[id].time }))
+      .filter((x) => x.s)
+      .sort((a, b) => String(a.t || '').localeCompare(String(b.t || '')))
+      .forEach(({ s, t }) => {
+        const card = el('<div class="person" style="flex-direction:column;align-items:stretch;gap:8px"></div>');
+        const info = el('<div class="person-info"></div>');
+        info.appendChild(el(`<div class="person-name">${esc(s.name)}</div>`));
+        info.appendChild(el(`<div class="person-floors" style="color:#34d399;font-weight:600">✓ Clocked in ${esc(t)}</div>`));
+        card.appendChild(info);
 
-  const crews = [...new Set(STAFF.map(p => p.crew))];
-  crews.forEach(crewName => {
-    const members = STAFF.filter(p => p.crew===crewName);
-    const color = members[0].color;
-    const group = el(`<div class="crew-group"></div>`);
-    const head = el(`<div class="crew-head"></div>`);
-    head.appendChild(el(`<div class="crew-dot" style="background:${color}"></div>`));
-    head.appendChild(el(`<div class="crew-name">${esc(crewName)}</div>`));
-    const present = members.filter(m => ['present','late'].includes(state.attendance[m.id])).length;
-    head.appendChild(el(`<div class="crew-sub">${present}/${members.length} in</div>`));
-    group.appendChild(head);
-    members.forEach(p => {
-      const st = STATUS[state.attendance[p.id] || 'present'];
-      const row = el(`<div class="person"></div>`);
-      const info = el(`<div class="person-info"></div>`);
-      info.appendChild(el(`<div class="person-name">${esc(p.name)}</div>`));
-      info.appendChild(el(`<div class="person-floors">${esc(personFloors(p))}</div>`));
-      row.appendChild(info);
-      const btn = el(`<button class="status-btn" style="background:${st.color}">${st.label}</button>`);
-      btn.onclick = () => cycleStatus(p.id);
-      row.appendChild(btn); group.appendChild(row);
-    });
-    body.appendChild(group);
-  });
+        // Rooms already assigned to this person (tap ✕ to unassign)
+        const mine = (state.servicedUnits || []).filter((u) => u.assignedTo === s.id);
+        if (mine.length) {
+          const chips = el('<div style="display:flex;flex-wrap:wrap;gap:6px"></div>');
+          mine.forEach((u) => {
+            const chip = el(`<button class="freqmini on" style="flex:0 0 auto;padding:6px 11px">${esc(u.unit)} ✕</button>`);
+            chip.onclick = () => setUnitAssignee(u.id, '');
+            chips.appendChild(chip);
+          });
+          card.appendChild(chips);
+        }
 
-  body.appendChild(el(`<div class="hint">Tap a status to cycle · Present → Late → No-show → Off</div>`));
+        // Assign another room (from unassigned units)
+        const free = (state.servicedUnits || []).filter((u) => !u.assignedTo);
+        if (free.length) {
+          const sel = el('<select class="area-select"></select>');
+          sel.appendChild(el('<option value="">+ Assign a room…</option>'));
+          free
+            .slice()
+            .sort((a, b) => String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }))
+            .forEach((u) => sel.appendChild(el(`<option value="${esc(u.id)}">Room ${esc(u.unit)}</option>`)));
+          sel.onchange = (e) => { if (e.target.value) setUnitAssignee(e.target.value, s.id); };
+          card.appendChild(sel);
+        } else if (!mine.length) {
+          card.appendChild(el('<div style="font-size:11px;color:#5d748c">No rooms yet — add units on the Cleaning tab, then assign here.</div>'));
+        }
+
+        whoIn.appendChild(card);
+      });
+  }
+  body.appendChild(whoIn);
+
   wrap.appendChild(body);
   return wrap;
 }
@@ -1330,7 +1410,7 @@ function areaCard(a) {
   const assignRow = el(`<div style="display:flex;gap:6px;margin-top:8px;align-items:center"></div>`);
   const sel = el(`<select class="area-select"></select>`);
   sel.appendChild(el(`<option value="">Unassigned</option>`));
-  STAFF.forEach(p => {
+  cleaningStaff().forEach(p => {
     const o = el(`<option value="${p.id}">${esc(p.name)}</option>`);
     if (a.assignedTo===p.id) o.setAttribute('selected','');
     sel.appendChild(o);
@@ -1521,11 +1601,13 @@ function employeeCard(p) {
   card.appendChild(top);
 
   const ctl = el(`<div class="su-ctl" style="border-top:none;padding-top:0;margin-top:0"></div>`);
+  const clean = el(`<button class="freqmini ${p.isCleaner ? 'on' : ''}" style="flex:0 0 auto;padding:7px 14px">${p.isCleaner ? '✓ Cleaner' : '+ Cleaner'}</button>`);
+  clean.onclick = () => toggleCleaner(p.id);
   const ed = el(`<button class="su-edit">Edit</button>`);
   ed.onclick = () => startEditEmp(p.id);
   const rm = el(`<button class="su-rm">Remove</button>`);
   rm.onclick = () => removeEmployee(p.id);
-  ctl.appendChild(ed); ctl.appendChild(rm);
+  ctl.appendChild(clean); ctl.appendChild(ed); ctl.appendChild(rm);
   card.appendChild(ctl);
   return card;
 }
@@ -1598,6 +1680,9 @@ function viewHistory() {
 
 function viewTeam() {
   const wrap = el('<div class="body"></div>');
+  const total = (state.staff || []).length;
+  const cleaners = (state.staff || []).filter((p) => p.isCleaner).length;
+  wrap.appendChild(el(`<div class="note">Tap <b>Cleaner</b> on a person to add them to the cleaning team — Roll Call and room assignments then show only cleaners. ${cleaners ? `<b>${cleaners}</b> of ${total} tagged.` : `None tagged yet, so all ${total} show for now.`}</div>`));
   wrap.appendChild(employeeAddForm());
   employeeGroups(wrap);
   return wrap;
@@ -1658,10 +1743,12 @@ function render() {
     header.appendChild(strip);
   }
   if (state.tab === 'rollcall') {
+    const clockedIn = Object.keys(hikArrivals).length;
+    const assigned = (state.servicedUnits || []).filter((u) => u.assignedTo).length;
+    const totalRooms = (state.servicedUnits || []).length;
     const strip = el(`<div class="stats"></div>`);
-    strip.appendChild(el(`<div class="stat"><div class="lbl">ON SHIFT</div><div class="val">${s.onShift}/${s.crew}</div></div>`));
-    strip.appendChild(el(`<div class="stat"><div class="lbl">NO-SHOW</div><div class="val">${s.noshow}</div></div>`));
-    strip.appendChild(el(`<div class="stat"><div class="lbl">AREAS</div><div class="val">${s.done}/${s.total}</div></div>`));
+    strip.appendChild(el(`<div class="stat"><div class="lbl">CLOCKED IN</div><div class="val">${clockedIn}</div></div>`));
+    strip.appendChild(el(`<div class="stat"><div class="lbl">ROOMS ASSIGNED</div><div class="val">${assigned}/${totalRooms}</div></div>`));
     header.appendChild(strip);
   }
   app.appendChild(header);
@@ -1723,8 +1810,8 @@ function render() {
 
   const nav = el(`<div class="nav"></div>`);
   const tabs = [
-    { id:'cleaning', label:'Cleaning', ico:'✦' },
     { id:'rollcall', label:'Roll Call', ico:'☀' },
+    { id:'cleaning', label:'Cleaning', ico:'✦' },
     { id:'building', label:'Building', ico:'▦' },
     { id:'history', label:'History', ico:'◷' },
     { id:'team', label:'Team', ico:'☰' },
@@ -1822,6 +1909,7 @@ function boot() {
   subscribeRealtime();
   refreshHistory();
   subscribeHistory();
+  loadHikArrivals();
 }
 
 // Startup: restore any existing Supabase session, then show the right screen.
