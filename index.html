@@ -1200,15 +1200,7 @@ function viewRollCall() {
   const wrap = el('<div></div>');
   const body = el('<div class="body"></div>');
 
-  // Sync Now — pull today's staff roster from Hik-Connect
-  const syncBox = el('<div style="margin-bottom:16px"></div>');
-  const syncBtn = el('<button class="add-btn" style="background:#29b6f5">⟳ Sync Now (Hik-Connect)</button>');
-  syncBtn.onclick = () => syncFromHik();
-  syncBox.appendChild(syncBtn);
-  if (hikSyncMsg) {
-    syncBox.appendChild(el(`<div style="font-size:12px;margin-top:8px;font-weight:600;color:${hikSyncMsg.err ? '#f87171' : '#34d399'}">${esc(hikSyncMsg.text)}</div>`));
-  }
-  body.appendChild(syncBox);
+  // (Sync Now button hidden — Hik-Connect live feed unavailable for now.)
 
   // Unknown-staff alert: badged in but not in the staff list
   if (hikUnknown.length) {
