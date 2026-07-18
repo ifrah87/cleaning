@@ -822,19 +822,29 @@ function fmtEventTime(v) {
   if (isNaN(d.getTime())) return String(v);
   return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 }
+function evParse(v) { const d = /^\d{10,}$/.test(String(v)) ? new Date(Number(v)) : new Date(v); return isNaN(d.getTime()) ? null : d; }
+function eventDay(v) { const d = evParse(v); return d ? (d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')) : ''; }
+
 async function loadHikArrivals() {
   if (!db) return;
   try {
-    const since = new Date(Date.now() - 18 * 3600 * 1000).toISOString(); // this workday
+    const since = new Date(Date.now() - 40 * 3600 * 1000).toISOString(); // fetch a wide window...
     const { data, error } = await db.from('hik_events')
       .select('person_name,person_code,event_time,received_at')
       .gte('received_at', since)
-      .order('received_at', { ascending: true });
+      .order('event_time', { ascending: true });
     if (error) throw error;
-    const firstByName = {};
+    const today = todayKey();
+    const firstByName = {};   // earliest scan TODAY per person (whether it succeeded or failed)
     for (const e of (data || [])) {
+      const when = e.event_time || e.received_at;
+      if (eventDay(when) !== today) continue;                 // ...but only keep today's scans
       const key = (e.person_name || '').trim().toLowerCase();
-      if (key && !firstByName[key]) firstByName[key] = e;
+      if (!key) continue;
+      const prev = firstByName[key];
+      if (!prev || (evParse(when) && evParse(prev.event_time || prev.received_at) && evParse(when) < evParse(prev.event_time || prev.received_at))) {
+        firstByName[key] = e;
+      }
     }
     const staffByName = {};
     for (const s of (state.staff || [])) staffByName[(s.name || '').trim().toLowerCase()] = s;
