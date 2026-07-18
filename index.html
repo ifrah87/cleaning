@@ -1200,7 +1200,15 @@ function viewRollCall() {
   const wrap = el('<div></div>');
   const body = el('<div class="body"></div>');
 
-  // (Sync Now button hidden — Hik-Connect live feed unavailable for now.)
+  // Sync Now — pull the staff roster from Hik-Connect
+  const syncBox = el('<div style="margin-bottom:16px"></div>');
+  const syncBtn = el('<button class="add-btn" style="background:#29b6f5">⟳ Sync Now (Hik-Connect)</button>');
+  syncBtn.onclick = () => syncFromHik();
+  syncBox.appendChild(syncBtn);
+  if (hikSyncMsg) {
+    syncBox.appendChild(el(`<div style="font-size:12px;margin-top:8px;font-weight:600;color:${hikSyncMsg.err ? '#f87171' : '#34d399'}">${esc(hikSyncMsg.text)}</div>`));
+  }
+  body.appendChild(syncBox);
 
   // Unknown-staff alert: badged in but not in the staff list
   if (hikUnknown.length) {
@@ -1210,34 +1218,55 @@ function viewRollCall() {
     body.appendChild(al);
   }
 
-  // Manual roll call — tap a person's status to cycle present → late → no-show → off.
-  const roster = cleaningStaff();
-  const crews = [...new Set(roster.map((p) => p.crew))];
-  crews.forEach((crewName) => {
-    const members = roster.filter((p) => p.crew === crewName);
-    const color = (members[0] && members[0].color) || '#5d748c';
-    const group = el('<div class="crew-group"></div>');
-    const head = el('<div class="crew-head"></div>');
-    head.appendChild(el(`<div class="crew-dot" style="background:${color}"></div>`));
-    head.appendChild(el(`<div class="crew-name">${esc(crewName)}</div>`));
-    const present = members.filter((m) => ['present', 'late'].includes(state.attendance[m.id])).length;
-    head.appendChild(el(`<div class="crew-sub">${present}/${members.length} in</div>`));
-    group.appendChild(head);
-    members.forEach((p) => {
-      const st = STATUS[state.attendance[p.id] || 'present'];
-      const row = el('<div class="person"></div>');
-      const info = el('<div class="person-info"></div>');
-      info.appendChild(el(`<div class="person-name">${esc(p.name)}</div>`));
-      info.appendChild(el(`<div class="person-floors">${esc(personFloors(p))}</div>`));
-      row.appendChild(info);
-      const btn = el(`<button class="status-btn" style="background:${st.color}">${st.label}</button>`);
-      btn.onclick = () => cycleStatus(p.id);
-      row.appendChild(btn);
-      group.appendChild(row);
-    });
-    body.appendChild(group);
-  });
-  body.appendChild(el('<div class="hint">Tap a status to cycle · Present → Late → No-show → Off</div>'));
+  // WHO'S IN TODAY — only people who badged in, with clock-in times + room assignment.
+  const arrIds = Object.keys(hikArrivals);
+  const staffById = {};
+  for (const s of (state.staff || [])) staffById[s.id] = s;
+  const whoIn = el('<div style="margin-bottom:18px"></div>');
+  whoIn.appendChild(el(`<div class="section-label" style="color:#34d399">✓ Clocked in today (${arrIds.length})</div>`));
+  if (arrIds.length && (state.servicedUnits || []).length) {
+    const autoBtn = el('<button class="add-btn" style="background:#34d399;color:#0a0e16;margin-bottom:12px">⚡ Auto-assign rooms evenly</button>');
+    autoBtn.onclick = () => autoAssignRooms();
+    whoIn.appendChild(autoBtn);
+  }
+  if (!arrIds.length) {
+    whoIn.appendChild(el(`<div class="empty" style="text-align:center;padding:16px 0;color:#5d748c">No clock-ins yet today.</div>`));
+  } else {
+    arrIds
+      .map((id) => ({ s: staffById[id], t: hikArrivals[id].time }))
+      .filter((x) => x.s)
+      .sort((a, b) => String(a.t || '').localeCompare(String(b.t || '')))
+      .forEach(({ s, t }) => {
+        const card = el('<div class="person" style="flex-direction:column;align-items:stretch;gap:8px"></div>');
+        const info = el('<div class="person-info"></div>');
+        info.appendChild(el(`<div class="person-name">${esc(s.name)}</div>`));
+        info.appendChild(el(`<div class="person-floors" style="color:#34d399;font-weight:600">✓ Clocked in ${esc(t)}</div>`));
+        card.appendChild(info);
+        const mine = (state.servicedUnits || []).filter((u) => u.assignedTo === s.id);
+        if (mine.length) {
+          const chips = el('<div style="display:flex;flex-wrap:wrap;gap:6px"></div>');
+          mine.forEach((u) => {
+            const chip = el(`<button class="freqmini on" style="flex:0 0 auto;padding:6px 11px">${esc(u.unit)} ✕</button>`);
+            chip.onclick = () => setUnitAssignee(u.id, '');
+            chips.appendChild(chip);
+          });
+          card.appendChild(chips);
+        }
+        const free = (state.servicedUnits || []).filter((u) => !u.assignedTo);
+        if (free.length) {
+          const sel = el('<select class="area-select"></select>');
+          sel.appendChild(el('<option value="">+ Assign a room…</option>'));
+          free.slice().sort((a, b) => String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }))
+            .forEach((u) => sel.appendChild(el(`<option value="${esc(u.id)}">Room ${esc(u.unit)}</option>`)));
+          sel.onchange = (e) => { if (e.target.value) setUnitAssignee(e.target.value, s.id); };
+          card.appendChild(sel);
+        } else if (!mine.length) {
+          card.appendChild(el('<div style="font-size:11px;color:#5d748c">No rooms yet — add units on the Cleaning tab, then assign here.</div>'));
+        }
+        whoIn.appendChild(card);
+      });
+  }
+  body.appendChild(whoIn);
 
   wrap.appendChild(body);
   return wrap;
@@ -1717,9 +1746,12 @@ function render() {
     header.appendChild(strip);
   }
   if (state.tab === 'rollcall') {
+    const clockedIn = Object.keys(hikArrivals).length;
+    const assigned = (state.servicedUnits || []).filter((u) => u.assignedTo).length;
+    const totalRooms = (state.servicedUnits || []).length;
     const strip = el(`<div class="stats"></div>`);
-    strip.appendChild(el(`<div class="stat"><div class="lbl">ON SHIFT</div><div class="val">${s.onShift}/${s.crew}</div></div>`));
-    strip.appendChild(el(`<div class="stat"><div class="lbl">NO-SHOW</div><div class="val">${s.noshow}</div></div>`));
+    strip.appendChild(el(`<div class="stat"><div class="lbl">CLOCKED IN</div><div class="val">${clockedIn}</div></div>`));
+    strip.appendChild(el(`<div class="stat"><div class="lbl">ROOMS ASSIGNED</div><div class="val">${assigned}/${totalRooms}</div></div>`));
     header.appendChild(strip);
   }
   app.appendChild(header);
