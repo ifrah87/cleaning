@@ -756,8 +756,8 @@ function setUnitAssignee(id, pid) {
 function autoAssignRooms() {
   const people = Object.keys(hikArrivals)
     .filter((id) => (state.staff || []).some((s) => s.id === id))
-    .map((id) => ({ id, t: hikArrivals[id].time }))
-    .sort((a, b) => String(a.t || '').localeCompare(String(b.t || '')));
+    .map((id) => ({ id, raw: hikArrivals[id].raw }))
+    .sort((a, b) => String(a.raw || '').localeCompare(String(b.raw || '')));   // earliest badge-in first
   const rooms = (state.servicedUnits || []).slice()
     .sort((a, b) => String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }));
   if (!people.length) { hikSyncMsg = { err: true, text: 'No one clocked in to assign rooms to.' }; render(); return; }
@@ -849,7 +849,7 @@ async function loadHikArrivals() {
       const e = firstByName[key];
       const t = fmtEventTime(e.event_time);
       const s = staffByName[key];            // case-insensitive name match
-      if (s) hikArrivals[s.id] = { time: t };
+      if (s) hikArrivals[s.id] = { time: t, raw: e.event_time };
       else hikUnknown.push({ name: e.person_name, time: t });
     }
   } catch (e) { /* keep previous arrivals */ }
@@ -1303,9 +1303,9 @@ function viewRollCall() {
     whoIn.appendChild(el(`<div class="empty" style="text-align:center;padding:16px 0;color:#5d748c">No clock-ins for this day. Tap "Import Attendance File" and pick your Hik export.</div>`));
   } else {
     arrIds
-      .map((id) => ({ s: staffById[id], t: hikArrivals[id].time }))
+      .map((id) => ({ s: staffById[id], t: hikArrivals[id].time, raw: hikArrivals[id].raw }))
       .filter((x) => x.s)
-      .sort((a, b) => String(a.t || '').localeCompare(String(b.t || '')))
+      .sort((a, b) => String(a.raw || '').localeCompare(String(b.raw || '')))   // earliest badge-in first
       .forEach(({ s, t }) => {
         const card = el('<div class="person" style="flex-direction:column;align-items:stretch;gap:8px"></div>');
         const info = el('<div class="person-info"></div>');
