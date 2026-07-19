@@ -224,6 +224,7 @@
 <div id="app"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
 // ============================================================
 // SHARED SERVER (Supabase) — fill these two in after creating your project.
@@ -816,47 +817,103 @@ async function syncFromHik() {
 // Today's badge-in events → first arrival per person, matched to staff by name.
 let hikArrivals = {};   // staff id -> { time }
 let hikUnknown = [];    // [{ name, time }] badged in but no matching staff (the "unknown" alert)
+let selectedDay = null; // which day Roll Call is showing (null = today)
 function fmtEventTime(v) {
   if (!v) return '';
-  const d = /^\d{10,}$/.test(String(v)) ? new Date(Number(v)) : new Date(v);
-  if (isNaN(d.getTime())) return String(v);
-  return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  const s = String(v);
+  // Pull HH:MM straight from the string (EAT wall-clock) — no timezone shifting.
+  const m = s.match(/(?:[ T])(\d{1,2}):(\d{2})/) || s.match(/^(\d{1,2}):(\d{2})/);
+  if (m) { let h = parseInt(m[1], 10); const min = m[2]; const ap = h >= 12 ? 'PM' : 'AM'; h = h % 12 || 12; return h + ':' + min + ' ' + ap; }
+  const d = /^\d{10,}$/.test(s) ? new Date(Number(s)) : new Date(s);
+  return isNaN(d.getTime()) ? s : d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 }
-function evParse(v) { const d = /^\d{10,}$/.test(String(v)) ? new Date(Number(v)) : new Date(v); return isNaN(d.getTime()) ? null : d; }
-function eventDay(v) { const d = evParse(v); return d ? (d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')) : ''; }
-
+// Load arrivals for the selected day (defaults to today), matched to staff by name.
 async function loadHikArrivals() {
   if (!db) return;
   try {
-    const since = new Date(Date.now() - 40 * 3600 * 1000).toISOString(); // fetch a wide window...
+    const day = selectedDay || todayKey();
     const { data, error } = await db.from('hik_events')
-      .select('person_name,person_code,event_time,received_at')
-      .gte('received_at', since)
-      .order('event_time', { ascending: true });
+      .select('person_name,person_code,event_time')
+      .like('event_time', day + '%')              // only the selected day's scans
+      .order('event_time', { ascending: true });  // earliest first
     if (error) throw error;
-    const today = todayKey();
-    const firstByName = {};   // earliest scan TODAY per person (whether it succeeded or failed)
+    const firstByName = {};
     for (const e of (data || [])) {
-      const when = e.event_time || e.received_at;
-      if (eventDay(when) !== today) continue;                 // ...but only keep today's scans
       const key = (e.person_name || '').trim().toLowerCase();
-      if (!key) continue;
-      const prev = firstByName[key];
-      if (!prev || (evParse(when) && evParse(prev.event_time || prev.received_at) && evParse(when) < evParse(prev.event_time || prev.received_at))) {
-        firstByName[key] = e;
-      }
+      if (key && !firstByName[key]) firstByName[key] = e;   // first seen = earliest
     }
     const staffByName = {};
     for (const s of (state.staff || [])) staffByName[(s.name || '').trim().toLowerCase()] = s;
     hikArrivals = {}; hikUnknown = [];
     for (const key in firstByName) {
       const e = firstByName[key];
-      const t = fmtEventTime(e.event_time || e.received_at);
+      const t = fmtEventTime(e.event_time);
       const s = staffByName[key];            // case-insensitive name match
       if (s) hikArrivals[s.id] = { time: t };
-      else hikUnknown.push({ name: e.person_name, time: t });   // mismatch → flagged
+      else hikUnknown.push({ name: e.person_name, time: t });
     }
   } catch (e) { /* keep previous arrivals */ }
+}
+
+// Import a Hik export (Time Card or Access Record) → store check-ins → refresh Roll Call.
+async function importAttendance(file) {
+  hikSyncMsg = { text: 'Reading attendance file…' }; render();
+  try {
+    if (typeof XLSX === 'undefined') throw new Error('Spreadsheet reader not loaded — check your connection and retry.');
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: 'array' });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' });
+    let hdr = -1, C = {};
+    for (let i = 0; i < rows.length; i++) {
+      const r = (rows[i] || []).map((x) => String(x || '').trim().toLowerCase());
+      if (r.includes('first name') && r.some((x) => x.includes('record'))) {
+        hdr = i; C = { fmt: 'timecard', first: r.indexOf('first name'), last: r.indexOf('last name'), id: r.indexOf('id'), date: r.indexOf('date'), rec: r.findIndex((x) => x.includes('record')) }; break;
+      }
+      if (r.includes('name') && r.some((x) => x.includes('time'))) {
+        hdr = i; C = { fmt: 'access', name: r.indexOf('name'), id: r.indexOf('id'), time: r.findIndex((x) => x.includes('time')) }; break;
+      }
+    }
+    if (hdr < 0) throw new Error('Could not recognise the columns in this file.');
+    const map = {};
+    for (let i = hdr + 1; i < rows.length; i++) {
+      const row = rows[i] || [];
+      let name = '', code = '', date = '', times = [];
+      if (C.fmt === 'timecard') {
+        name = ((row[C.first] || '') + ' ' + (row[C.last] || '')).trim();
+        code = String(row[C.id] || '').trim();
+        date = String(row[C.date] || '').trim().slice(0, 10);
+        times = String(row[C.rec] || '').split(/[;,]/).map((t) => t.trim()).filter((t) => /\d{1,2}:\d{2}/.test(t));
+      } else {
+        name = String(row[C.name] || '').trim();
+        code = String(row[C.id] || '').trim();
+        const ts = String(row[C.time] || '').trim();
+        const dm = ts.match(/(\d{4}-\d{2}-\d{2})/); const tm = ts.match(/(\d{1,2}:\d{2})/);
+        date = dm ? dm[1] : ''; times = tm ? [tm[1]] : [];
+      }
+      if (!name || !date || !times.length) continue;
+      const first = times.slice().sort()[0];
+      const et = date + ' ' + first;
+      const key = name.toLowerCase() + '|' + date;
+      if (!map[key] || et < map[key].event_time) map[key] = { person_name: name, person_code: code, event_time: et };
+    }
+    const records = Object.values(map);
+    if (!records.length) throw new Error('No check-in rows found in the file.');
+    if (db) {
+      await db.from('hik_events').upsert(records.map((r) => ({ ...r, event_type: 'imported', raw: { source: 'import' } })), { onConflict: 'person_name,event_time', ignoreDuplicates: true });
+    }
+    const days = [...new Set(records.map((r) => r.event_time.slice(0, 10)))].sort();
+    selectedDay = days[days.length - 1];   // show the latest day found in the file
+    await loadHikArrivals();
+    const matched = Object.keys(hikArrivals).length;
+    let msg = `Imported ${records.length} check-ins (${days.length === 1 ? days[0] : days.length + ' days'}) — ${matched} matched.`;
+    if (hikUnknown.length) msg += ` ${hikUnknown.length} not matched: ${hikUnknown.map((u) => u.name).join(', ')}.`;
+    hikSyncMsg = { text: msg };
+    render();
+  } catch (e) {
+    hikSyncMsg = { err: true, text: 'Import failed: ' + ((e && e.message) || e) };
+    render();
+  }
 }
 function editServicedUnit(id, newUnit, newGuest) {
   const u = state.servicedUnits.find(x => x.id === id);
@@ -1200,11 +1257,23 @@ function viewRollCall() {
   const wrap = el('<div></div>');
   const body = el('<div class="body"></div>');
 
-  // Sync Now — pull the staff roster from Hik-Connect
+  // Sync staff roster · Import attendance file · pick the day
   const syncBox = el('<div style="margin-bottom:16px"></div>');
-  const syncBtn = el('<button class="add-btn" style="background:#29b6f5">⟳ Sync Now (Hik-Connect)</button>');
+  const syncBtn = el('<button class="add-btn" style="background:#29b6f5">⟳ Sync Staff (Hik-Connect)</button>');
   syncBtn.onclick = () => syncFromHik();
   syncBox.appendChild(syncBtn);
+  const impBtn = el('<button class="add-btn" style="background:#141b28;color:#29b6f5;border:1px solid #1f4a63;margin-top:8px">↑ Import Attendance File</button>');
+  const impInput = el('<input type="file" accept=".xlsx,.xls,.csv" style="display:none">');
+  impInput.onchange = (e) => { if (e.target.files[0]) importAttendance(e.target.files[0]); e.target.value = ''; };
+  impBtn.onclick = () => impInput.click();
+  syncBox.appendChild(impBtn);
+  syncBox.appendChild(impInput);
+  const dayRow = el('<div style="display:flex;align-items:center;gap:8px;margin-top:10px"></div>');
+  dayRow.appendChild(el('<div style="font-size:12px;color:#8da2b8;font-weight:600">Showing day</div>'));
+  const dayIn = el(`<input type="date" value="${esc(selectedDay || todayKey())}" style="flex:1;background:#0a0e16;color:#e2e8f0;border:1px solid #283441;border-radius:8px;padding:8px 10px;font-size:14px">`);
+  dayIn.onchange = (e) => { selectedDay = e.target.value || todayKey(); loadHikArrivals().then(() => render()); };
+  dayRow.appendChild(dayIn);
+  syncBox.appendChild(dayRow);
   if (hikSyncMsg) {
     syncBox.appendChild(el(`<div style="font-size:12px;margin-top:8px;font-weight:600;color:${hikSyncMsg.err ? '#f87171' : '#34d399'}">${esc(hikSyncMsg.text)}</div>`));
   }
@@ -1223,14 +1292,15 @@ function viewRollCall() {
   const staffById = {};
   for (const s of (state.staff || [])) staffById[s.id] = s;
   const whoIn = el('<div style="margin-bottom:18px"></div>');
-  whoIn.appendChild(el(`<div class="section-label" style="color:#34d399">✓ Clocked in today (${arrIds.length})</div>`));
+  const dayLbl = (selectedDay && selectedDay !== todayKey()) ? ('on ' + selectedDay) : 'today';
+  whoIn.appendChild(el(`<div class="section-label" style="color:#34d399">✓ Clocked in ${dayLbl} (${arrIds.length})</div>`));
   if (arrIds.length && (state.servicedUnits || []).length) {
     const autoBtn = el('<button class="add-btn" style="background:#34d399;color:#0a0e16;margin-bottom:12px">⚡ Auto-assign rooms evenly</button>');
     autoBtn.onclick = () => autoAssignRooms();
     whoIn.appendChild(autoBtn);
   }
   if (!arrIds.length) {
-    whoIn.appendChild(el(`<div class="empty" style="text-align:center;padding:16px 0;color:#5d748c">No clock-ins yet today.</div>`));
+    whoIn.appendChild(el(`<div class="empty" style="text-align:center;padding:16px 0;color:#5d748c">No clock-ins for this day. Tap "Import Attendance File" and pick your Hik export.</div>`));
   } else {
     arrIds
       .map((id) => ({ s: staffById[id], t: hikArrivals[id].time }))
@@ -1240,7 +1310,7 @@ function viewRollCall() {
         const card = el('<div class="person" style="flex-direction:column;align-items:stretch;gap:8px"></div>');
         const info = el('<div class="person-info"></div>');
         info.appendChild(el(`<div class="person-name">${esc(s.name)}</div>`));
-        info.appendChild(el(`<div class="person-floors" style="color:#34d399;font-weight:600">✓ Clocked in ${esc(t)}</div>`));
+        info.appendChild(el(`<div class="person-floors" style="color:#34d399;font-weight:600">✓ Arrived ${esc(t)}</div>`));
         card.appendChild(info);
         const mine = (state.servicedUnits || []).filter((u) => u.assignedTo === s.id);
         if (mine.length) {
@@ -1905,14 +1975,14 @@ function renderLogin() {
   app.appendChild(screen);
 }
 
-function boot() {
+async function boot() {
   load();
-  route();              // login → pick-your-name → app
-  remotePull();
+  route();              // login → app
+  await remotePull();   // wait for the staff roster before matching arrivals
+  loadHikArrivals().then(() => route());
   subscribeRealtime();
   refreshHistory();
   subscribeHistory();
-  loadHikArrivals();
 }
 
 // Startup: restore any existing Supabase session, then show the right screen.
