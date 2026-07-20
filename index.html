@@ -1230,11 +1230,39 @@ function unitGroups(wrap, typeKeys, emptyMsg) {
   });
 }
 
-// Cleaning tab = Office + Building only (Airbnb has its own tab).
-function viewCleaning() {
+// Each cleaning type gets its own tab/column.
+function viewOffices() {
   const wrap = el('<div class="body"></div>');
-  wrap.appendChild(addUnitForm({ types: ['office','building'], defaultType: 'office', title: 'Add an office / building unit' }));
-  unitGroups(wrap, ['office','building'], 'No office or building units yet. Add your first above.');
+  wrap.appendChild(addUnitForm({ types: ['office'], defaultType: 'office', title: 'Add an office unit' }));
+  unitGroups(wrap, ['office'], 'No office units yet. Add your first above.');
+  return wrap;
+}
+function viewBuildings() {
+  const wrap = el('<div class="body"></div>');
+  wrap.appendChild(addUnitForm({ types: ['building'], defaultType: 'building', title: 'Add a building unit' }));
+  unitGroups(wrap, ['building'], 'No building units yet. Add your first above.');
+  return wrap;
+}
+// "More" menu — the less-used tabs live here so the bottom bar stays clean.
+function viewMore() {
+  const wrap = el('<div class="body"></div>');
+  const items = [
+    { id: 'building', label: 'Floors & Common Areas', ico: '▦', sub: 'Rooftop → floors → ground checklist' },
+    { id: 'history', label: 'Cleaning History', ico: '◷', sub: 'What was cleaned, by day' },
+    { id: 'team', label: 'Team', ico: '☰', sub: 'Staff & cleaners' },
+    { id: 'settings', label: 'Settings', ico: '⚙', sub: 'App settings' },
+  ];
+  items.forEach(it => {
+    const card = el(`<div class="su-card" style="cursor:pointer;display:flex;align-items:center;gap:12px"></div>`);
+    card.appendChild(el(`<div style="font-size:22px;width:28px;text-align:center">${it.ico}</div>`));
+    const info = el(`<div style="flex:1;min-width:0"></div>`);
+    info.appendChild(el(`<div class="su-unit" style="font-size:15px">${it.label}</div>`));
+    info.appendChild(el(`<div class="su-guest">${it.sub}</div>`));
+    card.appendChild(info);
+    card.appendChild(el(`<div style="color:#5d748c;font-size:20px">›</div>`));
+    card.onclick = () => setTab(it.id);
+    wrap.appendChild(card);
+  });
   return wrap;
 }
 
@@ -1920,16 +1948,18 @@ function render() {
 
   const header = el(`<div class="header"></div>`);
   header.appendChild(el(`<div class="h-eyebrow">66-UNIT BUILDING · 11 FLOORS</div>`));
-  const titles = { cleaning:'Office & Building', airbnb:'Airbnb Rooms', rollcall:'Morning Roll Call', building:'Building', exterior:'Exterior', history:'Cleaning History', team:'Team', settings:'Settings' };
+  const titles = { offices:'Office Cleaning', buildings:'Building Cleaning', airbnb:'Airbnb Rooms', more:'More', rollcall:'Morning Roll Call', building:'Floors & Common Areas', exterior:'Exterior', history:'Cleaning History', team:'Team', settings:'Settings' };
   header.appendChild(el(`<div class="h-title">${titles[state.tab]}</div>`));
   header.appendChild(el(`<div class="h-date">${dateStr}</div>`));
-  if (state.tab === 'cleaning') {
-    const dueCount = state.servicedUnits.filter(unitDueToday).length;
-    const doneCount = state.servicedUnits.filter(u => unitDueToday(u) && servicedDone(u.id)).length;
+  const typeTab = { offices: 'office', buildings: 'building', airbnb: 'airbnb' }[state.tab];
+  if (typeTab) {
+    const inType = state.servicedUnits.filter(u => unitType(u) === typeTab);
+    const dueCount = inType.filter(unitDueToday).length;
+    const doneCount = inType.filter(u => unitDueToday(u) && servicedDone(u.id)).length;
     const strip = el(`<div class="stats"></div>`);
     strip.appendChild(el(`<div class="stat"><div class="lbl">DUE TODAY</div><div class="val">${dueCount}</div></div>`));
     strip.appendChild(el(`<div class="stat"><div class="lbl">CLEANED</div><div class="val">${doneCount}</div></div>`));
-    strip.appendChild(el(`<div class="stat"><div class="lbl">SERVICED</div><div class="val">${state.servicedUnits.length}</div></div>`));
+    strip.appendChild(el(`<div class="stat"><div class="lbl">TOTAL</div><div class="val">${inType.length}</div></div>`));
     header.appendChild(strip);
   }
   if (state.tab === 'rollcall') {
@@ -1943,8 +1973,10 @@ function render() {
   }
   app.appendChild(header);
 
-  if (state.tab==='cleaning') app.appendChild(viewCleaning());
+  if (state.tab==='offices') app.appendChild(viewOffices());
+  else if (state.tab==='buildings') app.appendChild(viewBuildings());
   else if (state.tab==='airbnb') app.appendChild(viewAirbnb());
+  else if (state.tab==='more') app.appendChild(viewMore());
   else if (state.tab==='rollcall') app.appendChild(viewRollCall());
   else if (state.tab==='building') app.appendChild(viewBuilding());
   else if (state.tab==='exterior') app.appendChild(viewExterior());
@@ -2003,14 +2035,15 @@ function render() {
   const tabs = [
     { id:'rollcall', label:'Roll Call', ico:'☀' },
     { id:'airbnb', label:'Airbnb', ico:'⌂' },
-    { id:'cleaning', label:'Cleaning', ico:'✦' },
-    { id:'building', label:'Building', ico:'▦' },
-    { id:'history', label:'History', ico:'◷' },
-    { id:'team', label:'Team', ico:'☰' },
-    { id:'settings', label:'Settings', ico:'⚙' },
+    { id:'offices', label:'Offices', ico:'▤' },
+    { id:'buildings', label:'Buildings', ico:'▦' },
+    { id:'more', label:'More', ico:'⋯' },
   ];
+  // "More" stays highlighted while you're on any of its sub-pages.
+  const moreIds = ['more','building','history','team','settings'];
   tabs.forEach(t => {
-    const b = el(`<button class="${state.tab===t.id?'active':''}"><div class="ico">${t.ico}</div><div>${t.label}</div></button>`);
+    const isActive = t.id === 'more' ? moreIds.includes(state.tab) : state.tab === t.id;
+    const b = el(`<button class="${isActive?'active':''}"><div class="ico">${t.ico}</div><div>${t.label}</div></button>`);
     b.onclick = () => setTab(t.id);
     nav.appendChild(b);
   });
