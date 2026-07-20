@@ -74,11 +74,13 @@
   .crew-sub { font-size: 11px; color: #5d748c; font-weight: 600; margin-left: auto; }
 
   .person {
-    background: #141b28; border: 1px solid #1e2733; border-radius: 12px;
-    padding: 13px 14px; margin-bottom: 8px;
+    background: #141b28; border: 1px solid #1e2733; border-radius: 9px;
+    padding: 8px 12px; margin-bottom: 5px;
     display: flex; align-items: center; gap: 12px;
     box-shadow: 0 1px 3px rgba(15,58,95,0.04);
   }
+  .person-name { font-size: 14px; }
+  .person-floors { font-size: 11px; }
   .person-info { flex: 1; min-width: 0; }
   .person-name { font-size: 15px; font-weight: 600; color: #f1f5f9; }
   .person-floors { font-size: 12px; color: #8da2b8; margin-top: 1px; }
@@ -724,13 +726,23 @@ function setTab(t) { state.tab=t; save(); render(); }
 function resetCompletions() { showConfirm('Reset all completion checkmarks?', 'Attendance and assignments are kept.', () => { state.completions={}; save(); render(); }); }
 
 // --- Serviced unit actions ---
-function addServicedUnit(unit, guest, freq) {
+// Cleaning types, colour-coded.
+const UNIT_TYPES = {
+  airbnb:   { label: 'Airbnb',   color: '#fb7185' },
+  office:   { label: 'Office',   color: '#29b6f5' },
+  building: { label: 'Building', color: '#34d399' },
+};
+const UNIT_TYPE_ORDER = ['airbnb', 'office', 'building'];
+const unitType = (u) => UNIT_TYPES[u && u.type] ? u.type : 'building';
+
+function addServicedUnit(unit, guest, freq, type) {
   if (!unit) return;
   state.servicedUnits.push({
     id: 'su' + Date.now(),
     unit: unit.trim(),
     guest: (guest||'').trim(),
     freq: freq || 'daily',
+    type: type || 'building',
     startDate: todayKey(),
   });
   save(); render();
@@ -1118,6 +1130,23 @@ function viewCleaning() {
   const inG = el(`<input id="newGuest" placeholder="Guest name (optional)" style="flex:1.4;min-width:0">`);
   rowU.appendChild(inU); rowU.appendChild(inG); form.appendChild(rowU);
 
+  // Type picker (colour-coded): Airbnb · Office · Building
+  const typeRow = el(`<div style="display:flex;gap:6px;margin-bottom:8px"></div>`);
+  let chosenType = 'airbnb';
+  const typeBtns = {};
+  UNIT_TYPE_ORDER.forEach(tk => {
+    const t = UNIT_TYPES[tk];
+    const on = tk === chosenType;
+    const b = el(`<button class="freqpick ${on ? 'on' : ''}" style="${on ? `background:${t.color};border-color:${t.color};color:#0a0e16` : ''}">${t.label}</button>`);
+    b.onclick = () => {
+      chosenType = tk;
+      Object.values(typeBtns).forEach(x => { x.classList.remove('on'); x.style.background = ''; x.style.borderColor = ''; x.style.color = ''; });
+      b.classList.add('on'); b.style.background = t.color; b.style.borderColor = t.color; b.style.color = '#0a0e16';
+    };
+    typeBtns[tk] = b; typeRow.appendChild(b);
+  });
+  form.appendChild(typeRow);
+
   const freqRow = el(`<div style="display:flex;gap:6px;margin-bottom:10px"></div>`);
   let chosenFreq = 'daily';
   const freqBtns = {};
@@ -1133,7 +1162,7 @@ function viewCleaning() {
     const u = document.getElementById('newUnit').value;
     const g = document.getElementById('newGuest').value;
     if (!u.trim()) { document.getElementById('newUnit').focus(); return; }
-    addServicedUnit(u, g, chosenFreq);
+    addServicedUnit(u, g, chosenFreq, chosenType);
   };
   form.appendChild(addBtn);
   wrap.appendChild(form);
@@ -1917,37 +1946,30 @@ async function logout() {
 }
 
 async function attemptLogin() {
-  const uEl = document.getElementById('loginUser');
-  const pEl = document.getElementById('loginPass');
+  const pinEl = document.getElementById('loginPin');
   const errEl = document.getElementById('loginErr');
-  const raw = uEl.value.trim();
-  const p = pEl.value;
-  // Allow a bare username like "admin" — map it to the office email domain.
-  const email = raw.includes('@') ? raw : (raw.toLowerCase() + '@orfanerealestate.so');
-  const fail = (msg) => { errEl.textContent = msg; uEl.classList.add('error'); pEl.classList.add('error'); };
+  const pin = (pinEl.value || '').trim();
+  const fail = (msg) => { errEl.textContent = msg; pinEl.classList.add('error'); };
+  if (!/^\d{4}$/.test(pin)) { fail('Enter your 4-digit PIN'); return; }
+  const email = 'admin@orfanerealestate.so';
+  const password = 'orfane-' + pin;   // 4-digit PIN padded to a valid password
 
   if (db) {
     const btn = document.getElementById('loginBtn');
     if (btn) { btn.disabled = true; btn.textContent = 'Signing in…'; }
     try {
-      const { error } = await db.auth.signInWithPassword({ email, password: p });
+      const { error } = await db.auth.signInWithPassword({ email, password });
       if (error) throw error;
       authed = true;
       boot();
     } catch (e) {
       if (btn) { btn.disabled = false; btn.textContent = 'Sign In'; }
-      fail('Invalid email or password');
+      pinEl.value = '';
+      fail('Wrong PIN');
     }
     return;
   }
-
-  // Fallback: server not configured → legacy local gate.
-  if (raw === CREDENTIALS.username && p === CREDENTIALS.password) {
-    localStorage.setItem(AUTH_KEY, 'true');
-    boot();
-  } else {
-    fail('Invalid username or password');
-  }
+  fail('Server not connected.');
 }
 
 function renderLogin() {
@@ -1957,22 +1979,22 @@ function renderLogin() {
   const box = el(`<div class="login-box"></div>`);
   box.appendChild(el(`<div class="login-logo">✦</div>`));
   box.appendChild(el(`<div class="login-heading">Cleaning Ops</div>`));
-  box.appendChild(el(`<div class="login-sub">Office sign in</div>`));
-  box.appendChild(el(`<div class="login-label">Username</div>`));
-  const uIn = el(`<input class="login-input" id="loginUser" type="text" placeholder="admin" autocomplete="username" autocapitalize="none" autocorrect="off">`);
-  uIn.addEventListener('focus', () => uIn.classList.remove('error'));
-  box.appendChild(uIn);
-  box.appendChild(el(`<div class="login-label">Password</div>`));
-  const pIn = el(`<input class="login-input" id="loginPass" type="password" placeholder="Enter password" autocomplete="current-password">`);
-  pIn.addEventListener('focus', () => pIn.classList.remove('error'));
-  pIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') attemptLogin(); });
-  box.appendChild(pIn);
+  box.appendChild(el(`<div class="login-sub">Enter your 4-digit PIN</div>`));
+  const pin = el(`<input class="login-input" id="loginPin" type="tel" inputmode="numeric" maxlength="4" placeholder="••••" autocomplete="off" style="text-align:center;letter-spacing:0.6em;font-size:26px">`);
+  pin.addEventListener('input', () => {
+    pin.value = pin.value.replace(/\D/g, '').slice(0, 4);
+    pin.classList.remove('error');
+    if (pin.value.length === 4) attemptLogin();   // auto-submit on 4th digit
+  });
+  pin.addEventListener('keydown', (e) => { if (e.key === 'Enter') attemptLogin(); });
+  box.appendChild(pin);
   const btn = el(`<button class="login-btn" id="loginBtn">Sign In</button>`);
   btn.onclick = attemptLogin;
   box.appendChild(btn);
   box.appendChild(el(`<div class="login-error" id="loginErr"></div>`));
   screen.appendChild(box);
   app.appendChild(screen);
+  setTimeout(() => { try { pin.focus(); } catch (e) {} }, 100);
 }
 
 async function boot() {
