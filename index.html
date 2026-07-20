@@ -579,6 +579,7 @@ let cleaningHistory = [];        // recent log rows, newest first
 let lastCleanedByUnit = {};      // unit_id -> newest row (drives the "last cleaned" line)
 let historyFilter = 'all';       // History view room filter (per-device UI state)
 let historyDay = '';             // History view day filter ('' = all days)
+let teamShowAll = false;         // Team tab: false = cleaners only (default once any tagged)
 const dayKeyLocal = (ts) => { const d = new Date(ts); return isNaN(d) ? '' : d.toLocaleDateString('en-CA'); }; // local YYYY-MM-DD
 
 async function logClean(unit) {
@@ -1839,9 +1840,17 @@ function employeeGroups(wrap) {
     wrap.appendChild(el(`<div class="empty" style="text-align:center;padding:24px 0">No employees yet. Add your first above.</div>`));
     return;
   }
-  const crews = [...new Set(STAFF.map(p => p.crew))];
+  // Show only cleaners by default (once any are tagged); "All staff" reveals everyone.
+  const anyCleaner = STAFF.some(p => p.isCleaner);
+  const showAll = teamShowAll || !anyCleaner;
+  const list = showAll ? STAFF : STAFF.filter(p => p.isCleaner);
+  if (!list.length) {
+    wrap.appendChild(el(`<div class="empty" style="text-align:center;padding:24px 0">No cleaners tagged yet. Switch to "All staff" and tap <b>+ Cleaner</b> on the cleaners.</div>`));
+    return;
+  }
+  const crews = [...new Set(list.map(p => p.crew))];
   crews.forEach(crewName => {
-    const members = STAFF.filter(p => p.crew===crewName);
+    const members = list.filter(p => p.crew===crewName);
     const color = members[0].color;
     const group = el(`<div class="crew-group"></div>`);
     const head = el(`<div class="crew-head"></div>`);
@@ -1932,7 +1941,18 @@ function viewTeam() {
   const total = (state.staff || []).length;
   const cleaners = (state.staff || []).filter((p) => p.isCleaner).length;
   wrap.appendChild(el(`<div class="note">Tap <b>Cleaner</b> on a person to add them to the cleaning team — Roll Call and room assignments then show only cleaners. ${cleaners ? `<b>${cleaners}</b> of ${total} tagged.` : `None tagged yet, so all ${total} show for now.`}</div>`));
-  wrap.appendChild(employeeAddForm());
+
+  // Filter: cleaners only (default) vs everyone. Lets you hide office/management after a sync.
+  if (cleaners) {
+    const seg = el('<div style="display:flex;gap:6px;margin-bottom:12px"></div>');
+    const mk = (lbl, on, fn) => { const b = el(`<button class="freqpick ${on ? 'on' : ''}" style="flex:1">${lbl}</button>`); b.onclick = fn; return b; };
+    seg.appendChild(mk(`Cleaners (${cleaners})`, !teamShowAll, () => { teamShowAll = false; render(); }));
+    seg.appendChild(mk(`All staff (${total})`, teamShowAll, () => { teamShowAll = true; render(); }));
+    wrap.appendChild(seg);
+  }
+
+  // Add-employee form only matters when viewing everyone.
+  if (teamShowAll || !cleaners) wrap.appendChild(employeeAddForm());
   employeeGroups(wrap);
   return wrap;
 }
