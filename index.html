@@ -573,6 +573,8 @@ function renderCleanerPicker() {
 let cleaningHistory = [];        // recent log rows, newest first
 let lastCleanedByUnit = {};      // unit_id -> newest row (drives the "last cleaned" line)
 let historyFilter = 'all';       // History view room filter (per-device UI state)
+let historyDay = '';             // History view day filter ('' = all days)
+const dayKeyLocal = (ts) => { const d = new Date(ts); return isNaN(d) ? '' : d.toLocaleDateString('en-CA'); }; // local YYYY-MM-DD
 
 async function logClean(unit) {
   if (!db) return null;
@@ -760,29 +762,51 @@ function setUnitFreq(id, freq) {
 }
 function setUnitAssignee(id, pid) {
   const u = state.servicedUnits.find(x => x.id === id);
-  if (u) u.assignedTo = pid || null;   // '' → auto (by floor owner)
+  if (u) {
+    u.assignedTo = pid || null;   // '' → auto (by floor owner)
+    // Remember this as the room's "usual" cleaner so auto-assign keeps the same person here.
+    if (pid) u.usualTo = pid; else u.usualTo = null;
+  }
+  save(); render();
+}
+function setUnitPriority(id, on) {
+  const u = state.servicedUnits.find(x => x.id === id);
+  if (u) u.priority = !!on;
   save(); render();
 }
 
-// One-tap: split every room evenly (in number order) among the people clocked in today.
+// One-tap auto-assign:
+//   1. Rooms with a "usual" cleaner who clocked in → keep that same person (Airbnb stays with its crew).
+//   2. Remaining rooms, priority ⭐ first, go to the earliest-arriving cleaners.
+//   3. Everything balances so no one is overloaded.
 function autoAssignRooms() {
   const people = Object.keys(hikArrivals)
     .filter((id) => (state.staff || []).some((s) => s.id === id))
     .map((id) => ({ id, raw: hikArrivals[id].raw }))
     .sort((a, b) => String(a.raw || '').localeCompare(String(b.raw || '')));   // earliest badge-in first
-  const rooms = (state.servicedUnits || []).slice()
-    .sort((a, b) => String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }));
   if (!people.length) { hikSyncMsg = { err: true, text: 'No one clocked in to assign rooms to.' }; render(); return; }
+  const inIds = new Set(people.map((p) => p.id));
+  const load = {}; people.forEach((p) => { load[p.id] = 0; });
+
+  const rooms = (state.servicedUnits || []).slice().sort((a, b) =>
+    (b.priority ? 1 : 0) - (a.priority ? 1 : 0)                                  // priority ⭐ rooms first
+    || String(a.time || '~').localeCompare(String(b.time || '~'))               // then earliest scheduled time
+    || String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }));
   if (!rooms.length) { hikSyncMsg = { err: true, text: 'No rooms yet — add units on the Cleaning tab first.' }; render(); return; }
-  rooms.forEach((u) => { u.assignedTo = null; });          // start fresh
-  const per = Math.floor(rooms.length / people.length);
-  const extra = rooms.length % people.length;              // first people get one extra
-  let idx = 0;
-  people.forEach((p, i) => {
-    const count = per + (i < extra ? 1 : 0);
-    for (let k = 0; k < count && idx < rooms.length; k++, idx++) rooms[idx].assignedTo = p.id;
+  rooms.forEach((u) => { u.assignedTo = null; });                               // start fresh
+
+  // Pass 1: keep every room's usual cleaner if they clocked in.
+  let kept = 0;
+  rooms.forEach((u) => {
+    if (u.usualTo && inIds.has(u.usualTo)) { u.assignedTo = u.usualTo; load[u.usualTo]++; kept++; }
   });
-  hikSyncMsg = { text: `Split ${rooms.length} rooms among ${people.length} clocked-in cleaners.` };
+  // Pass 2: hand each leftover room to whoever's carrying the fewest (earliest breaks ties).
+  const order = people.map((p) => p.id);
+  rooms.filter((u) => !u.assignedTo).forEach((u) => {
+    const pick = order.slice().sort((a, b) => load[a] - load[b])[0];
+    u.assignedTo = pick; load[pick]++;
+  });
+  hikSyncMsg = { text: `Assigned ${rooms.length} rooms to ${people.length} cleaners${kept ? ` (${kept} kept with their usual crew)` : ''}.` };
   save(); render();
 }
 
@@ -1173,19 +1197,21 @@ function viewCleaning() {
     return wrap;
   }
 
-  const due = units.filter(unitDueToday);
-  const notDue = units.filter(u => !unitDueToday(u));
-
-  // DUE TODAY section
-  wrap.appendChild(el(`<div class="section-label" style="color:#29b6f5;margin-top:18px">Due today (${due.length})</div>`));
-  if (!due.length) wrap.appendChild(el(`<div class="empty">Nothing scheduled for today.</div>`));
-  due.forEach(u => wrap.appendChild(servicedCard(u, true)));
-
-  // NOT DUE / all others
-  if (notDue.length) {
-    wrap.appendChild(el(`<div class="section-label" style="margin-top:20px">Not due today (${notDue.length})</div>`));
-    notDue.forEach(u => wrap.appendChild(servicedCard(u, false)));
-  }
+  // Grouped by colour-coded type; within each: priority ⭐ first, then earliest time, then number.
+  UNIT_TYPE_ORDER.forEach(tk => {
+    const t = UNIT_TYPES[tk];
+    const group = units.filter(u => unitType(u) === tk).sort((a, b) =>
+      (b.priority ? 1 : 0) - (a.priority ? 1 : 0)
+      || String(a.time || '~').localeCompare(String(b.time || '~'))
+      || String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }));
+    if (!group.length) return;
+    const head = el(`<div class="crew-head" style="margin-top:18px"></div>`);
+    head.appendChild(el(`<div class="crew-dot" style="background:${t.color}"></div>`));
+    head.appendChild(el(`<div class="crew-name">${t.label}</div>`));
+    head.appendChild(el(`<div class="crew-sub">${group.length}</div>`));
+    wrap.appendChild(head);
+    group.forEach(u => wrap.appendChild(servicedCard(u, unitDueToday(u))));
+  });
   return wrap;
 }
 
@@ -1195,6 +1221,7 @@ function servicedCard(u, isDue) {
   const pendingAbsent = c && c.reason === 'owner-absent';
   const editing = state.editingUnit === u.id;
   const card = el(`<div class="su-card ${done?'done':''} ${pendingAbsent?'needs-cover':''}"></div>`);
+  card.style.borderLeft = '3px solid ' + UNIT_TYPES[unitType(u)].color;   // colour-code by type
 
   // --- EDIT MODE ---
   if (editing) {
@@ -1214,8 +1241,9 @@ function servicedCard(u, isDue) {
 
   const top = el(`<div class="su-top"></div>`);
   const info = el(`<div style="flex:1;min-width:0"></div>`);
-  info.appendChild(el(`<div class="su-unit">Unit ${esc(u.unit)}</div>`));
+  info.appendChild(el(`<div class="su-unit">${u.priority?'⭐ ':''}Unit ${esc(u.unit)}</div>`));
   if (u.guest) info.appendChild(el(`<div class="su-guest">${esc(u.guest)}</div>`));
+  if (u.usualTo) { const usual = (state.staff||[]).find(x=>x.id===u.usualTo); if (usual) info.appendChild(el(`<div class="su-assign" style="color:#c084fc">★ Usual: ${esc(usual.name.split(' ')[0])}</div>`)); }
 
   // Last cleaned (from the shared history log)
   const lastClean = lastCleanedByUnit[u.id];
@@ -1270,6 +1298,9 @@ function servicedCard(u, isDue) {
     b.onclick = () => setUnitFreq(u.id, fk);
     ctl.appendChild(b);
   });
+  const pri = el(`<button class="freqmini ${u.priority?'on':''}" title="Priority">${u.priority?'⭐ Priority':'☆ Priority'}</button>`);
+  pri.onclick = () => setUnitPriority(u.id, !u.priority);
+  ctl.appendChild(pri);
   const edit = el(`<button class="su-edit">Edit</button>`);
   edit.onclick = () => startEditUnit(u.id);
   ctl.appendChild(edit);
@@ -1756,17 +1787,42 @@ function viewHistory() {
   sel.onchange = (e) => { historyFilter = e.target.value; render(); };
   wrap.appendChild(sel);
 
+  // Day picker — pick any past day to see what was cleaned that day (blank = every day).
+  const dayRow = el('<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px"></div>');
+  const dayIn = el(`<input type="date" value="${esc(historyDay)}" max="${esc(todayKey())}" style="flex:1;background:#0a0e16;color:#e2e8f0;border:1px solid #283441;border-radius:8px;padding:8px 10px;font-size:14px">`);
+  dayIn.onchange = (e) => { historyDay = e.target.value || ''; render(); };
+  dayRow.appendChild(dayIn);
+  if (historyDay) {
+    const clr = el('<button class="freqmini">✕ All days</button>');
+    clr.onclick = () => { historyDay = ''; render(); };
+    dayRow.appendChild(clr);
+  }
+  wrap.appendChild(dayRow);
+
   let rows = cleaningHistory;
   if (historyFilter !== 'all') rows = rows.filter(r => r.unit_id === historyFilter);
+  if (historyDay) rows = rows.filter(r => dayKeyLocal(r.cleaned_at) === historyDay);
 
-  wrap.appendChild(el(`<div class="section-label">${rows.length} cleaning${rows.length === 1 ? '' : 's'} logged</div>`));
+  const scope = historyDay ? ('on ' + historyDay) : 'in total';
+  wrap.appendChild(el(`<div class="section-label">${rows.length} cleaning${rows.length === 1 ? '' : 's'} ${scope}</div>`));
 
   if (!rows.length) {
-    wrap.appendChild(el(`<div class="empty" style="text-align:center;padding:24px 0">Nothing logged yet. Mark a room clean and it shows up here.</div>`));
+    const msg = historyDay ? 'Nothing was logged as cleaned on this day.' : 'Nothing logged yet. Mark a room clean and it shows up here.';
+    wrap.appendChild(el(`<div class="empty" style="text-align:center;padding:24px 0">${msg}</div>`));
     return wrap;
   }
 
+  // When viewing all days, break the list up with a header per day.
+  let lastDay = null;
   rows.forEach(r => {
+    if (!historyDay) {
+      const dk = dayKeyLocal(r.cleaned_at);
+      if (dk !== lastDay) {
+        lastDay = dk;
+        const dLabel = new Date(r.cleaned_at).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+        wrap.appendChild(el(`<div class="section-label" style="margin-top:14px;color:#8da2b8">${esc(dLabel)}</div>`));
+      }
+    }
     const card = el(`<div class="su-card"></div>`);
     const top = el(`<div class="su-top"></div>`);
     const info = el(`<div style="flex:1;min-width:0"></div>`);
