@@ -737,7 +737,7 @@ const UNIT_TYPES = {
 const UNIT_TYPE_ORDER = ['airbnb', 'office', 'building'];
 const unitType = (u) => UNIT_TYPES[u && u.type] ? u.type : 'building';
 
-function addServicedUnit(unit, guest, freq, type) {
+function addServicedUnit(unit, guest, freq, type, time) {
   if (!unit) return;
   state.servicedUnits.push({
     id: 'su' + Date.now(),
@@ -745,6 +745,7 @@ function addServicedUnit(unit, guest, freq, type) {
     guest: (guest||'').trim(),
     freq: freq || 'daily',
     type: type || 'building',
+    time: (time||'').trim(),      // checkout / target time (optional)
     startDate: todayKey(),
   });
   save(); render();
@@ -1143,33 +1144,45 @@ function statsBar() {
 // ============================================================
 // VIEWS
 // ============================================================
-function viewCleaning() {
-  const wrap = el('<div class="body"></div>');
-
-  // Add-unit form
+// Add-unit form. opts.types = which type buttons to show (single = locked, no picker);
+// opts.showTime adds a checkout/target-time field (used on the Airbnb tab).
+function addUnitForm(opts) {
+  opts = opts || {};
+  const types = opts.types || UNIT_TYPE_ORDER;
+  let chosenType = opts.defaultType || types[0];
   const form = el(`<div class="addbox"></div>`);
-  form.appendChild(el(`<div class="section-label" style="margin:0 0 10px">Add a unit to clean</div>`));
+  form.appendChild(el(`<div class="section-label" style="margin:0 0 10px">${opts.title || 'Add a unit to clean'}</div>`));
   const rowU = el(`<div style="display:flex;gap:6px;margin-bottom:8px"></div>`);
   const inU = el(`<input id="newUnit" placeholder="Unit (e.g. 906)" style="flex:1;min-width:0">`);
-  const inG = el(`<input id="newGuest" placeholder="Guest name (optional)" style="flex:1.4;min-width:0">`);
+  const inG = el(`<input id="newGuest" placeholder="${opts.guestPlaceholder || 'Guest name (optional)'}" style="flex:1.4;min-width:0">`);
   rowU.appendChild(inU); rowU.appendChild(inG); form.appendChild(rowU);
 
-  // Type picker (colour-coded): Airbnb · Office · Building
-  const typeRow = el(`<div style="display:flex;gap:6px;margin-bottom:8px"></div>`);
-  let chosenType = 'airbnb';
-  const typeBtns = {};
-  UNIT_TYPE_ORDER.forEach(tk => {
-    const t = UNIT_TYPES[tk];
-    const on = tk === chosenType;
-    const b = el(`<button class="freqpick ${on ? 'on' : ''}" style="${on ? `background:${t.color};border-color:${t.color};color:#0a0e16` : ''}">${t.label}</button>`);
-    b.onclick = () => {
-      chosenType = tk;
-      Object.values(typeBtns).forEach(x => { x.classList.remove('on'); x.style.background = ''; x.style.borderColor = ''; x.style.color = ''; });
-      b.classList.add('on'); b.style.background = t.color; b.style.borderColor = t.color; b.style.color = '#0a0e16';
-    };
-    typeBtns[tk] = b; typeRow.appendChild(b);
-  });
-  form.appendChild(typeRow);
+  // Optional checkout / target-time field
+  let inT = null;
+  if (opts.showTime) {
+    const rowT = el(`<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"></div>`);
+    rowT.appendChild(el(`<div style="font-size:11px;color:#8da2b8;font-weight:600;white-space:nowrap">${opts.timeLabel || 'Checkout time'}</div>`));
+    inT = el(`<input id="newTime" type="time" style="flex:1;min-width:0;background:#0a0e16;color:#e2e8f0;border:1px solid #283441;border-radius:8px;padding:7px 10px">`);
+    rowT.appendChild(inT); form.appendChild(rowT);
+  }
+
+  // Type picker (colour-coded) — only when more than one type is offered
+  if (types.length > 1) {
+    const typeRow = el(`<div style="display:flex;gap:6px;margin-bottom:8px"></div>`);
+    const typeBtns = {};
+    types.forEach(tk => {
+      const t = UNIT_TYPES[tk];
+      const on = tk === chosenType;
+      const b = el(`<button class="freqpick ${on ? 'on' : ''}" style="${on ? `background:${t.color};border-color:${t.color};color:#0a0e16` : ''}">${t.label}</button>`);
+      b.onclick = () => {
+        chosenType = tk;
+        Object.values(typeBtns).forEach(x => { x.classList.remove('on'); x.style.background = ''; x.style.borderColor = ''; x.style.color = ''; });
+        b.classList.add('on'); b.style.background = t.color; b.style.borderColor = t.color; b.style.color = '#0a0e16';
+      };
+      typeBtns[tk] = b; typeRow.appendChild(b);
+    });
+    form.appendChild(typeRow);
+  }
 
   const freqRow = el(`<div style="display:flex;gap:6px;margin-bottom:10px"></div>`);
   let chosenFreq = 'daily';
@@ -1185,24 +1198,27 @@ function viewCleaning() {
   addBtn.onclick = () => {
     const u = document.getElementById('newUnit').value;
     const g = document.getElementById('newGuest').value;
+    const tm = inT ? inT.value : '';
     if (!u.trim()) { document.getElementById('newUnit').focus(); return; }
-    addServicedUnit(u, g, chosenFreq, chosenType);
+    addServicedUnit(u, g, chosenFreq, chosenType, tm);
   };
   form.appendChild(addBtn);
-  wrap.appendChild(form);
+  return form;
+}
 
+// Render the type-grouped card list for the given type keys.
+function unitGroups(wrap, typeKeys, emptyMsg) {
   const units = state.servicedUnits.slice().sort((a, b) => String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }));
-  if (!units.length) {
-    wrap.appendChild(el(`<div class="empty" style="text-align:center;padding:30px 0">No units added yet. Add your first cleaning unit above.</div>`));
-    return wrap;
+  const relevant = units.filter(u => typeKeys.includes(unitType(u)));
+  if (!relevant.length) {
+    wrap.appendChild(el(`<div class="empty" style="text-align:center;padding:30px 0">${emptyMsg || 'No units yet — add one above.'}</div>`));
+    return;
   }
-
-  // Grouped by colour-coded type; within each: priority ⭐ first, then earliest time, then number.
-  UNIT_TYPE_ORDER.forEach(tk => {
+  typeKeys.forEach(tk => {
     const t = UNIT_TYPES[tk];
-    const group = units.filter(u => unitType(u) === tk).sort((a, b) =>
-      (b.priority ? 1 : 0) - (a.priority ? 1 : 0)
-      || String(a.time || '~').localeCompare(String(b.time || '~'))
+    const group = relevant.filter(u => unitType(u) === tk).sort((a, b) =>
+      (b.priority ? 1 : 0) - (a.priority ? 1 : 0)                                  // priority ⭐ first
+      || String(a.time || '~').localeCompare(String(b.time || '~'))               // then earliest time
       || String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }));
     if (!group.length) return;
     const head = el(`<div class="crew-head" style="margin-top:18px"></div>`);
@@ -1212,6 +1228,21 @@ function viewCleaning() {
     wrap.appendChild(head);
     group.forEach(u => wrap.appendChild(servicedCard(u, unitDueToday(u))));
   });
+}
+
+// Cleaning tab = Office + Building only (Airbnb has its own tab).
+function viewCleaning() {
+  const wrap = el('<div class="body"></div>');
+  wrap.appendChild(addUnitForm({ types: ['office','building'], defaultType: 'office', title: 'Add an office / building unit' }));
+  unitGroups(wrap, ['office','building'], 'No office or building units yet. Add your first above.');
+  return wrap;
+}
+
+// Airbnb tab = guest rooms only, with checkout time.
+function viewAirbnb() {
+  const wrap = el('<div class="body"></div>');
+  wrap.appendChild(addUnitForm({ types: ['airbnb'], defaultType: 'airbnb', title: 'Add an Airbnb room', guestPlaceholder: 'Guest name', showTime: true, timeLabel: 'Checkout' }));
+  unitGroups(wrap, ['airbnb'], 'No Airbnb rooms yet. Add your first guest room above.');
   return wrap;
 }
 
@@ -1243,6 +1274,7 @@ function servicedCard(u, isDue) {
   const info = el(`<div style="flex:1;min-width:0"></div>`);
   info.appendChild(el(`<div class="su-unit">${u.priority?'⭐ ':''}Unit ${esc(u.unit)}</div>`));
   if (u.guest) info.appendChild(el(`<div class="su-guest">${esc(u.guest)}</div>`));
+  if (u.time) info.appendChild(el(`<div class="su-guest" style="color:#fb7185">🕐 Checkout ${esc(u.time)}</div>`));
   if (u.usualTo) { const usual = (state.staff||[]).find(x=>x.id===u.usualTo); if (usual) info.appendChild(el(`<div class="su-assign" style="color:#c084fc">★ Usual: ${esc(usual.name.split(' ')[0])}</div>`)); }
 
   // Last cleaned (from the shared history log)
@@ -1888,7 +1920,7 @@ function render() {
 
   const header = el(`<div class="header"></div>`);
   header.appendChild(el(`<div class="h-eyebrow">66-UNIT BUILDING · 11 FLOORS</div>`));
-  const titles = { cleaning:'Unit Cleaning', rollcall:'Morning Roll Call', building:'Building', exterior:'Exterior', history:'Cleaning History', team:'Team', settings:'Settings' };
+  const titles = { cleaning:'Office & Building', airbnb:'Airbnb Rooms', rollcall:'Morning Roll Call', building:'Building', exterior:'Exterior', history:'Cleaning History', team:'Team', settings:'Settings' };
   header.appendChild(el(`<div class="h-title">${titles[state.tab]}</div>`));
   header.appendChild(el(`<div class="h-date">${dateStr}</div>`));
   if (state.tab === 'cleaning') {
@@ -1912,6 +1944,7 @@ function render() {
   app.appendChild(header);
 
   if (state.tab==='cleaning') app.appendChild(viewCleaning());
+  else if (state.tab==='airbnb') app.appendChild(viewAirbnb());
   else if (state.tab==='rollcall') app.appendChild(viewRollCall());
   else if (state.tab==='building') app.appendChild(viewBuilding());
   else if (state.tab==='exterior') app.appendChild(viewExterior());
@@ -1969,6 +2002,7 @@ function render() {
   const nav = el(`<div class="nav"></div>`);
   const tabs = [
     { id:'rollcall', label:'Roll Call', ico:'☀' },
+    { id:'airbnb', label:'Airbnb', ico:'⌂' },
     { id:'cleaning', label:'Cleaning', ico:'✦' },
     { id:'building', label:'Building', ico:'▦' },
     { id:'history', label:'History', ico:'◷' },
