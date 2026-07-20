@@ -220,6 +220,10 @@
 
   /* Persistent storage warning (save/load failures) */
   .storage-warn { background: #2a1515; color: #f87171; border-bottom: 1px solid #3a1a1a; padding: 11px 14px; font-size: 12px; font-weight: 600; text-align: center; line-height: 1.4; }
+
+  /* Make the native date-picker calendar icon visible on our dark fields */
+  input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1); opacity: 0.65; cursor: pointer; }
+  input[type="date"] { -webkit-appearance: none; appearance: none; }
 </style>
 </head>
 <body>
@@ -315,6 +319,7 @@ const STORE = 'cleaning_app_v5';
 // flip at local midnight, not a UTC-offset hour. Must stay consistent with
 // daysSince()/unitDueToday(), which also use local time.
 const todayKey = () => { const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); };
+const shiftDay = (key, delta) => { const [y,m,d]=key.split('-').map(Number); const dt=new Date(y,m-1,d+delta); return dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')+'-'+String(dt.getDate()).padStart(2,'0'); };
 const weekKey = () => { const d=new Date(),o=new Date(d.getFullYear(),0,1); return d.getFullYear()+'-W'+Math.ceil(((d-o)/864e5+o.getDay()+1)/7); };
 const monthKey = () => { const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); };
 const freqKey = f => f==='daily'?todayKey():f==='weekly'?weekKey():f==='monthly'?monthKey():'perm';
@@ -1388,12 +1393,26 @@ function viewRollCall() {
   impBtn.onclick = () => impInput.click();
   syncBox.appendChild(impBtn);
   syncBox.appendChild(impInput);
+  const cur = selectedDay || todayKey();
+  const pickDay = (d) => { selectedDay = d || todayKey(); loadHikArrivals().then(() => render()); };
   const dayRow = el('<div style="display:flex;align-items:center;gap:8px;margin-top:10px"></div>');
-  dayRow.appendChild(el('<div style="font-size:12px;color:#8da2b8;font-weight:600">Showing day</div>'));
-  const dayIn = el(`<input type="date" value="${esc(selectedDay || todayKey())}" style="flex:1;background:#0a0e16;color:#e2e8f0;border:1px solid #283441;border-radius:8px;padding:8px 10px;font-size:14px">`);
-  dayIn.onchange = (e) => { selectedDay = e.target.value || todayKey(); loadHikArrivals().then(() => render()); };
+  dayRow.appendChild(el('<div style="font-size:12px;color:#8da2b8;font-weight:600;white-space:nowrap">Showing day</div>'));
+  const dayIn = el(`<input type="date" value="${esc(cur)}" max="${esc(todayKey())}" style="flex:1;min-width:0;background:#0a0e16;color:#e2e8f0;border:1px solid #283441;border-radius:8px;padding:8px 10px;font-size:14px">`);
+  dayIn.onchange = (e) => pickDay(e.target.value);
+  const calBtn = el('<button class="freqmini" title="Pick a date" style="flex:0 0 auto">📅</button>');
+  calBtn.onclick = () => { try { dayIn.showPicker(); } catch (e) { dayIn.focus(); dayIn.click(); } };
   dayRow.appendChild(dayIn);
+  dayRow.appendChild(calBtn);
   syncBox.appendChild(dayRow);
+  // Quick jumps
+  const quick = el('<div style="display:flex;gap:6px;margin-top:8px"></div>');
+  const yday = shiftDay(todayKey(), -1);
+  [['Today', todayKey()], ['Yesterday', yday]].forEach(([lbl, d]) => {
+    const b = el(`<button class="freqmini ${cur === d ? 'on' : ''}">${lbl}</button>`);
+    b.onclick = () => pickDay(d);
+    quick.appendChild(b);
+  });
+  syncBox.appendChild(quick);
   if (hikSyncMsg) {
     syncBox.appendChild(el(`<div style="font-size:12px;margin-top:8px;font-weight:600;color:${hikSyncMsg.err ? '#f87171' : '#34d399'}">${esc(hikSyncMsg.text)}</div>`));
   }
@@ -1849,9 +1868,12 @@ function viewHistory() {
 
   // Day picker — pick any past day to see what was cleaned that day (blank = every day).
   const dayRow = el('<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px"></div>');
-  const dayIn = el(`<input type="date" value="${esc(historyDay)}" max="${esc(todayKey())}" style="flex:1;background:#0a0e16;color:#e2e8f0;border:1px solid #283441;border-radius:8px;padding:8px 10px;font-size:14px">`);
+  const dayIn = el(`<input type="date" value="${esc(historyDay)}" max="${esc(todayKey())}" style="flex:1;min-width:0;background:#0a0e16;color:#e2e8f0;border:1px solid #283441;border-radius:8px;padding:8px 10px;font-size:14px">`);
   dayIn.onchange = (e) => { historyDay = e.target.value || ''; render(); };
+  const calBtn = el('<button class="freqmini" title="Pick a date" style="flex:0 0 auto">📅</button>');
+  calBtn.onclick = () => { try { dayIn.showPicker(); } catch (e) { dayIn.focus(); dayIn.click(); } };
   dayRow.appendChild(dayIn);
+  dayRow.appendChild(calBtn);
   if (historyDay) {
     const clr = el('<button class="freqmini">✕ All days</button>');
     clr.onclick = () => { historyDay = ''; render(); };
