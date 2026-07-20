@@ -884,14 +884,21 @@ async function loadHikArrivals() {
       const key = (e.person_name || '').trim().toLowerCase();
       if (key && !firstByName[key]) firstByName[key] = e;   // first seen = earliest
     }
+    // Only surface CLEANERS on the roll call (once any cleaner is tagged). Everyone is
+    // still matched, but non-cleaner staff (office/management) are dropped silently.
+    const cleaners = (state.staff || []).filter((p) => p.isCleaner);
+    const onlyCleaners = cleaners.length > 0;
+    const cleanerByName = {};
+    for (const s of cleaners) cleanerByName[(s.name || '').trim().toLowerCase()] = s;
     const staffByName = {};
     for (const s of (state.staff || [])) staffByName[(s.name || '').trim().toLowerCase()] = s;
     hikArrivals = {}; hikUnknown = [];
     for (const key in firstByName) {
       const e = firstByName[key];
       const t = fmtEventTime(e.event_time);
-      const s = staffByName[key];            // case-insensitive name match
+      const s = onlyCleaners ? cleanerByName[key] : staffByName[key];   // case-insensitive name match
       if (s) hikArrivals[s.id] = { time: t, raw: e.event_time };
+      else if (onlyCleaners && staffByName[key]) { /* known staff but not a cleaner — skip */ }
       else hikUnknown.push({ name: e.person_name, time: t });
     }
   } catch (e) { /* keep previous arrivals */ }
@@ -1432,7 +1439,9 @@ function viewRollCall() {
   for (const s of (state.staff || [])) staffById[s.id] = s;
   const whoIn = el('<div style="margin-bottom:18px"></div>');
   const dayLbl = (selectedDay && selectedDay !== todayKey()) ? ('on ' + selectedDay) : 'today';
-  whoIn.appendChild(el(`<div class="section-label" style="color:#34d399">✓ Clocked in ${dayLbl} (${arrIds.length})</div>`));
+  const cleanersTagged = (state.staff || []).some((p) => p.isCleaner);
+  whoIn.appendChild(el(`<div class="section-label" style="color:#34d399">✓ ${cleanersTagged ? 'Cleaners' : 'Staff'} clocked in ${dayLbl} (${arrIds.length})</div>`));
+  if (!cleanersTagged) whoIn.appendChild(el(`<div style="font-size:11px;color:#8da2b8;margin:-6px 0 10px">Tip: tag people as <b>Cleaner</b> in the Team tab so sync only shows cleaners.</div>`));
   if (arrIds.length && (state.servicedUnits || []).length) {
     const autoBtn = el('<button class="add-btn" style="background:#34d399;color:#0a0e16;margin-bottom:12px">⚡ Auto-assign rooms evenly</button>');
     autoBtn.onclick = () => autoAssignRooms();
