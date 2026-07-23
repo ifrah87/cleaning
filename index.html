@@ -414,9 +414,31 @@ function finalizeState() {
   if (!Array.isArray(state.areas)) state.areas = DEFAULT_AREAS.map(a => ({ ...a }));
   if (!Array.isArray(state.teams)) state.teams = DEFAULT_TEAMS.map(t => ({ ...t }));
   if (typeof state.floors !== 'number' || state.floors < 1) state.floors = DEFAULT_FLOORS;
+  dedupeServicedUnits();
   STAFF = state.staff;
   refreshTeamColors();
   STAFF.forEach(p => { if (!state.attendance[p.id]) state.attendance[p.id] = 'present'; });
+}
+// Self-heal: collapse any rooms that share a unit number down to one record,
+// carrying over an assignment/priority from whichever copy has it. Runs on every
+// load so a stale device that re-added duplicates can't leave them behind.
+function dedupeServicedUnits() {
+  if (!Array.isArray(state.servicedUnits)) { state.servicedUnits = []; return; }
+  const byUnit = new Map();
+  for (const u of state.servicedUnits) {
+    const key = String(u.unit || '').trim();
+    if (!byUnit.has(key)) { byUnit.set(key, u); continue; }
+    const base = byUnit.get(key);
+    for (const f of ['assignedTo', 'usualTo', 'priority', 'guest', 'time']) {
+      if (!base[f] && u[f]) base[f] = u[f];
+    }
+  }
+  const before = state.servicedUnits.length;
+  state.servicedUnits = [...byUnit.values()];
+  // If we actually removed duplicates, push the clean list so every device gets it.
+  if (state.servicedUnits.length !== before && typeof db !== 'undefined' && db) {
+    setTimeout(() => save(), 0);
+  }
 }
 
 function load() {
@@ -745,9 +767,16 @@ const unitType = (u) => UNIT_TYPES[u && u.type] ? u.type : 'building';
 
 function addServicedUnit(unit, guest, freq, type, time) {
   if (!unit) return;
+  const label = unit.trim();
+  // Don't create a second record for a room that already exists.
+  if ((state.servicedUnits || []).some(u => String(u.unit).trim().toLowerCase() === label.toLowerCase())) {
+    hikSyncMsg = { err: true, text: `Room ${label} is already in the list.` };
+    render();
+    return;
+  }
   state.servicedUnits.push({
-    id: 'su' + Date.now(),
-    unit: unit.trim(),
+    id: 'su' + Date.now() + Math.random().toString(36).slice(2, 7),
+    unit: label,
     guest: (guest||'').trim(),
     freq: freq || 'daily',
     type: type || 'building',
@@ -1083,6 +1112,39 @@ function toggleLeader(id) {
   const makeLeader = !p.isLeader;
   state.staff.forEach((s) => { if (s.crew === p.crew) s.isLeader = false; });
   p.isLeader = makeLeader;
+  save(); render();
+}
+// Shifts — a person works Day (default), Afternoon, or Night. Tapping the chip
+// cycles through them. Purely a label so the office knows who's expected when
+// (e.g. Hassan's 2 AM badge-in is normal for night staff).
+const SHIFTS = {
+  day:       { label: 'Day',       icon: '☀️', color: '#0284c7' },
+  afternoon: { label: 'Afternoon', icon: '🌇', color: '#b45309' },
+  night:     { label: 'Night',     icon: '🌙', color: '#7c3aed' },
+};
+const SHIFT_ORDER = ['day', 'afternoon', 'night'];
+function shiftOf(p) { return (p && SHIFTS[p.shift]) ? p.shift : 'day'; }
+function cycleShift(id) {
+  const p = state.staff.find((s) => s.id === id);
+  if (!p) return;
+  const i = SHIFT_ORDER.indexOf(shiftOf(p));
+  p.shift = SHIFT_ORDER[(i + 1) % SHIFT_ORDER.length];
+  save(); render();
+}
+// Cleaner type — Inside (rooms/common areas), Outside (grounds/exterior), or Both.
+// Tapping the chip cycles through. Used to keep exterior work with outside crews.
+const CLEAN_TYPES = {
+  inside:  { label: 'Inside',  icon: '🏠', color: '#0284c7' },
+  outside: { label: 'Outside', icon: '🌳', color: '#15803d' },
+  both:    { label: 'In + Out', icon: '🔁', color: '#7c3aed' },
+};
+const TYPE_ORDER = ['inside', 'outside', 'both'];
+function typeOf(p) { return (p && CLEAN_TYPES[p.cleanType]) ? p.cleanType : 'inside'; }
+function cycleCleanType(id) {
+  const p = state.staff.find((s) => s.id === id);
+  if (!p) return;
+  const i = TYPE_ORDER.indexOf(typeOf(p));
+  p.cleanType = TYPE_ORDER[(i + 1) % TYPE_ORDER.length];
   save(); render();
 }
 function removeEmployee(id) {
@@ -1484,7 +1546,9 @@ function viewRollCall() {
         const card = el('<div class="person" style="flex-direction:column;align-items:stretch;gap:8px"></div>');
         const info = el('<div class="person-info"></div>');
         const lead = s.isLeader ? ` <span style="color:#d97706;font-size:12px;font-weight:700">★</span>` : '';
-        info.appendChild(el(`<div class="person-name">${esc(s.name)}${lead}</div>`));
+        const shk = shiftOf(s);
+        const shiftBadge = shk !== 'day' ? ` <span style="color:${SHIFTS[shk].color};font-size:11px;font-weight:700">${SHIFTS[shk].icon} ${SHIFTS[shk].label}</span>` : '';
+        info.appendChild(el(`<div class="person-name">${esc(s.name)}${lead}${shiftBadge}</div>`));
         const timecard = out
           ? `✓ In ${esc(t)} <span style="color:#5b6a7f">·</span> Out ${esc(out)}`
           : `✓ In ${esc(t)} <span style="color:#5b6a7f">· still in</span>`;
@@ -1882,16 +1946,22 @@ function employeeCard(p) {
   top.appendChild(info);
   card.appendChild(top);
 
-  const ctl = el(`<div class="su-ctl" style="border-top:none;padding-top:0;margin-top:0"></div>`);
+  const ctl = el(`<div class="su-ctl" style="border-top:none;padding-top:0;margin-top:0;flex-wrap:wrap"></div>`);
   const clean = el(`<button class="freqmini ${p.isCleaner ? 'on' : ''}" style="flex:0 0 auto;padding:7px 14px">${p.isCleaner ? '✓ Cleaner' : '+ Cleaner'}</button>`);
   clean.onclick = () => toggleCleaner(p.id);
   const lead = el(`<button class="freqmini ${p.isLeader ? 'on' : ''}" style="flex:0 0 auto;padding:7px 14px">${p.isLeader ? '★ Leader' : '+ Leader'}</button>`);
   lead.onclick = () => toggleLeader(p.id);
+  const sh = shiftOf(p);
+  const shift = el(`<button class="freqmini" title="Tap to change shift" style="flex:0 0 auto;padding:7px 12px;color:${SHIFTS[sh].color};border-color:${SHIFTS[sh].color}">${SHIFTS[sh].icon} ${SHIFTS[sh].label}</button>`);
+  shift.onclick = () => cycleShift(p.id);
+  const ct = typeOf(p);
+  const ctype = el(`<button class="freqmini" title="Tap to change type" style="flex:0 0 auto;padding:7px 12px;color:${CLEAN_TYPES[ct].color};border-color:${CLEAN_TYPES[ct].color}">${CLEAN_TYPES[ct].icon} ${CLEAN_TYPES[ct].label}</button>`);
+  ctype.onclick = () => cycleCleanType(p.id);
   const ed = el(`<button class="su-edit">Edit</button>`);
   ed.onclick = () => startEditEmp(p.id);
   const rm = el(`<button class="su-rm">Remove</button>`);
   rm.onclick = () => removeEmployee(p.id);
-  ctl.appendChild(clean); ctl.appendChild(lead); ctl.appendChild(ed); ctl.appendChild(rm);
+  ctl.appendChild(clean); ctl.appendChild(lead); ctl.appendChild(shift); ctl.appendChild(ctype); ctl.appendChild(ed); ctl.appendChild(rm);
   card.appendChild(ctl);
   return card;
 }
