@@ -5,14 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="theme-color" content="#0d1b2a">
+<meta name="theme-color" content="#f4f7fb">
 <title>Cleaning Ops</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
   * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
   html, body {
-    background: #0a0e16;
-    color: #e2e8f0;
+    background: #f4f7fb;
+    color: #15202e;
     font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     -webkit-font-smoothing: antialiased;
     overscroll-behavior: none;
@@ -22,46 +22,46 @@
   ::-webkit-scrollbar { display: none; }
 
   /* Brand palette
-     navy   #29b6f5   teal #29b6f5   teal-soft #e3f2f4
-     ink    #e2e8f0   slate #8da2b8  line #1e2733
-     green  #34d399   amber #d4a72c  red #f87171
+     navy   #0284c7   teal #0284c7   teal-soft #e3f2f4
+     ink    #15202e   slate #5f7189  line #e7ecf3
+     green  #15803d   amber #b45309  red #dc2626
   */
 
   #app { min-height: 100vh; padding-bottom: 78px; }
 
   .header {
-    background: linear-gradient(180deg, #141b28 0%, #0d141f 100%);
-    color: #e2e8f0;
+    background: linear-gradient(180deg, #ffffff 0%, #eef2f8 100%);
+    color: #15202e;
     padding: 18px 16px 16px;
     position: sticky; top: 0; z-index: 20;
-    border-bottom: 1px solid #1e2733;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.25);
+    border-bottom: 1px solid #e7ecf3;
+    box-shadow: 0 1px 3px rgba(15,40,80,0.06);
   }
-  .h-eyebrow { font-size: 10px; letter-spacing: 0.18em; color: #5d8aa8; font-weight: 600; margin-bottom: 3px; }
-  .h-title { font-size: 21px; font-weight: 800; letter-spacing: -0.01em; color: #f1f5f9; }
-  .h-date { font-size: 11px; color: #8da2b8; margin-top: 3px; font-weight: 500; }
+  .h-eyebrow { font-size: 10px; letter-spacing: 0.18em; color: #5f7189; font-weight: 600; margin-bottom: 3px; }
+  .h-title { font-size: 21px; font-weight: 800; letter-spacing: -0.01em; color: #0f1a27; }
+  .h-date { font-size: 11px; color: #5f7189; margin-top: 3px; font-weight: 500; }
 
   .stats { display: flex; gap: 8px; margin-top: 14px; }
   .stat {
-    background: #0d141f; border: 1px solid #1e2733;
+    background: #eef2f8; border: 1px solid #e7ecf3;
     border-radius: 10px; padding: 8px 12px; flex: 1;
   }
-  .stat .lbl { font-size: 9px; letter-spacing: 0.12em; color: #5d748c; font-weight: 600; margin-bottom: 1px; }
-  .stat .val { font-size: 19px; font-weight: 800; color: #f1f5f9; }
+  .stat .lbl { font-size: 9px; letter-spacing: 0.12em; color: #5b6a7f; font-weight: 600; margin-bottom: 1px; }
+  .stat .val { font-size: 19px; font-weight: 800; color: #0f1a27; }
 
   .nav {
     position: fixed; bottom: 0; left: 0; right: 0;
-    background: #141b28; border-top: 1px solid #1e2733;
+    background: #ffffff; border-top: 1px solid #e7ecf3;
     display: flex; z-index: 30;
     padding-bottom: env(safe-area-inset-bottom, 0);
     box-shadow: 0 -2px 12px rgba(15,58,95,0.06);
   }
   .nav button {
     flex: 1; padding: 10px 4px 12px; text-align: center;
-    color: #5d748c; font-size: 10px; font-weight: 600;
+    color: #5b6a7f; font-size: 10px; font-weight: 600;
     display: flex; flex-direction: column; align-items: center; gap: 3px;
   }
-  .nav button.active { color: #29b6f5; }
+  .nav button.active { color: #0284c7; }
   .nav .ico { font-size: 19px; line-height: 1; }
 
   .body { padding: 16px; }
@@ -70,11 +70,11 @@
   .crew-group { margin-bottom: 16px; }
   .crew-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; padding: 0 2px; }
   .crew-dot { width: 10px; height: 10px; border-radius: 3px; }
-  .crew-name { font-size: 13px; font-weight: 700; color: #f1f5f9; }
-  .crew-sub { font-size: 11px; color: #5d748c; font-weight: 600; margin-left: auto; }
+  .crew-name { font-size: 13px; font-weight: 700; color: #0f1a27; }
+  .crew-sub { font-size: 11px; color: #5b6a7f; font-weight: 600; margin-left: auto; }
 
   .person {
-    background: #141b28; border: 1px solid #1e2733; border-radius: 9px;
+    background: #ffffff; border: 1px solid #e7ecf3; border-radius: 9px;
     padding: 8px 12px; margin-bottom: 5px;
     display: flex; align-items: center; gap: 12px;
     box-shadow: 0 1px 3px rgba(15,58,95,0.04);
@@ -82,147 +82,147 @@
   .person-name { font-size: 14px; }
   .person-floors { font-size: 11px; }
   .person-info { flex: 1; min-width: 0; }
-  .person-name { font-size: 15px; font-weight: 600; color: #f1f5f9; }
-  .person-floors { font-size: 12px; color: #8da2b8; margin-top: 1px; }
+  .person-name { font-size: 15px; font-weight: 600; color: #0f1a27; }
+  .person-floors { font-size: 12px; color: #5f7189; margin-top: 1px; }
   .status-btn {
     padding: 9px 14px; border-radius: 8px;
     font-size: 11px; font-weight: 700; letter-spacing: 0.03em;
-    min-width: 96px; text-align: center; color: #141b28;
+    min-width: 96px; text-align: center; color: #ffffff;
   }
 
   .alert {
-    background: #141b28; border: 1px solid #3a1a1a; border-left: 4px solid #f87171;
+    background: #ffffff; border: 1px solid #f6d5d5; border-left: 4px solid #dc2626;
     border-radius: 12px; padding: 14px; margin-bottom: 10px;
     box-shadow: 0 1px 3px rgba(212,73,63,0.08);
   }
-  .alert-title { font-size: 12px; color: #f87171; font-weight: 700; }
-  .alert-body { font-size: 13px; color: #f0a8a0; margin-top: 5px; line-height: 1.5; }
+  .alert-title { font-size: 12px; color: #dc2626; font-weight: 700; }
+  .alert-body { font-size: 13px; color: #b91c1c; margin-top: 5px; line-height: 1.5; }
   .cover-suggest {
-    background: #0f2620; border: 1px solid #1c4035; border-radius: 9px;
+    background: #e7f6ec; border: 1px solid #bfe6cd; border-radius: 9px;
     padding: 10px 12px; margin-top: 10px;
     display: flex; align-items: center; justify-content: space-between; gap: 10px;
   }
-  .cover-text { font-size: 12px; color: #34d399; flex: 1; }
+  .cover-text { font-size: 12px; color: #15803d; flex: 1; }
   .cover-btn {
-    background: #34d399; color: #141b28; padding: 9px 14px; border-radius: 8px;
+    background: #15803d; color: #ffffff; padding: 9px 14px; border-radius: 8px;
     font-size: 11px; font-weight: 700; white-space: nowrap;
   }
 
   .confirm {
-    background: #0f2620; border: 1px solid #1c4035; border-radius: 9px;
+    background: #e7f6ec; border: 1px solid #bfe6cd; border-radius: 9px;
     padding: 10px 12px; margin-bottom: 8px;
     display: flex; align-items: center; justify-content: space-between; gap: 10px;
   }
-  .confirm-text { font-size: 12px; color: #34d399; flex: 1; }
-  .undo-btn { font-size: 11px; color: #8da2b8; border: 1px solid #283441; border-radius: 7px; padding: 7px 11px; font-weight: 600; }
+  .confirm-text { font-size: 12px; color: #15803d; flex: 1; }
+  .undo-btn { font-size: 11px; color: #5f7189; border: 1px solid #d8e0ea; border-radius: 7px; padding: 7px 11px; font-weight: 600; }
 
   /* Floors */
-  .floor { background: #141b28; border: 1px solid #1e2733; border-radius: 12px; margin-bottom: 9px; overflow: hidden; box-shadow: 0 1px 3px rgba(15,58,95,0.04); }
+  .floor { background: #ffffff; border: 1px solid #e7ecf3; border-radius: 12px; margin-bottom: 9px; overflow: hidden; box-shadow: 0 1px 3px rgba(15,58,95,0.04); }
   .floor-head { width: 100%; padding: 13px 14px; display: flex; align-items: center; gap: 12px; text-align: left; }
   .floor-badge {
     width: 38px; height: 38px; border-radius: 9px; flex-shrink: 0;
     display: flex; align-items: center; justify-content: center;
-    font-size: 15px; font-weight: 800; color: #141b28;
+    font-size: 15px; font-weight: 800; color: #ffffff;
   }
   .floor-info { flex: 1; min-width: 0; }
-  .floor-name { font-size: 15px; font-weight: 700; color: #f1f5f9; }
-  .floor-sub { font-size: 11px; color: #8da2b8; margin-top: 1px; font-weight: 500; }
-  .floor-prog { width: 48px; height: 6px; border-radius: 3px; background: #1e2733; position: relative; flex-shrink: 0; overflow: hidden; }
+  .floor-name { font-size: 15px; font-weight: 700; color: #0f1a27; }
+  .floor-sub { font-size: 11px; color: #5f7189; margin-top: 1px; font-weight: 500; }
+  .floor-prog { width: 48px; height: 6px; border-radius: 3px; background: #e7ecf3; position: relative; flex-shrink: 0; overflow: hidden; }
   .floor-prog > div { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; }
-  .chev { color: #5d748c; font-size: 12px; width: 14px; text-align: center; }
+  .chev { color: #5b6a7f; font-size: 12px; width: 14px; text-align: center; }
 
   .unit-grid { padding: 4px 14px 14px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-  .unit { background: #10161f; border: 1px solid #1e2733; border-radius: 10px; padding: 11px 8px; display: flex; flex-direction: column; gap: 8px; align-items: center; }
-  .unit.done { background: #0f2620; border-color: #1c4035; }
-  .unit-num { font-size: 15px; font-weight: 800; color: #f1f5f9; }
-  .unit.done .unit-num { color: #34d399; }
-  .unit-mark { width: 100%; padding: 7px; border-radius: 7px; font-size: 11px; font-weight: 700; color: #141b28; background: #29b6f5; }
-  .unit.done .unit-mark { background: #34d399; }
+  .unit { background: #eef2f8; border: 1px solid #e7ecf3; border-radius: 10px; padding: 11px 8px; display: flex; flex-direction: column; gap: 8px; align-items: center; }
+  .unit.done { background: #e7f6ec; border-color: #bfe6cd; }
+  .unit-num { font-size: 15px; font-weight: 800; color: #0f1a27; }
+  .unit.done .unit-num { color: #15803d; }
+  .unit-mark { width: 100%; padding: 7px; border-radius: 7px; font-size: 11px; font-weight: 700; color: #ffffff; background: #0284c7; }
+  .unit.done .unit-mark { background: #15803d; }
 
   /* Zones */
-  .zone { background: #141b28; border: 1px solid #1e2733; border-radius: 12px; padding: 13px 14px; margin-bottom: 8px; display: flex; align-items: center; gap: 12px; box-shadow: 0 1px 3px rgba(15,58,95,0.04); }
-  .zone.done { background: #0f2620; border-color: #1c4035; }
+  .zone { background: #ffffff; border: 1px solid #e7ecf3; border-radius: 12px; padding: 13px 14px; margin-bottom: 8px; display: flex; align-items: center; gap: 12px; box-shadow: 0 1px 3px rgba(15,58,95,0.04); }
+  .zone.done { background: #e7f6ec; border-color: #bfe6cd; }
   .zone-info { flex: 1; min-width: 0; }
   .zone-freq { font-size: 10px; letter-spacing: 0.08em; font-weight: 700; }
-  .zone-name { font-size: 14px; font-weight: 600; color: #f1f5f9; margin-top: 2px; }
-  .zone.done .zone-name { color: #34d399; }
-  .zone-mark { padding: 9px 16px; border-radius: 8px; font-size: 11px; font-weight: 700; color: #141b28; background: #29b6f5; white-space: nowrap; }
-  .zone.done .zone-mark { background: #34d399; }
+  .zone-name { font-size: 14px; font-weight: 600; color: #0f1a27; margin-top: 2px; }
+  .zone.done .zone-name { color: #15803d; }
+  .zone-mark { padding: 9px 16px; border-radius: 8px; font-size: 11px; font-weight: 700; color: #ffffff; background: #0284c7; white-space: nowrap; }
+  .zone.done .zone-mark { background: #15803d; }
 
-  .section-label { font-size: 11px; letter-spacing: 0.1em; color: #5d748c; font-weight: 700; margin: 2px 0 12px; text-transform: uppercase; }
-  .note { font-size: 13px; color: #8da2b8; line-height: 1.55; margin-bottom: 14px; }
-  .reset-btn { width: 100%; background: #141b28; color: #8da2b8; border: 1px solid #283441; border-radius: 10px; padding: 11px; font-size: 12px; font-weight: 600; margin-bottom: 14px; }
-  .owner-tag { font-size: 9px; letter-spacing: 0.04em; padding: 4px 9px; border-radius: 6px; font-weight: 700; color: #141b28; }
-  .footer { padding: 18px 16px 8px; font-size: 11px; color: #aab8c6; text-align: center; font-weight: 500; }
-  .hint { font-size: 11px; color: #aab8c6; text-align: center; margin-top: 6px; font-weight: 500; }
+  .section-label { font-size: 11px; letter-spacing: 0.1em; color: #5b6a7f; font-weight: 700; margin: 2px 0 12px; text-transform: uppercase; }
+  .note { font-size: 13px; color: #5f7189; line-height: 1.55; margin-bottom: 14px; }
+  .reset-btn { width: 100%; background: #ffffff; color: #5f7189; border: 1px solid #d8e0ea; border-radius: 10px; padding: 11px; font-size: 12px; font-weight: 600; margin-bottom: 14px; }
+  .owner-tag { font-size: 9px; letter-spacing: 0.04em; padding: 4px 9px; border-radius: 6px; font-weight: 700; color: #ffffff; }
+  .footer { padding: 18px 16px 8px; font-size: 11px; color: #6b7a8f; text-align: center; font-weight: 500; }
+  .hint { font-size: 11px; color: #6b7a8f; text-align: center; margin-top: 6px; font-weight: 500; }
 
   /* Serviced units */
-  .addbox { background: #141b28; border: 1px solid #1e2733; border-radius: 12px; padding: 14px; margin-bottom: 8px; }
-  .addbox input { width: 100%; background: #0a0e16; color: #e2e8f0; border: 1px solid #283441; border-radius: 8px; padding: 11px; }
-  .addbox input::placeholder { color: #5d748c; }
-  .freqpick { flex: 1; padding: 9px 4px; border-radius: 8px; font-size: 11px; font-weight: 600; color: #8da2b8; background: #0a0e16; border: 1px solid #283441; }
-  .freqpick.on { color: #0a0e16; background: #29b6f5; border-color: #29b6f5; }
-  .add-btn { width: 100%; background: #29b6f5; color: #0a0e16; border-radius: 9px; padding: 12px; font-size: 13px; font-weight: 700; }
-  .su-card { background: #141b28; border: 1px solid #1e2733; border-radius: 12px; padding: 13px 14px; margin-bottom: 8px; }
-  .su-card.done { background: #0f2620; border-color: #1c4035; }
+  .addbox { background: #ffffff; border: 1px solid #e7ecf3; border-radius: 12px; padding: 14px; margin-bottom: 8px; }
+  .addbox input { width: 100%; background: #f4f7fb; color: #15202e; border: 1px solid #d8e0ea; border-radius: 8px; padding: 11px; }
+  .addbox input::placeholder { color: #5b6a7f; }
+  .freqpick { flex: 1; padding: 9px 4px; border-radius: 8px; font-size: 11px; font-weight: 600; color: #5f7189; background: #f4f7fb; border: 1px solid #d8e0ea; }
+  .freqpick.on { color: #ffffff; background: #0284c7; border-color: #0284c7; }
+  .add-btn { width: 100%; background: #0284c7; color: #ffffff; border-radius: 9px; padding: 12px; font-size: 13px; font-weight: 700; }
+  .su-card { background: #ffffff; border: 1px solid #e7ecf3; border-radius: 12px; padding: 13px 14px; margin-bottom: 8px; }
+  .su-card.done { background: #e7f6ec; border-color: #bfe6cd; }
   .su-top { display: flex; align-items: center; gap: 12px; }
-  .su-unit { font-size: 16px; font-weight: 700; color: #f1f5f9; }
-  .su-guest { font-size: 12px; color: #8da2b8; margin-top: 1px; }
-  .su-mark { padding: 9px 14px; border-radius: 8px; font-size: 12px; font-weight: 700; color: #0a0e16; background: #29b6f5; white-space: nowrap; }
-  .su-card.done .su-mark { background: #34d399; }
-  .su-next { font-size: 11px; color: #8da2b8; font-weight: 600; padding: 6px 10px; border: 1px solid #283441; border-radius: 7px; white-space: nowrap; }
-  .su-ctl { display: flex; gap: 6px; margin-top: 11px; padding-top: 11px; border-top: 1px solid #1e2733; }
-  .freqmini { flex: 1; padding: 7px 4px; border-radius: 7px; font-size: 10px; font-weight: 600; color: #8da2b8; background: #0a0e16; border: 1px solid #283441; }
-  .freqmini.on { color: #0a0e16; background: #8da2b8; border-color: #8da2b8; }
-  .su-rm { padding: 7px 12px; border-radius: 7px; font-size: 10px; font-weight: 600; color: #f87171; background: transparent; border: 1px solid #3a1a1a; }
-  .su-edit { padding: 7px 12px; border-radius: 7px; font-size: 10px; font-weight: 600; color: #29b6f5; background: transparent; border: 1px solid #1f4a63; }
-  .area-select { width: 100%; background: #0a0e16; color: #e2e8f0; border: 1px solid #283441; border-radius: 8px; padding: 10px; font-size: 13px; }
-  .su-card input { width: 100%; background: #0a0e16; color: #e2e8f0; border: 1px solid #283441; border-radius: 8px; padding: 11px; }
-  .su-card input::placeholder { color: #5d748c; }
+  .su-unit { font-size: 16px; font-weight: 700; color: #0f1a27; }
+  .su-guest { font-size: 12px; color: #5f7189; margin-top: 1px; }
+  .su-mark { padding: 9px 14px; border-radius: 8px; font-size: 12px; font-weight: 700; color: #ffffff; background: #0284c7; white-space: nowrap; }
+  .su-card.done .su-mark { background: #15803d; }
+  .su-next { font-size: 11px; color: #5f7189; font-weight: 600; padding: 6px 10px; border: 1px solid #d8e0ea; border-radius: 7px; white-space: nowrap; }
+  .su-ctl { display: flex; gap: 6px; margin-top: 11px; padding-top: 11px; border-top: 1px solid #e7ecf3; }
+  .freqmini { flex: 1; padding: 7px 4px; border-radius: 7px; font-size: 10px; font-weight: 600; color: #5f7189; background: #f4f7fb; border: 1px solid #d8e0ea; }
+  .freqmini.on { color: #ffffff; background: #0284c7; border-color: #0284c7; }
+  .su-rm { padding: 7px 12px; border-radius: 7px; font-size: 10px; font-weight: 600; color: #dc2626; background: transparent; border: 1px solid #f6d5d5; }
+  .su-edit { padding: 7px 12px; border-radius: 7px; font-size: 10px; font-weight: 600; color: #0284c7; background: transparent; border: 1px solid #cfe8fb; }
+  .area-select { width: 100%; background: #f4f7fb; color: #15202e; border: 1px solid #d8e0ea; border-radius: 8px; padding: 10px; font-size: 13px; }
+  .su-card input { width: 100%; background: #f4f7fb; color: #15202e; border: 1px solid #d8e0ea; border-radius: 8px; padding: 11px; }
+  .su-card input::placeholder { color: #5b6a7f; }
   .su-assign { font-size: 11px; font-weight: 600; margin-top: 3px; }
-  .su-card.needs-cover { border-color: #f87171; }
+  .su-card.needs-cover { border-color: #dc2626; }
 
   /* Cover confirmation popup */
   .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: flex; align-items: flex-end; justify-content: center; z-index: 100; padding: 16px; }
-  .modal { background: #141b28; border: 1px solid #283441; border-radius: 16px 16px 0 0; width: 100%; max-width: 480px; padding: 20px 18px calc(20px + env(safe-area-inset-bottom,0)); }
-  .modal-title { font-size: 18px; font-weight: 800; color: #f1f5f9; }
-  .modal-sub { font-size: 13px; color: #8da2b8; margin-top: 6px; line-height: 1.5; }
-  .modal-label { font-size: 11px; letter-spacing: 0.1em; color: #5d748c; font-weight: 700; text-transform: uppercase; margin: 16px 0 8px; }
+  .modal { background: #ffffff; border: 1px solid #d8e0ea; border-radius: 16px 16px 0 0; width: 100%; max-width: 480px; padding: 20px 18px calc(20px + env(safe-area-inset-bottom,0)); }
+  .modal-title { font-size: 18px; font-weight: 800; color: #0f1a27; }
+  .modal-sub { font-size: 13px; color: #5f7189; margin-top: 6px; line-height: 1.5; }
+  .modal-label { font-size: 11px; letter-spacing: 0.1em; color: #5b6a7f; font-weight: 700; text-transform: uppercase; margin: 16px 0 8px; }
   .cover-picker { display: flex; flex-direction: column; gap: 6px; max-height: 220px; overflow-y: auto; }
-  .cover-opt { display: flex; justify-content: space-between; align-items: center; padding: 13px 14px; border-radius: 10px; background: #0d141f; border: 1px solid #283441; color: #e2e8f0; font-size: 14px; font-weight: 600; }
-  .cover-opt.on { border-color: #29b6f5; background: #0f2433; }
-  .cover-load { font-size: 11px; color: #8da2b8; font-weight: 500; }
+  .cover-opt { display: flex; justify-content: space-between; align-items: center; padding: 13px 14px; border-radius: 10px; background: #eef2f8; border: 1px solid #d8e0ea; color: #15202e; font-size: 14px; font-weight: 600; }
+  .cover-opt.on { border-color: #0284c7; background: #e6f4fd; }
+  .cover-load { font-size: 11px; color: #5f7189; font-weight: 500; }
   .modal-btns { display: flex; gap: 8px; margin-top: 16px; }
-  .modal-confirm { flex: 1; background: #29b6f5; color: #0a0e16; border-radius: 10px; padding: 14px; font-size: 14px; font-weight: 700; }
-  .modal-skip { padding: 14px 18px; border-radius: 10px; background: transparent; border: 1px solid #283441; color: #8da2b8; font-size: 13px; font-weight: 600; }
-  .modal-danger { flex: 1; background: #f87171; color: #0a0e16; border-radius: 10px; padding: 14px; font-size: 14px; font-weight: 700; }
+  .modal-confirm { flex: 1; background: #0284c7; color: #ffffff; border-radius: 10px; padding: 14px; font-size: 14px; font-weight: 700; }
+  .modal-skip { padding: 14px 18px; border-radius: 10px; background: transparent; border: 1px solid #d8e0ea; color: #5f7189; font-size: 13px; font-weight: 600; }
+  .modal-danger { flex: 1; background: #dc2626; color: #ffffff; border-radius: 10px; padding: 14px; font-size: 14px; font-weight: 700; }
 
   /* Login screen */
   .login-screen { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
   .login-box { width: 100%; max-width: 360px; }
   .login-logo { font-size: 36px; text-align: center; margin-bottom: 8px; }
-  .login-heading { font-size: 22px; font-weight: 800; color: #f1f5f9; text-align: center; margin-bottom: 4px; }
-  .login-sub { font-size: 13px; color: #5d748c; text-align: center; margin-bottom: 28px; }
-  .login-label { font-size: 11px; letter-spacing: 0.1em; color: #5d748c; font-weight: 700; text-transform: uppercase; margin-bottom: 6px; }
-  .login-input { width: 100%; background: #141b28; color: #e2e8f0; border: 1px solid #283441; border-radius: 10px; padding: 13px 14px; font-size: 15px; margin-bottom: 16px; outline: none; }
-  .login-input:focus { border-color: #29b6f5; }
-  .login-input.error { border-color: #f87171; }
-  .login-btn { width: 100%; background: #29b6f5; color: #0a0e16; border-radius: 10px; padding: 14px; font-size: 15px; font-weight: 700; margin-top: 4px; }
-  .login-error { font-size: 12px; color: #f87171; text-align: center; margin-top: 12px; font-weight: 600; }
+  .login-heading { font-size: 22px; font-weight: 800; color: #0f1a27; text-align: center; margin-bottom: 4px; }
+  .login-sub { font-size: 13px; color: #5b6a7f; text-align: center; margin-bottom: 28px; }
+  .login-label { font-size: 11px; letter-spacing: 0.1em; color: #5b6a7f; font-weight: 700; text-transform: uppercase; margin-bottom: 6px; }
+  .login-input { width: 100%; background: #ffffff; color: #15202e; border: 1px solid #d8e0ea; border-radius: 10px; padding: 13px 14px; font-size: 15px; margin-bottom: 16px; outline: none; }
+  .login-input:focus { border-color: #0284c7; }
+  .login-input.error { border-color: #dc2626; }
+  .login-btn { width: 100%; background: #0284c7; color: #ffffff; border-radius: 10px; padding: 14px; font-size: 15px; font-weight: 700; margin-top: 4px; }
+  .login-error { font-size: 12px; color: #dc2626; text-align: center; margin-top: 12px; font-weight: 600; }
 
   /* Backup buttons */
   .backup-btn { width: 100%; border-radius: 10px; padding: 13px; font-size: 13px; font-weight: 700; margin-bottom: 8px; display: flex; align-items: center; justify-content: center; gap: 8px; }
-  .backup-export { background: #141b28; color: #29b6f5; border: 1px solid #1f4a63; }
-  .backup-import { background: #141b28; color: #d4a72c; border: 1px solid #4a3a10; }
+  .backup-export { background: #ffffff; color: #0284c7; border: 1px solid #cfe8fb; }
+  .backup-import { background: #ffffff; color: #b45309; border: 1px solid #f5e4bd; }
   .backup-msg { font-size: 12px; text-align: center; margin-top: 8px; font-weight: 600; padding: 8px; border-radius: 8px; }
-  .backup-msg.ok { color: #34d399; background: #0f2620; }
-  .backup-msg.err { color: #f87171; background: #2a1515; }
+  .backup-msg.ok { color: #15803d; background: #e7f6ec; }
+  .backup-msg.err { color: #dc2626; background: #fbe3e3; }
 
   /* Persistent storage warning (save/load failures) */
-  .storage-warn { background: #2a1515; color: #f87171; border-bottom: 1px solid #3a1a1a; padding: 11px 14px; font-size: 12px; font-weight: 600; text-align: center; line-height: 1.4; }
+  .storage-warn { background: #fbe3e3; color: #dc2626; border-bottom: 1px solid #f6d5d5; padding: 11px 14px; font-size: 12px; font-weight: 600; text-align: center; line-height: 1.4; }
 
   /* Make the native date-picker calendar icon visible on our dark fields */
-  input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1); opacity: 0.65; cursor: pointer; }
+  input[type="date"]::-webkit-calendar-picker-indicator { opacity: 0.55; cursor: pointer; }
   input[type="date"] { -webkit-appearance: none; appearance: none; }
 </style>
 </head>
@@ -248,11 +248,11 @@ const db = (window.supabase && !SUPABASE_URL.includes('YOUR-') && !SUPABASE_ANON
 // DATA MODEL — Edit STAFF to match your real team (one-time).
 // ============================================================
 const DEFAULT_STAFF = [
-  { id: 'p1', name: 'Sofia Reyes',   crew: 'Team A', color: '#29b6f5', floors: [1, 2] },
-  { id: 'p2', name: 'Daniel Chen',   crew: 'Team A', color: '#29b6f5', floors: [3, 4] },
-  { id: 'p3', name: 'Priya Shah',    crew: 'Team B', color: '#29b6f5', floors: [5, 6] },
-  { id: 'p4', name: 'Jamal Brooks',  crew: 'Team B', color: '#29b6f5', floors: [7, 8] },
-  { id: 'p5', name: 'Elena Volkov',  crew: 'Team C', color: '#a78bfa', floors: [9, 10, 11] },
+  { id: 'p1', name: 'Sofia Reyes',   crew: 'Team A', color: '#0284c7', floors: [1, 2] },
+  { id: 'p2', name: 'Daniel Chen',   crew: 'Team A', color: '#0284c7', floors: [3, 4] },
+  { id: 'p3', name: 'Priya Shah',    crew: 'Team B', color: '#0284c7', floors: [5, 6] },
+  { id: 'p4', name: 'Jamal Brooks',  crew: 'Team B', color: '#0284c7', floors: [7, 8] },
+  { id: 'p5', name: 'Elena Volkov',  crew: 'Team C', color: '#7c3aed', floors: [9, 10, 11] },
   { id: 'p6', name: 'Marcus Hill',   crew: 'Lead',   color: '#c2410c', floors: [], special: ['ground', 'rooftop'] },
 ];
 // STAFF is a live reference into state.staff (set in load()). Using a getter
@@ -281,15 +281,15 @@ const DEFAULT_AREAS = [
 const DEFAULT_FLOORS = 11;
 
 const FREQ = {
-  daily:   { label: 'DAILY', tint: '#29b6f5' },
-  weekly:  { label: 'WEEKLY', tint: '#d4a72c' },
-  monthly: { label: 'MONTHLY', tint: '#a78bfa' },
+  daily:   { label: 'DAILY', tint: '#0284c7' },
+  weekly:  { label: 'WEEKLY', tint: '#b45309' },
+  monthly: { label: 'MONTHLY', tint: '#7c3aed' },
 };
 const STATUS = {
-  present: { label: 'PRESENT', color: '#34d399' },
-  late:    { label: 'LATE', color: '#d4a72c' },
-  noshow:  { label: 'NO-SHOW', color: '#f87171' },
-  off:     { label: 'OFF', color: '#5d748c' },
+  present: { label: 'PRESENT', color: '#15803d' },
+  late:    { label: 'LATE', color: '#b45309' },
+  noshow:  { label: 'NO-SHOW', color: '#dc2626' },
+  off:     { label: 'OFF', color: '#5b6a7f' },
 };
 const STATUS_ORDER = ['present', 'late', 'noshow', 'off'];
 
@@ -562,7 +562,7 @@ function renderCleanerPicker() {
     box.appendChild(b);
   });
   if (!list.length) {
-    box.appendChild(el(`<div class="login-error" style="color:#8da2b8;margin-bottom:12px">No staff added yet — add employees in Settings.</div>`));
+    box.appendChild(el(`<div class="login-error" style="color:#5f7189;margin-bottom:12px">No staff added yet — add employees in Settings.</div>`));
   }
   // Escape hatch: never let this screen trap you.
   const cont = el(`<button class="login-btn" style="margin-top:8px">Continue →</button>`);
@@ -736,9 +736,9 @@ function resetCompletions() { showConfirm('Reset all completion checkmarks?', 'A
 // --- Serviced unit actions ---
 // Cleaning types, colour-coded.
 const UNIT_TYPES = {
-  airbnb:   { label: 'Airbnb',   color: '#fb7185' },
-  office:   { label: 'Office',   color: '#29b6f5' },
-  building: { label: 'Building', color: '#34d399' },
+  airbnb:   { label: 'Airbnb',   color: '#dc2626' },
+  office:   { label: 'Office',   color: '#0284c7' },
+  building: { label: 'Building', color: '#15803d' },
 };
 const UNIT_TYPE_ORDER = ['airbnb', 'office', 'building'];
 const unitType = (u) => UNIT_TYPES[u && u.type] ? u.type : 'building';
@@ -1013,14 +1013,14 @@ const servicedDone = (id) => !!state.completions['su:' + id + '::' + todayKey()]
 
 // --- Team actions ---
 const DEFAULT_TEAMS = [
-  { name: 'Team A', color: '#29b6f5' },
-  { name: 'Team B', color: '#34d399' },
-  { name: 'Team C', color: '#a78bfa' },
-  { name: 'Lead',   color: '#d4a72c' },
+  { name: 'Team A', color: '#0284c7' },
+  { name: 'Team B', color: '#15803d' },
+  { name: 'Team C', color: '#7c3aed' },
+  { name: 'Lead',   color: '#b45309' },
 ];
-const TEAM_PALETTE = ['#29b6f5','#34d399','#a78bfa','#d4a72c','#f87171','#fb923c','#e879f9','#38bdf8','#4ade80','#facc15'];
+const TEAM_PALETTE = ['#0284c7','#15803d','#7c3aed','#b45309','#dc2626','#ea580c','#a21caf','#0284c7','#15803d','#d97706'];
 function getTeams() { return state.teams || DEFAULT_TEAMS; }
-function teamColor(name) { const t = getTeams().find(t => t.name === name); return t ? t.color : '#5d748c'; }
+function teamColor(name) { const t = getTeams().find(t => t.name === name); return t ? t.color : '#5b6a7f'; }
 function addTeam(name) {
   if (!name || !name.trim()) return;
   const teams = getTeams();
@@ -1199,8 +1199,8 @@ function addUnitForm(opts) {
   let inT = null;
   if (opts.showTime) {
     const rowT = el(`<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"></div>`);
-    rowT.appendChild(el(`<div style="font-size:11px;color:#8da2b8;font-weight:600;white-space:nowrap">${opts.timeLabel || 'Checkout time'}</div>`));
-    inT = el(`<input id="newTime" type="time" style="flex:1;min-width:0;background:#0a0e16;color:#e2e8f0;border:1px solid #283441;border-radius:8px;padding:7px 10px">`);
+    rowT.appendChild(el(`<div style="font-size:11px;color:#5f7189;font-weight:600;white-space:nowrap">${opts.timeLabel || 'Checkout time'}</div>`));
+    inT = el(`<input id="newTime" type="time" style="flex:1;min-width:0;background:#f4f7fb;color:#15202e;border:1px solid #d8e0ea;border-radius:8px;padding:7px 10px">`);
     rowT.appendChild(inT); form.appendChild(rowT);
   }
 
@@ -1211,11 +1211,11 @@ function addUnitForm(opts) {
     types.forEach(tk => {
       const t = UNIT_TYPES[tk];
       const on = tk === chosenType;
-      const b = el(`<button class="freqpick ${on ? 'on' : ''}" style="${on ? `background:${t.color};border-color:${t.color};color:#0a0e16` : ''}">${t.label}</button>`);
+      const b = el(`<button class="freqpick ${on ? 'on' : ''}" style="${on ? `background:${t.color};border-color:${t.color};color:#ffffff` : ''}">${t.label}</button>`);
       b.onclick = () => {
         chosenType = tk;
         Object.values(typeBtns).forEach(x => { x.classList.remove('on'); x.style.background = ''; x.style.borderColor = ''; x.style.color = ''; });
-        b.classList.add('on'); b.style.background = t.color; b.style.borderColor = t.color; b.style.color = '#0a0e16';
+        b.classList.add('on'); b.style.background = t.color; b.style.borderColor = t.color; b.style.color = '#f4f7fb';
       };
       typeBtns[tk] = b; typeRow.appendChild(b);
     });
@@ -1297,7 +1297,7 @@ function viewMore() {
     info.appendChild(el(`<div class="su-unit" style="font-size:15px">${it.label}</div>`));
     info.appendChild(el(`<div class="su-guest">${it.sub}</div>`));
     card.appendChild(info);
-    card.appendChild(el(`<div style="color:#5d748c;font-size:20px">›</div>`));
+    card.appendChild(el(`<div style="color:#5b6a7f;font-size:20px">›</div>`));
     card.onclick = () => setTab(it.id);
     wrap.appendChild(card);
   });
@@ -1340,29 +1340,29 @@ function servicedCard(u, isDue) {
   const info = el(`<div style="flex:1;min-width:0"></div>`);
   info.appendChild(el(`<div class="su-unit">${u.priority?'⭐ ':''}Unit ${esc(u.unit)}</div>`));
   if (u.guest) info.appendChild(el(`<div class="su-guest">${esc(u.guest)}</div>`));
-  if (u.time) info.appendChild(el(`<div class="su-guest" style="color:#fb7185">🕐 Checkout ${esc(u.time)}</div>`));
-  if (u.usualTo) { const usual = (state.staff||[]).find(x=>x.id===u.usualTo); if (usual) info.appendChild(el(`<div class="su-assign" style="color:#c084fc">★ Usual: ${esc(usual.name.split(' ')[0])}</div>`)); }
+  if (u.time) info.appendChild(el(`<div class="su-guest" style="color:#dc2626">🕐 Checkout ${esc(u.time)}</div>`));
+  if (u.usualTo) { const usual = (state.staff||[]).find(x=>x.id===u.usualTo); if (usual) info.appendChild(el(`<div class="su-assign" style="color:#7c3aed">★ Usual: ${esc(usual.name.split(' ')[0])}</div>`)); }
 
   // Last cleaned (from the shared history log)
   const lastClean = lastCleanedByUnit[u.id];
   if (lastClean) {
-    info.appendChild(el(`<div class="su-assign" style="color:#5d8aa8">🧹 Last: ${esc(fmtWhen(lastClean.cleaned_at))} · ${esc(lastClean.cleaner_name || '—')}</div>`));
+    info.appendChild(el(`<div class="su-assign" style="color:#5f7189">🧹 Last: ${esc(fmtWhen(lastClean.cleaned_at))} · ${esc(lastClean.cleaner_name || '—')}</div>`));
   }
 
   // Assigned cleaner line
   if (c) {
     const fname = c.person.name.split(' ')[0];
     if (pendingAbsent) {
-      info.appendChild(el(`<div class="su-assign" style="color:#f87171">⚠ ${esc(fname)} absent — needs cover</div>`));
+      info.appendChild(el(`<div class="su-assign" style="color:#dc2626">⚠ ${esc(fname)} absent — needs cover</div>`));
     } else if (c.reason === 'cover') {
-      info.appendChild(el(`<div class="su-assign" style="color:#34d399">↪ Covered by ${esc(fname)}</div>`));
+      info.appendChild(el(`<div class="su-assign" style="color:#15803d">↪ Covered by ${esc(fname)}</div>`));
     } else if (c.reason === 'override') {
-      info.appendChild(el(`<div class="su-assign" style="color:#8da2b8">Assigned: ${esc(fname)}</div>`));
+      info.appendChild(el(`<div class="su-assign" style="color:#5f7189">Assigned: ${esc(fname)}</div>`));
     } else {
-      info.appendChild(el(`<div class="su-assign" style="color:#8da2b8">${esc(fname)} (Floor ${floorOfUnit(u.unit)})</div>`));
+      info.appendChild(el(`<div class="su-assign" style="color:#5f7189">${esc(fname)} (Floor ${floorOfUnit(u.unit)})</div>`));
     }
   } else {
-    info.appendChild(el(`<div class="su-assign" style="color:#5d748c">No cleaner assigned to Floor ${floorOfUnit(u.unit)||'?'}</div>`));
+    info.appendChild(el(`<div class="su-assign" style="color:#5b6a7f">No cleaner assigned to Floor ${floorOfUnit(u.unit)||'?'}</div>`));
   }
   top.appendChild(info);
 
@@ -1377,7 +1377,7 @@ function servicedCard(u, isDue) {
 
   // Who cleans this room (recorded in history when marked clean)
   const assignRow = el(`<div style="display:flex;align-items:center;gap:8px;margin-top:10px"></div>`);
-  assignRow.appendChild(el(`<div style="font-size:11px;color:#5d748c;font-weight:600;white-space:nowrap">Cleaned by</div>`));
+  assignRow.appendChild(el(`<div style="font-size:11px;color:#5b6a7f;font-weight:600;white-space:nowrap">Cleaned by</div>`));
   const asel = el(`<select class="area-select" style="flex:1"></select>`);
   asel.appendChild(el(`<option value="">Auto (by floor)</option>`));
   cleaningStaff().forEach(p => {
@@ -1417,10 +1417,10 @@ function viewRollCall() {
 
   // Sync staff roster · Import attendance file · pick the day
   const syncBox = el('<div style="margin-bottom:16px"></div>');
-  const syncBtn = el('<button class="add-btn" style="background:#29b6f5">⟳ Sync Staff (Hik-Connect)</button>');
+  const syncBtn = el('<button class="add-btn" style="background:#0284c7">⟳ Sync Staff (Hik-Connect)</button>');
   syncBtn.onclick = () => syncFromHik();
   syncBox.appendChild(syncBtn);
-  const impBtn = el('<button class="add-btn" style="background:#141b28;color:#29b6f5;border:1px solid #1f4a63;margin-top:8px">↑ Import Attendance File</button>');
+  const impBtn = el('<button class="add-btn" style="background:#ffffff;color:#0284c7;border:1px solid #cfe8fb;margin-top:8px">↑ Import Attendance File</button>');
   const impInput = el('<input type="file" accept=".xlsx,.xls,.csv" style="display:none">');
   impInput.onchange = (e) => { if (e.target.files[0]) importAttendance(e.target.files[0]); e.target.value = ''; };
   impBtn.onclick = () => impInput.click();
@@ -1429,8 +1429,8 @@ function viewRollCall() {
   const cur = selectedDay || todayKey();
   const pickDay = (d) => { selectedDay = d || todayKey(); loadHikArrivals().then(() => render()); };
   const dayRow = el('<div style="display:flex;align-items:center;gap:8px;margin-top:10px"></div>');
-  dayRow.appendChild(el('<div style="font-size:12px;color:#8da2b8;font-weight:600;white-space:nowrap">Showing day</div>'));
-  const dayIn = el(`<input type="date" value="${esc(cur)}" max="${esc(todayKey())}" style="flex:1;min-width:0;background:#0a0e16;color:#e2e8f0;border:1px solid #283441;border-radius:8px;padding:8px 10px;font-size:14px">`);
+  dayRow.appendChild(el('<div style="font-size:12px;color:#5f7189;font-weight:600;white-space:nowrap">Showing day</div>'));
+  const dayIn = el(`<input type="date" value="${esc(cur)}" max="${esc(todayKey())}" style="flex:1;min-width:0;background:#f4f7fb;color:#15202e;border:1px solid #d8e0ea;border-radius:8px;padding:8px 10px;font-size:14px">`);
   dayIn.onchange = (e) => pickDay(e.target.value);
   const calBtn = el('<button class="freqmini" title="Pick a date" style="flex:0 0 auto">📅</button>');
   calBtn.onclick = () => { try { dayIn.showPicker(); } catch (e) { dayIn.focus(); dayIn.click(); } };
@@ -1447,7 +1447,7 @@ function viewRollCall() {
   });
   syncBox.appendChild(quick);
   if (hikSyncMsg) {
-    syncBox.appendChild(el(`<div style="font-size:12px;margin-top:8px;font-weight:600;color:${hikSyncMsg.err ? '#f87171' : '#34d399'}">${esc(hikSyncMsg.text)}</div>`));
+    syncBox.appendChild(el(`<div style="font-size:12px;margin-top:8px;font-weight:600;color:${hikSyncMsg.err ? '#dc2626' : '#15803d'}">${esc(hikSyncMsg.text)}</div>`));
   }
   body.appendChild(syncBox);
 
@@ -1466,15 +1466,15 @@ function viewRollCall() {
   const whoIn = el('<div style="margin-bottom:18px"></div>');
   const dayLbl = (selectedDay && selectedDay !== todayKey()) ? ('on ' + selectedDay) : 'today';
   const cleanersTagged = (state.staff || []).some((p) => p.isCleaner);
-  whoIn.appendChild(el(`<div class="section-label" style="color:#34d399">✓ ${cleanersTagged ? 'Cleaners' : 'Staff'} clocked in ${dayLbl} (${arrIds.length})</div>`));
-  if (!cleanersTagged) whoIn.appendChild(el(`<div style="font-size:11px;color:#8da2b8;margin:-6px 0 10px">Tip: tag people as <b>Cleaner</b> in the Team tab so sync only shows cleaners.</div>`));
+  whoIn.appendChild(el(`<div class="section-label" style="color:#15803d">✓ ${cleanersTagged ? 'Cleaners' : 'Staff'} clocked in ${dayLbl} (${arrIds.length})</div>`));
+  if (!cleanersTagged) whoIn.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin:-6px 0 10px">Tip: tag people as <b>Cleaner</b> in the Team tab so sync only shows cleaners.</div>`));
   if (arrIds.length && (state.servicedUnits || []).length) {
-    const autoBtn = el('<button class="add-btn" style="background:#34d399;color:#0a0e16;margin-bottom:12px">⚡ Auto-assign rooms evenly</button>');
+    const autoBtn = el('<button class="add-btn" style="background:#15803d;color:#ffffff;margin-bottom:12px">⚡ Auto-assign rooms evenly</button>');
     autoBtn.onclick = () => autoAssignRooms();
     whoIn.appendChild(autoBtn);
   }
   if (!arrIds.length) {
-    whoIn.appendChild(el(`<div class="empty" style="text-align:center;padding:16px 0;color:#5d748c">No clock-ins for this day. Tap "Import Attendance File" and pick your Hik export.</div>`));
+    whoIn.appendChild(el(`<div class="empty" style="text-align:center;padding:16px 0;color:#5b6a7f">No clock-ins for this day. Tap "Import Attendance File" and pick your Hik export.</div>`));
   } else {
     arrIds
       .map((id) => ({ s: staffById[id], t: hikArrivals[id].time, out: hikArrivals[id].out, raw: hikArrivals[id].raw }))
@@ -1483,12 +1483,12 @@ function viewRollCall() {
       .forEach(({ s, t, out }) => {
         const card = el('<div class="person" style="flex-direction:column;align-items:stretch;gap:8px"></div>');
         const info = el('<div class="person-info"></div>');
-        const lead = s.isLeader ? ` <span style="color:#fbbf24;font-size:12px;font-weight:700">★</span>` : '';
+        const lead = s.isLeader ? ` <span style="color:#d97706;font-size:12px;font-weight:700">★</span>` : '';
         info.appendChild(el(`<div class="person-name">${esc(s.name)}${lead}</div>`));
         const timecard = out
-          ? `✓ In ${esc(t)} <span style="color:#5d748c">·</span> Out ${esc(out)}`
-          : `✓ In ${esc(t)} <span style="color:#5d748c">· still in</span>`;
-        info.appendChild(el(`<div class="person-floors" style="color:#34d399;font-weight:600">${timecard}</div>`));
+          ? `✓ In ${esc(t)} <span style="color:#5b6a7f">·</span> Out ${esc(out)}`
+          : `✓ In ${esc(t)} <span style="color:#5b6a7f">· still in</span>`;
+        info.appendChild(el(`<div class="person-floors" style="color:#15803d;font-weight:600">${timecard}</div>`));
         card.appendChild(info);
         const mine = (state.servicedUnits || []).filter((u) => u.assignedTo === s.id);
         if (mine.length) {
@@ -1509,7 +1509,7 @@ function viewRollCall() {
           sel.onchange = (e) => { if (e.target.value) setUnitAssignee(e.target.value, s.id); };
           card.appendChild(sel);
         } else if (!mine.length) {
-          card.appendChild(el('<div style="font-size:11px;color:#5d748c">No rooms yet — add units on the Cleaning tab, then assign here.</div>'));
+          card.appendChild(el('<div style="font-size:11px;color:#5b6a7f">No rooms yet — add units on the Cleaning tab, then assign here.</div>'));
         }
         whoIn.appendChild(card);
       });
@@ -1534,10 +1534,10 @@ function viewSettings() {
   tRow.appendChild(tIn); tRow.appendChild(tBtn); tbox.appendChild(tRow);
   getTeams().forEach(t => {
     const memberCount = STAFF.filter(p => p.crew === t.name).length;
-    const tr = el(`<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid #1e2733"></div>`);
+    const tr = el(`<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid #e7ecf3"></div>`);
     tr.appendChild(el(`<div class="crew-dot" style="background:${t.color}"></div>`));
-    tr.appendChild(el(`<div style="flex:1;font-size:14px;font-weight:600;color:#f1f5f9">${esc(t.name)}</div>`));
-    tr.appendChild(el(`<div style="font-size:11px;color:#5d748c">${memberCount} member${memberCount!==1?'s':''}</div>`));
+    tr.appendChild(el(`<div style="flex:1;font-size:14px;font-weight:600;color:#0f1a27">${esc(t.name)}</div>`));
+    tr.appendChild(el(`<div style="font-size:11px;color:#5b6a7f">${memberCount} member${memberCount!==1?'s':''}</div>`));
     if (memberCount === 0) {
       const rmBtn = el(`<button class="su-rm">Remove</button>`);
       rmBtn.onclick = () => removeTeam(t.name);
@@ -1554,15 +1554,15 @@ function viewSettings() {
     .sort((a, b) => String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }));
   wrap.appendChild(el(`<div class="section-label" style="margin-top:22px">Room assignments</div>`));
   const rabox = el(`<div class="addbox"></div>`);
-  rabox.appendChild(el(`<div style="font-size:13px;color:#8da2b8;margin-bottom:10px">Pick a cleaner to give a room to permanently. Auto-assign always keeps the room with them.</div>`));
+  rabox.appendChild(el(`<div style="font-size:13px;color:#5f7189;margin-bottom:10px">Pick a cleaner to give a room to permanently. Auto-assign always keeps the room with them.</div>`));
   if (!rooms.length) {
     rabox.appendChild(el(`<div class="empty">No rooms yet — add units on the Airbnb tab.</div>`));
   } else if (!raPool.length) {
     rabox.appendChild(el(`<div class="empty">No staff yet. Add employees below first.</div>`));
   } else {
     rooms.forEach(u => {
-      const row = el(`<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid #1e2733"></div>`);
-      row.appendChild(el(`<div style="flex:0 0 auto;min-width:64px;font-size:14px;font-weight:700;color:#f1f5f9">Unit ${esc(u.unit)}</div>`));
+      const row = el(`<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid #e7ecf3"></div>`);
+      row.appendChild(el(`<div style="flex:0 0 auto;min-width:64px;font-size:14px;font-weight:700;color:#0f1a27">Unit ${esc(u.unit)}</div>`));
       const sel = el(`<select class="area-select" style="flex:1;min-width:0;margin:0"></select>`);
       sel.appendChild(el(`<option value="">— Anyone —</option>`));
       raPool.forEach(p => {
@@ -1585,13 +1585,13 @@ function viewSettings() {
   // --- Floors ---
   wrap.appendChild(el(`<div class="section-label" style="margin-top:22px">Building · floors</div>`));
   const fbox = el(`<div class="addbox"></div>`);
-  fbox.appendChild(el(`<div style="font-size:13px;color:#8da2b8;margin-bottom:8px">Number of residential floors (6 units each)</div>`));
+  fbox.appendChild(el(`<div style="font-size:13px;color:#5f7189;margin-bottom:8px">Number of residential floors (6 units each)</div>`));
   const frow = el(`<div style="display:flex;gap:8px;align-items:center"></div>`);
   const fIn = el(`<input id="floorCount" type="number" min="1" max="99" value="${state.floors}" style="flex:1">`);
   const fBtn = el(`<button class="add-btn" style="flex:0 0 auto;width:auto;padding:12px 18px">Set</button>`);
   fBtn.onclick = () => setFloors(document.getElementById('floorCount').value);
   frow.appendChild(fIn); frow.appendChild(fBtn); fbox.appendChild(frow);
-  fbox.appendChild(el(`<div style="font-size:11px;color:#5d748c;margin-top:8px">Currently ${state.floors} floors · ${state.floors*6} units</div>`));
+  fbox.appendChild(el(`<div style="font-size:11px;color:#5b6a7f;margin-top:8px">Currently ${state.floors} floors · ${state.floors*6} units</div>`));
   wrap.appendChild(fbox);
 
   // --- Add area ---
@@ -1632,7 +1632,7 @@ function viewSettings() {
   // --- Backup & Restore ---
   wrap.appendChild(el(`<div class="section-label" style="margin-top:28px">Backup &amp; Restore</div>`));
   const bbox = el(`<div class="addbox"></div>`);
-  bbox.appendChild(el(`<div style="font-size:13px;color:#8da2b8;margin-bottom:12px">Export your data to a file, or import a backup from another device.</div>`));
+  bbox.appendChild(el(`<div style="font-size:13px;color:#5f7189;margin-bottom:12px">Export your data to a file, or import a backup from another device.</div>`));
   const expBtn = el(`<button class="backup-btn backup-export">↓ Export Backup</button>`);
   expBtn.onclick = () => exportBackup();
   bbox.appendChild(expBtn);
@@ -1646,8 +1646,8 @@ function viewSettings() {
   wrap.appendChild(bbox);
 
   // --- Logout ---
-  wrap.appendChild(el(`<div style="margin-top:32px;padding-top:16px;border-top:1px solid #1e2733"></div>`));
-  const logoutBtn = el(`<button class="reset-btn" style="color:#f87171;border-color:#3a1a1a">Sign Out</button>`);
+  wrap.appendChild(el(`<div style="margin-top:32px;padding-top:16px;border-top:1px solid #e7ecf3"></div>`));
+  const logoutBtn = el(`<button class="reset-btn" style="color:#dc2626;border-color:#f6d5d5">Sign Out</button>`);
   logoutBtn.onclick = () => showConfirm('Sign out?', 'You will need to log in again.', () => logout());
   wrap.appendChild(logoutBtn);
 
@@ -1674,7 +1674,7 @@ function areaCard(a) {
   const info = el(`<div style="flex:1;min-width:0"></div>`);
   info.appendChild(el(`<div class="su-unit" style="font-size:15px">${esc(a.label)}</div>`));
   const assigned = a.assignedTo ? STAFF.find(p=>p.id===a.assignedTo) : null;
-  info.appendChild(el(`<div class="su-assign" style="color:#8da2b8">${FREQ[a.freq].label} · ${assigned ? esc(assigned.name.split(' ')[0]) : 'Unassigned'}</div>`));
+  info.appendChild(el(`<div class="su-assign" style="color:#5f7189">${FREQ[a.freq].label} · ${assigned ? esc(assigned.name.split(' ')[0]) : 'Unassigned'}</div>`));
   top.appendChild(info);
   card.appendChild(top);
 
@@ -1731,7 +1731,7 @@ function floorResidential(f) {
   const units = buildUnits().filter(u => u.floor===f);
   const doneCount = units.filter(u => state.completions[u.id+'::perm']).length;
   const who = whoCleansFloor(f);
-  const color = who ? who.person.color : '#5d748c';
+  const color = who ? who.person.color : '#5b6a7f';
   const fid = 'floor-'+f;
   const open = state.expandedFloors[fid];
   const card = el(`<div class="floor"></div>`);
@@ -1744,7 +1744,7 @@ function floorResidential(f) {
   info.appendChild(el(`<div class="floor-sub">${sub}</div>`));
   head.appendChild(info);
   const prog = el(`<div class="floor-prog"></div>`);
-  prog.appendChild(el(`<div style="width:${(doneCount/6)*100}%;background:${doneCount===6?'#34d399':'#d4a72c'}"></div>`));
+  prog.appendChild(el(`<div style="width:${(doneCount/6)*100}%;background:${doneCount===6?'#15803d':'#b45309'}"></div>`));
   head.appendChild(prog);
   head.appendChild(el(`<div class="chev">${open?'▲':'▼'}</div>`));
   head.onclick = () => toggleFloorExpand(fid);
@@ -1769,13 +1769,13 @@ function floorCommon(id, label, zones, icon) {
   const open = state.expandedFloors[id];
   const card = el(`<div class="floor"></div>`);
   const head = el(`<button class="floor-head"></button>`);
-  head.appendChild(el(`<div class="floor-badge" style="background:#eef2f6;color:#5e7488;font-size:18px">${icon}</div>`));
+  head.appendChild(el(`<div class="floor-badge" style="background:#eef2f8;color:#5b6a7f;font-size:18px">${icon}</div>`));
   const info = el(`<div class="floor-info"></div>`);
   info.appendChild(el(`<div class="floor-name">${esc(label)}</div>`));
   info.appendChild(el(`<div class="floor-sub">${doneCount}/${zones.length} zones complete</div>`));
   head.appendChild(info);
   const prog = el(`<div class="floor-prog"></div>`);
-  prog.appendChild(el(`<div style="width:${(doneCount/zones.length)*100}%;background:${doneCount===zones.length?'#34d399':'#d4a72c'}"></div>`));
+  prog.appendChild(el(`<div style="width:${(doneCount/zones.length)*100}%;background:${doneCount===zones.length?'#15803d':'#b45309'}"></div>`));
   head.appendChild(prog);
   head.appendChild(el(`<div class="chev">${open?'▲':'▼'}</div>`));
   head.onclick = () => toggleFloorExpand(id);
@@ -1809,7 +1809,7 @@ function viewExterior() {
     const zinfo = el(`<div class="zone-info"></div>`);
     zinfo.appendChild(el(`<div class="zone-freq" style="color:${fr.tint}">${fr.label}</div>`));
     zinfo.appendChild(el(`<div class="zone-name">${esc(z.label)}</div>`));
-    if (z.assignedTo) { const p = STAFF.find(s=>s.id===z.assignedTo); if (p) zinfo.appendChild(el(`<div class="su-assign" style="color:#8da2b8">${esc(p.name.split(' ')[0])}</div>`)); }
+    if (z.assignedTo) { const p = STAFF.find(s=>s.id===z.assignedTo); if (p) zinfo.appendChild(el(`<div class="su-assign" style="color:#5f7189">${esc(p.name.split(' ')[0])}</div>`)); }
     row.appendChild(zinfo);
     const mark = el(`<button class="zone-mark">${done?'✓ Done':'Mark'}</button>`);
     mark.onclick = () => toggleZone(z.id, z.freq);
@@ -1876,7 +1876,7 @@ function employeeCard(p) {
 
   const top = el(`<div style="display:flex;align-items:center;gap:10px"></div>`);
   const info = el(`<div class="person-info"></div>`);
-  const leadBadge = p.isLeader ? ` <span style="color:#fbbf24;font-size:12px;font-weight:700">★ Leader</span>` : '';
+  const leadBadge = p.isLeader ? ` <span style="color:#d97706;font-size:12px;font-weight:700">★ Leader</span>` : '';
   info.appendChild(el(`<div class="person-name">${esc(p.name)}${leadBadge}</div>`));
   info.appendChild(el(`<div class="person-floors">${esc(personFloors(p))}</div>`));
   top.appendChild(info);
@@ -1949,7 +1949,7 @@ function viewHistory() {
 
   // Day picker — pick any past day to see what was cleaned that day (blank = every day).
   const dayRow = el('<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px"></div>');
-  const dayIn = el(`<input type="date" value="${esc(historyDay)}" max="${esc(todayKey())}" style="flex:1;min-width:0;background:#0a0e16;color:#e2e8f0;border:1px solid #283441;border-radius:8px;padding:8px 10px;font-size:14px">`);
+  const dayIn = el(`<input type="date" value="${esc(historyDay)}" max="${esc(todayKey())}" style="flex:1;min-width:0;background:#f4f7fb;color:#15202e;border:1px solid #d8e0ea;border-radius:8px;padding:8px 10px;font-size:14px">`);
   dayIn.onchange = (e) => { historyDay = e.target.value || ''; render(); };
   const calBtn = el('<button class="freqmini" title="Pick a date" style="flex:0 0 auto">📅</button>');
   calBtn.onclick = () => { try { dayIn.showPicker(); } catch (e) { dayIn.focus(); dayIn.click(); } };
@@ -1983,7 +1983,7 @@ function viewHistory() {
       if (dk !== lastDay) {
         lastDay = dk;
         const dLabel = new Date(r.cleaned_at).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-        wrap.appendChild(el(`<div class="section-label" style="margin-top:14px;color:#8da2b8">${esc(dLabel)}</div>`));
+        wrap.appendChild(el(`<div class="section-label" style="margin-top:14px;color:#5f7189">${esc(dLabel)}</div>`));
       }
     }
     const card = el(`<div class="su-card"></div>`);
@@ -2119,7 +2119,7 @@ function render() {
       const present = STAFF.filter(p => p.id !== pc.absentId && state.attendance[p.id] !== 'noshow');
       const loads = unitLoads();
       if (!present.length) {
-        modal.appendChild(el(`<div class="modal-sub" style="color:#f87171">No one else is present to cover.</div>`));
+        modal.appendChild(el(`<div class="modal-sub" style="color:#dc2626">No one else is present to cover.</div>`));
       }
       present
         .sort((a,b) => (loads[a.id]||0)-(loads[b.id]||0))
