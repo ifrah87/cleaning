@@ -396,6 +396,7 @@ let state = {
   coverageDay: todayKey(),
   expandedFloors: {},
   servicedUnits: [],   // [{id, unit, guest, freq, startDate, assignedTo?}]
+  plans: {},           // day plan: { 'YYYY-MM-DD': { 'kind:refId': {kind, refId, label, assignedTo} } }
   unitCover: {},       // confirmed cover today: unitId -> personId
   pendingCover: null,  // {absentId, suggestId} -> drives the confirm popup
   editingUnit: null,   // id of unit currently being edited inline
@@ -414,6 +415,7 @@ function finalizeState() {
   if (!Array.isArray(state.areas)) state.areas = DEFAULT_AREAS.map(a => ({ ...a }));
   if (!Array.isArray(state.teams)) state.teams = DEFAULT_TEAMS.map(t => ({ ...t }));
   if (typeof state.floors !== 'number' || state.floors < 1) state.floors = DEFAULT_FLOORS;
+  if (!state.plans || typeof state.plans !== 'object') state.plans = {};
   dedupeServicedUnits();
   STAFF = state.staff;
   refreshTeamColors();
@@ -1344,9 +1346,127 @@ function viewBuildings() {
   return wrap;
 }
 // "More" menu — the less-used tabs live here so the bottom bar stays clean.
+// ============================================================
+// PLAN A DAY — build tomorrow's job list, then fill it with whoever badges in.
+// ============================================================
+let planDay = null;   // selected day in the Plan view (null => tomorrow)
+const tomorrowKey = () => { const d = new Date(); d.setDate(d.getDate() + 1); return d.toLocaleDateString('en-CA'); };
+function curPlanDay() { return planDay || tomorrowKey(); }
+function getPlan(day) { if (!state.plans) state.plans = {}; if (!state.plans[day]) state.plans[day] = {}; return state.plans[day]; }
+function planJobs(day) { return Object.entries(getPlan(day)).map(([key, v]) => ({ key, ...v })); }
+const planKey = (kind, id) => kind + ':' + id;
+// All cleanable things you can put on a plan: serviced units (by type) + areas.
+function planPool() {
+  const rooms = (state.servicedUnits || []).map(u => ({ kind: 'unit', id: u.id, label: 'Unit ' + u.unit, group: UNIT_TYPES[unitType(u)].label }));
+  const areas = (state.areas || []).map(a => ({ kind: 'area', id: a.id, label: a.label, group: a.kind === 'exterior' ? 'Exterior areas' : 'Interior areas' }));
+  return [...rooms, ...areas];
+}
+function togglePlanJob(day, kind, id, label) {
+  const plan = getPlan(day); const k = planKey(kind, id);
+  if (plan[k]) delete plan[k]; else plan[k] = { kind, refId: id, label, assignedTo: null };
+  save(); render();
+}
+function setPlanAssignee(day, k, pid) { const plan = getPlan(day); if (plan[k]) plan[k].assignedTo = pid || null; save(); render(); }
+function clearPlanDay(day) { showConfirm('Clear this day’s plan?', 'Removes every planned job for ' + day + '.', () => { if (state.plans) delete state.plans[day]; save(); render(); }); }
+// Auto-spread the planned jobs evenly across whoever's clocked in.
+function autoAssignPlan(day) {
+  const inIds = Object.keys(hikArrivals).filter(id => (state.staff || []).some(s => s.id === id));
+  if (!inIds.length) { hikSyncMsg = { err: true, text: 'No one clocked in yet to assign these jobs to.' }; render(); return; }
+  const jobs = planJobs(day);
+  if (!jobs.length) { hikSyncMsg = { err: true, text: 'No jobs planned for this day yet — add some below.' }; render(); return; }
+  const plan = getPlan(day);
+  const load = {}; inIds.forEach(id => load[id] = 0);
+  jobs.forEach(j => { const pick = inIds.slice().sort((a, b) => load[a] - load[b])[0]; plan[j.key].assignedTo = pick; load[pick]++; });
+  hikSyncMsg = { text: `Spread ${jobs.length} jobs across ${inIds.length} clocked-in.` };
+  save(); render();
+}
+
+function viewPlan() {
+  const wrap = el('<div class="body"></div>');
+  const day = curPlanDay();
+  const isTomorrow = day === tomorrowKey();
+  const isToday = day === todayKey();
+
+  wrap.appendChild(el(`<div class="note">Plan the jobs for a day, then assign whoever badges in — auto-spread or pick per job.</div>`));
+
+  // Day picker
+  const dayRow = el('<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"></div>');
+  const dayIn = el(`<input type="date" value="${esc(day)}" min="${esc(todayKey())}" style="flex:1;min-width:0;background:#ffffff;color:#15202e;border:1px solid #d8e0ea;border-radius:8px;padding:9px 10px;font-size:14px">`);
+  dayIn.onchange = (e) => { planDay = e.target.value || null; render(); };
+  dayRow.appendChild(dayIn);
+  wrap.appendChild(dayRow);
+  const quick = el('<div style="display:flex;gap:6px;margin-bottom:14px"></div>');
+  const jump = (lbl, key, on) => { const b = el(`<button class="freqmini ${on ? 'on' : ''}" style="flex:1">${lbl}</button>`); b.onclick = () => { planDay = key; render(); }; return b; };
+  quick.appendChild(jump('Today', todayKey(), isToday));
+  quick.appendChild(jump('Tomorrow', tomorrowKey(), isTomorrow));
+  wrap.appendChild(quick);
+
+  if (hikSyncMsg) wrap.appendChild(el(`<div class="section-label" style="color:${hikSyncMsg.err ? '#dc2626' : '#15803d'}">${esc(hikSyncMsg.text)}</div>`));
+
+  // Planned jobs + assignment
+  const jobs = planJobs(day);
+  wrap.appendChild(el(`<div class="section-label" style="margin-top:6px">Planned jobs (${jobs.length})</div>`));
+  if (!jobs.length) {
+    wrap.appendChild(el(`<div class="empty" style="padding:14px 0">Nothing planned yet. Tap items below to add them.</div>`));
+  } else {
+    const auto = el(`<button class="add-btn" style="background:#15803d;margin-bottom:6px">⚡ Auto-assign to who's clocked in</button>`);
+    auto.onclick = () => autoAssignPlan(day);
+    wrap.appendChild(auto);
+    const clr = el(`<button class="reset-btn">Clear this day's plan</button>`);
+    clr.onclick = () => clearPlanDay(day);
+    wrap.appendChild(clr);
+
+    const arrivedIds = new Set(Object.keys(hikArrivals));
+    const staff = cleaningStaff();
+    jobs.forEach(j => {
+      const card = el(`<div class="su-card"></div>`);
+      const top = el(`<div class="su-top"></div>`);
+      top.appendChild(el(`<div style="flex:1;min-width:0"><div class="su-unit" style="font-size:15px">${esc(j.label)}</div></div>`));
+      const rm = el(`<button class="su-rm">✕</button>`);
+      rm.onclick = () => togglePlanJob(day, j.kind, j.refId, j.label);
+      top.appendChild(rm);
+      card.appendChild(top);
+      const sel = el(`<select class="area-select" style="margin-top:8px"></select>`);
+      sel.appendChild(el(`<option value="">— Assign someone —</option>`));
+      staff.slice().sort((a, b) => (arrivedIds.has(b.id) ? 1 : 0) - (arrivedIds.has(a.id) ? 1 : 0))
+        .forEach(p => {
+          const o = el(`<option value="${esc(p.id)}">${arrivedIds.has(p.id) ? '✓ ' : ''}${esc(p.name)}</option>`);
+          if (j.assignedTo === p.id) o.setAttribute('selected', '');
+          sel.appendChild(o);
+        });
+      sel.onchange = (e) => setPlanAssignee(day, j.key, e.target.value);
+      card.appendChild(sel);
+      wrap.appendChild(card);
+    });
+  }
+
+  // Add jobs — grouped pool with toggles
+  wrap.appendChild(el(`<div class="section-label" style="margin-top:20px">Add jobs to this day</div>`));
+  const plan = getPlan(day);
+  const pool = planPool();
+  if (!pool.length) {
+    wrap.appendChild(el(`<div class="empty">No rooms or areas yet — add some on the Airbnb / Buildings / Offices tabs first.</div>`));
+  } else {
+    const groups = [...new Set(pool.map(x => x.group))];
+    groups.forEach(g => {
+      wrap.appendChild(el(`<div class="section-label" style="margin-top:12px;color:#5b6a7f">${esc(g)}</div>`));
+      const box = el(`<div style="display:flex;flex-wrap:wrap;gap:6px"></div>`);
+      pool.filter(x => x.group === g).forEach(x => {
+        const on = !!plan[planKey(x.kind, x.id)];
+        const b = el(`<button class="freqmini ${on ? 'on' : ''}" style="flex:0 0 auto;padding:8px 12px">${on ? '✓ ' : '+ '}${esc(x.label)}</button>`);
+        b.onclick = () => togglePlanJob(day, x.kind, x.id, x.label);
+        box.appendChild(b);
+      });
+      wrap.appendChild(box);
+    });
+  }
+  return wrap;
+}
+
 function viewMore() {
   const wrap = el('<div class="body"></div>');
   const items = [
+    { id: 'plan', label: 'Plan a Day', ico: '🗓', sub: 'Set tomorrow’s jobs & assign who’s in' },
     { id: 'building', label: 'Floors & Common Areas', ico: '▦', sub: 'Rooftop → floors → ground checklist' },
     { id: 'history', label: 'Cleaning History', ico: '◷', sub: 'What was cleaned, by day' },
     { id: 'team', label: 'Team', ico: '☰', sub: 'Staff & cleaners' },
@@ -2132,7 +2252,7 @@ function render() {
 
   const header = el(`<div class="header"></div>`);
   header.appendChild(el(`<div class="h-eyebrow">66-UNIT BUILDING · 11 FLOORS</div>`));
-  const titles = { offices:'Office Cleaning', buildings:'Building Cleaning', airbnb:'Airbnb Rooms', more:'More', rollcall:'Morning Roll Call', building:'Floors & Common Areas', exterior:'Exterior', history:'Cleaning History', team:'Team', settings:'Settings' };
+  const titles = { offices:'Office Cleaning', buildings:'Building Cleaning', airbnb:'Airbnb Rooms', more:'More', rollcall:'Morning Roll Call', building:'Floors & Common Areas', exterior:'Exterior', history:'Cleaning History', team:'Team', settings:'Settings', plan:'Plan a Day' };
   header.appendChild(el(`<div class="h-title">${titles[state.tab]}</div>`));
   header.appendChild(el(`<div class="h-date">${dateStr}</div>`));
   const typeTab = { offices: 'office', buildings: 'building', airbnb: 'airbnb' }[state.tab];
@@ -2161,6 +2281,7 @@ function render() {
   else if (state.tab==='buildings') app.appendChild(viewBuildings());
   else if (state.tab==='airbnb') app.appendChild(viewAirbnb());
   else if (state.tab==='more') app.appendChild(viewMore());
+  else if (state.tab==='plan') app.appendChild(viewPlan());
   else if (state.tab==='rollcall') app.appendChild(viewRollCall());
   else if (state.tab==='building') app.appendChild(viewBuilding());
   else if (state.tab==='exterior') app.appendChild(viewExterior());
@@ -2224,7 +2345,7 @@ function render() {
     { id:'more', label:'More', ico:'⋯' },
   ];
   // "More" stays highlighted while you're on any of its sub-pages.
-  const moreIds = ['more','building','history','team','settings'];
+  const moreIds = ['more','plan','building','history','team','settings'];
   tabs.forEach(t => {
     const isActive = t.id === 'more' ? moreIds.includes(state.tab) : state.tab === t.id;
     const b = el(`<button class="${isActive?'active':''}"><div class="ico">${t.ico}</div><div>${t.label}</div></button>`);
