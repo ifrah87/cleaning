@@ -331,18 +331,34 @@ const daysSince = (iso) => {
   return Math.round((b - a) / 864e5);
 };
 
-// Is a serviced unit due for cleaning today?
-function unitDueToday(u) {
-  if (u.freq === 'nightly') return true;
-  if (u.freq === 'daily') return true;
-  if (u.freq === 'eod') { const d = daysSince(u.startDate); return d >= 0 && d % 2 === 0; }
-  if (u.freq === 'weekly') {
-    const start = new Date(u.startDate + 'T00:00:00');
-    return start.getDay() === new Date().getDay();
-  }
-  return false;
+// How many days between cleanings, per frequency.
+const FREQ_DAYS = { nightly: 1, daily: 1, eod: 2, weekly: 7, monthly: 30 };
+// When was this unit last cleaned? Use the most recent of: the shared history log,
+// or a manual "last cleaned on" date set when adding/editing the room.
+function lastCleanDate(u) {
+  const log = lastCleanedByUnit[u.id];
+  const logDay = log ? dayKeyLocal(log.cleaned_at) : null;
+  const manual = u.lastCleaned || null;
+  if (logDay && manual) return logDay >= manual ? logDay : manual;
+  return logDay || manual;
 }
-const FREQ_LABEL = { nightly: 'Nightly', daily: 'Daily', eod: 'Every other day', weekly: 'Weekly' };
+// Is a serviced unit due for cleaning today? Based on when it was last cleaned +
+// its frequency — so a room cleaned today won't be suggested again until it's due.
+function unitDueToday(u) {
+  const base = lastCleanDate(u);
+  if (!base) return true;                       // never cleaned → due now
+  const d = daysSince(base);
+  return d >= (FREQ_DAYS[u.freq] || 1);         // enough days have passed
+}
+// The date this unit is next due (null = due now).
+function nextDueDate(u) {
+  const base = lastCleanDate(u);
+  if (!base) return null;
+  const dt = new Date(base + 'T00:00:00');
+  dt.setDate(dt.getDate() + (FREQ_DAYS[u.freq] || 1));
+  return dt.toLocaleDateString('en-CA');
+}
+const FREQ_LABEL = { nightly: 'Nightly', daily: 'Daily', eod: 'Every other day', weekly: 'Weekly', monthly: 'Monthly' };
 
 // Infer floor from unit number: 906->9, 1106->11, 506->5
 function floorOfUnit(unitStr) {
@@ -837,11 +853,11 @@ function autoAssignRooms() {
   const inIds = new Set(people.map((p) => p.id));
   const load = {}; people.forEach((p) => { load[p.id] = 0; });
 
-  const rooms = (state.servicedUnits || []).slice().sort((a, b) =>
+  const rooms = (state.servicedUnits || []).filter(unitDueToday).slice().sort((a, b) =>   // only rooms due today
     (b.priority ? 1 : 0) - (a.priority ? 1 : 0)                                  // priority ⭐ rooms first
     || String(a.time || '~').localeCompare(String(b.time || '~'))               // then earliest scheduled time
     || String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }));
-  if (!rooms.length) { hikSyncMsg = { err: true, text: 'No rooms yet — add units on the Cleaning tab first.' }; render(); return; }
+  if (!rooms.length) { hikSyncMsg = { err: true, text: 'No rooms are due for cleaning today.' }; render(); return; }
   rooms.forEach((u) => { u.assignedTo = null; });                               // start fresh
 
   // Pass 1: keep every room's usual cleaner if they clocked in.
@@ -1011,11 +1027,12 @@ async function importAttendance(file) {
     render();
   }
 }
-function editServicedUnit(id, newUnit, newGuest) {
+function editServicedUnit(id, newUnit, newGuest, lastCleaned) {
   const u = state.servicedUnits.find(x => x.id === id);
   if (!u) return;
   if (newUnit != null && newUnit.trim()) u.unit = newUnit.trim();
   u.guest = (newGuest || '').trim();   // allow clearing the name too
+  if (lastCleaned !== undefined) u.lastCleaned = lastCleaned || null;   // manual "last cleaned on" baseline
   if (state.editingUnit === id) state.editingUnit = null;
   save(); render();
 }
@@ -1508,9 +1525,12 @@ function servicedCard(u, isDue) {
     const eU = el(`<input id="edUnit_${u.id}" value="${esc(u.unit)}" placeholder="Unit number" style="margin-bottom:8px">`);
     const eG = el(`<input id="edGuest_${u.id}" value="${esc(u.guest||'')}" placeholder="Guest / customer name" style="margin-bottom:10px">`);
     card.appendChild(eU); card.appendChild(eG);
+    card.appendChild(el(`<div style="font-size:11px;color:#5b6a7f;font-weight:600;margin-bottom:4px">Last cleaned on (optional — sets the schedule)</div>`));
+    const eL = el(`<input id="edLast_${u.id}" type="date" value="${esc(u.lastCleaned||'')}" max="${esc(todayKey())}" style="margin-bottom:10px;width:100%">`);
+    card.appendChild(eL);
     const row = el(`<div style="display:flex;gap:8px"></div>`);
     const saveB = el(`<button class="add-btn" style="flex:1">Save</button>`);
-    saveB.onclick = () => editServicedUnit(u.id, document.getElementById('edUnit_'+u.id).value, document.getElementById('edGuest_'+u.id).value);
+    saveB.onclick = () => editServicedUnit(u.id, document.getElementById('edUnit_'+u.id).value, document.getElementById('edGuest_'+u.id).value, document.getElementById('edLast_'+u.id).value);
     const cancelB = el(`<button class="modal-skip">Cancel</button>`);
     cancelB.onclick = () => cancelEditUnit();
     row.appendChild(saveB); row.appendChild(cancelB);
@@ -1553,7 +1573,11 @@ function servicedCard(u, isDue) {
     mark.onclick = () => toggleServicedDone(u.id);
     top.appendChild(mark);
   } else {
-    top.appendChild(el(`<div class="su-next">${FREQ_LABEL[u.freq]}</div>`));
+    const nd = nextDueDate(u);
+    const label = nd === tomorrowKey() ? 'Next: tomorrow'
+      : nd ? 'Next: ' + new Date(nd + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+      : FREQ_LABEL[u.freq];
+    top.appendChild(el(`<div class="su-next" title="${esc(FREQ_LABEL[u.freq])}">${esc(label)}</div>`));
   }
   card.appendChild(top);
 
