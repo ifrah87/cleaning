@@ -1,0 +1,49 @@
+name: Attendance scrape
+
+# Runs the Hik-Connect Time Card scraper in the cloud, independent of any laptop.
+# Times are UTC; EAT (UTC+3) equivalents are 07:30, 09:30, 11:30, 13:30, 15:30, 17:30.
+on:
+  schedule:
+    - cron: '30 4,6,8,10,12,14 * * *'
+  workflow_dispatch: {}   # lets you run it on demand from the Actions tab
+
+concurrency:
+  group: attendance-scrape
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        working-directory: scraper
+        run: npm install --no-audit --no-fund
+
+      - name: Install Chromium
+        working-directory: scraper
+        run: npx playwright install --with-deps chromium
+
+      - name: Run scraper
+        working-directory: scraper
+        env:
+          HIK_EMAIL: ${{ secrets.HIK_EMAIL }}
+          HIK_PASSWORD: ${{ secrets.HIK_PASSWORD }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: node scrape.js
+
+      - name: Upload debug screenshots on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-shots
+          path: scraper/*.png
+          if-no-files-found: ignore
+          retention-days: 3
