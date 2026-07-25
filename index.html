@@ -2006,6 +2006,10 @@ function areaCard(a) {
 function viewBuilding() {
   const wrap = el('<div class="body"></div>');
   wrap.appendChild(el(`<div class="section-label">Building · top to bottom</div>`));
+  wrap.appendChild(el(`<div class="note">This is the daily checklist. To add, rename, remove or change areas (and set the number of floors), use Settings.</div>`));
+  const editBtn = el(`<button class="reset-btn" style="color:#0284c7;border-color:#cfe8fb">⚙ Edit areas & floors (Settings)</button>`);
+  editBtn.onclick = () => setTab('settings');
+  wrap.appendChild(editBtn);
   const reset = el(`<button class="reset-btn">Reset completions</button>`);
   reset.onclick = resetCompletions; wrap.appendChild(reset);
   wrap.appendChild(floorCommon('rooftop', 'Rooftop', areasExterior(), '⛰'));
