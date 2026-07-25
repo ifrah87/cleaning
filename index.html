@@ -441,22 +441,19 @@ function finalizeState() {
 // carrying over an assignment/priority from whichever copy has it. Runs on every
 // load so a stale device that re-added duplicates can't leave them behind.
 function dedupeServicedUnits() {
-  if (!Array.isArray(state.servicedUnits)) { state.servicedUnits = []; return; }
+  if (!Array.isArray(state.servicedUnits)) { state.servicedUnits = []; return false; }
   const byUnit = new Map();
   for (const u of state.servicedUnits) {
-    const key = String(u.unit || '').trim();
+    const key = String(u.unit || '').trim().toLowerCase();
     if (!byUnit.has(key)) { byUnit.set(key, u); continue; }
     const base = byUnit.get(key);
-    for (const f of ['assignedTo', 'usualTo', 'priority', 'guest', 'time']) {
+    for (const f of ['assignedTo', 'usualTo', 'priority', 'guest', 'time', 'lastCleaned']) {
       if (!base[f] && u[f]) base[f] = u[f];
     }
   }
   const before = state.servicedUnits.length;
   state.servicedUnits = [...byUnit.values()];
-  // If we actually removed duplicates, push the clean list so every device gets it.
-  if (state.servicedUnits.length !== before && typeof db !== 'undefined' && db) {
-    setTimeout(() => save(), 0);
-  }
+  return state.servicedUnits.length !== before;   // true if it removed any dupes
 }
 
 function load() {
@@ -473,6 +470,7 @@ function load() {
 
 // Save = write the local cache instantly, then push to the shared server.
 function save() {
+  dedupeServicedUnits();   // never persist a duplicate room, no matter how it got created
   try { localStorage.setItem(STORE, JSON.stringify(state)); } catch (e) {}
   remotePush();
 }
@@ -1030,7 +1028,15 @@ async function importAttendance(file) {
 function editServicedUnit(id, newUnit, newGuest, lastCleaned) {
   const u = state.servicedUnits.find(x => x.id === id);
   if (!u) return;
-  if (newUnit != null && newUnit.trim()) u.unit = newUnit.trim();
+  if (newUnit != null && newUnit.trim()) {
+    const label = newUnit.trim();
+    // Block renaming onto a room number that already exists (would create a duplicate).
+    if (state.servicedUnits.some(x => x.id !== id && String(x.unit).trim().toLowerCase() === label.toLowerCase())) {
+      alert('Room ' + label + ' already exists — pick a different number.');
+      return;
+    }
+    u.unit = label;
+  }
   u.guest = (newGuest || '').trim();   // allow clearing the name too
   if (lastCleaned !== undefined) u.lastCleaned = lastCleaned || null;   // manual "last cleaned on" baseline
   if (state.editingUnit === id) state.editingUnit = null;
@@ -1480,9 +1486,46 @@ function viewPlan() {
   return wrap;
 }
 
+// A single consolidated list of every room on the cleaning list.
+function viewRooms() {
+  const wrap = el('<div class="body"></div>');
+  const units = (state.servicedUnits || []).slice()
+    .sort((a, b) => String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }));
+  wrap.appendChild(el(`<div class="note">Every room on the cleaning list — <b>${units.length}</b> total. Edit any room on its Airbnb / Buildings / Offices tab.</div>`));
+  if (!units.length) { wrap.appendChild(el(`<div class="empty">No rooms yet.</div>`)); return wrap; }
+  const groups = {};
+  units.forEach(u => { const t = unitType(u); (groups[t] = groups[t] || []).push(u); });
+  ['airbnb', 'office', 'building'].forEach(tk => {
+    const list = groups[tk]; if (!list || !list.length) return;
+    const t = UNIT_TYPES[tk];
+    const head = el(`<div class="crew-head" style="margin-top:16px"></div>`);
+    head.appendChild(el(`<div class="crew-dot" style="background:${t.color}"></div>`));
+    head.appendChild(el(`<div class="crew-name">${t.label}</div>`));
+    head.appendChild(el(`<div class="crew-sub">${list.length}</div>`));
+    wrap.appendChild(head);
+    list.forEach(u => {
+      const due = unitDueToday(u);
+      const nd = nextDueDate(u);
+      const who = (state.staff || []).find(p => p.id === (u.usualTo || u.assignedTo));
+      const row = el(`<div class="su-card" style="display:flex;align-items:center;gap:10px;padding:10px 12px"></div>`);
+      row.appendChild(el(`<div style="font-size:15px;font-weight:800;min-width:52px;color:#0f1a27">${esc(u.unit)}</div>`));
+      const mid = el(`<div style="flex:1;min-width:0"></div>`);
+      mid.appendChild(el(`<div style="font-size:12px;color:#5f7189;font-weight:600">${esc(FREQ_LABEL[u.freq] || 'Daily')}${who ? ' · ' + esc(who.name.split(' ')[0]) : ''}</div>`));
+      const dueLabel = due ? 'Due today'
+        : nd ? 'Next: ' + new Date(nd + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+        : '';
+      mid.appendChild(el(`<div style="font-size:11px;color:${due ? '#15803d' : '#5b6a7f'};font-weight:600">${esc(dueLabel)}</div>`));
+      row.appendChild(mid);
+      wrap.appendChild(row);
+    });
+  });
+  return wrap;
+}
+
 function viewMore() {
   const wrap = el('<div class="body"></div>');
   const items = [
+    { id: 'rooms', label: 'All Rooms', ico: '▤', sub: 'Every room we clean, at a glance' },
     { id: 'plan', label: 'Plan a Day', ico: '🗓', sub: 'Set tomorrow’s jobs & assign who’s in' },
     { id: 'building', label: 'Floors & Common Areas', ico: '▦', sub: 'Rooftop → floors → ground checklist' },
     { id: 'history', label: 'Cleaning History', ico: '◷', sub: 'What was cleaned, by day' },
@@ -2276,7 +2319,7 @@ function render() {
 
   const header = el(`<div class="header"></div>`);
   header.appendChild(el(`<div class="h-eyebrow">66-UNIT BUILDING · 11 FLOORS</div>`));
-  const titles = { offices:'Office Cleaning', buildings:'Building Cleaning', airbnb:'Airbnb Rooms', more:'More', rollcall:'Morning Roll Call', building:'Floors & Common Areas', exterior:'Exterior', history:'Cleaning History', team:'Team', settings:'Settings', plan:'Plan a Day' };
+  const titles = { offices:'Office Cleaning', buildings:'Building Cleaning', airbnb:'Airbnb Rooms', more:'More', rollcall:'Morning Roll Call', building:'Floors & Common Areas', exterior:'Exterior', history:'Cleaning History', team:'Team', settings:'Settings', plan:'Plan a Day', rooms:'All Rooms' };
   header.appendChild(el(`<div class="h-title">${titles[state.tab]}</div>`));
   header.appendChild(el(`<div class="h-date">${dateStr}</div>`));
   const typeTab = { offices: 'office', buildings: 'building', airbnb: 'airbnb' }[state.tab];
@@ -2306,6 +2349,7 @@ function render() {
   else if (state.tab==='airbnb') app.appendChild(viewAirbnb());
   else if (state.tab==='more') app.appendChild(viewMore());
   else if (state.tab==='plan') app.appendChild(viewPlan());
+  else if (state.tab==='rooms') app.appendChild(viewRooms());
   else if (state.tab==='rollcall') app.appendChild(viewRollCall());
   else if (state.tab==='building') app.appendChild(viewBuilding());
   else if (state.tab==='exterior') app.appendChild(viewExterior());
@@ -2369,7 +2413,7 @@ function render() {
     { id:'more', label:'More', ico:'⋯' },
   ];
   // "More" stays highlighted while you're on any of its sub-pages.
-  const moreIds = ['more','plan','building','history','team','settings'];
+  const moreIds = ['more','rooms','plan','building','history','team','settings'];
   tabs.forEach(t => {
     const isActive = t.id === 'more' ? moreIds.includes(state.tab) : state.tab === t.id;
     const b = el(`<button class="${isActive?'active':''}"><div class="ico">${t.ico}</div><div>${t.label}</div></button>`);
