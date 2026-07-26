@@ -350,6 +350,12 @@ function unitDueToday(u) {
   const d = daysSince(base);
   return d >= (FREQ_DAYS[u.freq] || 1);         // enough days have passed
 }
+// Was this unit already cleaned today? Either ticked off in the app, or logged
+// as cleaned today from another phone (the shared history log wins across devices).
+const cleanedToday = (u) => servicedDone(u.id) || lastCleanDate(u) === todayKey();
+// Rooms that belong on today's list: due now, OR already cleaned today. Cleaned
+// rooms stay on the list with a ✓ so the daily list doesn't shrink as work gets done.
+const onTodaysList = (u) => unitDueToday(u) || cleanedToday(u);
 // The date this unit is next due (null = due now).
 function nextDueDate(u) {
   const base = lastCleanDate(u);
@@ -1398,7 +1404,7 @@ function unitGroups(wrap, typeKeys, emptyMsg) {
     head.appendChild(el(`<div class="crew-name">${t.label}</div>`));
     head.appendChild(el(`<div class="crew-sub">${group.length}</div>`));
     wrap.appendChild(head);
-    group.forEach(u => wrap.appendChild(servicedCard(u, unitDueToday(u))));
+    group.forEach(u => wrap.appendChild(servicedCard(u, onTodaysList(u))));
   });
 }
 
@@ -1562,10 +1568,12 @@ function viewRooms() {
       top.appendChild(el(`<div style="font-size:16px;font-weight:800;min-width:56px;color:#0f1a27">${esc(u.unit)}</div>`));
       const mid = el(`<div style="flex:1;min-width:0"></div>`);
       mid.appendChild(el(`<div style="font-size:12px;color:#5f7189;font-weight:600">${esc(t.label)}${who ? ' · ' + esc(who.name.split(' ')[0]) : ''}</div>`));
-      const dueLabel = due ? 'Due today'
+      const doneToday = cleanedToday(u);
+      const dueLabel = doneToday ? '✓ Cleaned today'
+        : due ? 'Due today'
         : nd ? 'Next: ' + new Date(nd + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
         : '';
-      mid.appendChild(el(`<div style="font-size:11px;color:${due ? '#15803d' : '#5b6a7f'};font-weight:600">${esc(dueLabel)}</div>`));
+      mid.appendChild(el(`<div style="font-size:11px;color:${due || doneToday ? '#15803d' : '#5b6a7f'};font-weight:600">${esc(dueLabel)}</div>`));
       top.appendChild(mid);
       card.appendChild(top);
 
@@ -1632,10 +1640,11 @@ function viewAirbnb() {
 
 function servicedCard(u, isDue) {
   const done = servicedDone(u.id);
+  const doneToday = cleanedToday(u);        // includes cleans logged from another phone
   const c = cleanerForUnit(u);
   const pendingAbsent = c && c.reason === 'owner-absent';
   const editing = state.editingUnit === u.id;
-  const card = el(`<div class="su-card ${done?'done':''} ${pendingAbsent?'needs-cover':''}"></div>`);
+  const card = el(`<div class="su-card ${doneToday?'done':''} ${pendingAbsent?'needs-cover':''}"></div>`);
   card.style.borderLeft = '3px solid ' + UNIT_TYPES[unitType(u)].color;   // colour-code by type
 
   // --- EDIT MODE ---
@@ -1691,8 +1700,16 @@ function servicedCard(u, isDue) {
   }
   top.appendChild(info);
 
-  if (isDue) {
-    const mark = el(`<button class="su-mark">${done?'✓ Cleaned':'Mark clean'}</button>`);
+  if (done) {
+    // We ticked it off here, so it can be un-ticked here.
+    const mark = el(`<button class="su-mark">✓ Cleaned</button>`);
+    mark.onclick = () => toggleServicedDone(u.id);
+    top.appendChild(mark);
+  } else if (doneToday) {
+    // Cleaned today according to the shared log (another phone) — show it, don't offer an undo we can't honour.
+    top.appendChild(el(`<div class="su-next" style="color:#15803d;background:#e7f6ec;border-color:#bfe6cd">✓ Done today</div>`));
+  } else if (isDue) {
+    const mark = el(`<button class="su-mark">Mark clean</button>`);
     mark.onclick = () => toggleServicedDone(u.id);
     top.appendChild(mark);
   } else {
@@ -2432,10 +2449,12 @@ function render() {
   const typeTab = { offices: 'office', buildings: 'building', airbnb: 'airbnb' }[state.tab];
   if (typeTab) {
     const inType = state.servicedUnits.filter(u => unitType(u) === typeTab);
-    const dueCount = inType.filter(unitDueToday).length;
-    const doneCount = inType.filter(u => unitDueToday(u) && servicedDone(u.id)).length;
+    // Today's list = rooms due now + rooms already cleaned today, so the count
+    // doesn't shrink as the crew works through it ("3 of 12 done", not "9 due").
+    const todayList = inType.filter(onTodaysList);
+    const doneCount = todayList.filter(cleanedToday).length;
     const strip = el(`<div class="stats"></div>`);
-    strip.appendChild(el(`<div class="stat"><div class="lbl">DUE TODAY</div><div class="val">${dueCount}</div></div>`));
+    strip.appendChild(el(`<div class="stat"><div class="lbl">DUE TODAY</div><div class="val">${todayList.length}</div></div>`));
     strip.appendChild(el(`<div class="stat"><div class="lbl">CLEANED</div><div class="val">${doneCount}</div></div>`));
     strip.appendChild(el(`<div class="stat"><div class="lbl">TOTAL</div><div class="val">${inType.length}</div></div>`));
     header.appendChild(strip);
