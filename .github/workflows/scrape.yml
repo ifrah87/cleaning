@@ -1,10 +1,12 @@
 name: Attendance scrape
 
 # Runs the Hik-Connect Time Card scraper in the cloud, independent of any laptop.
-# Times are UTC; EAT (UTC+3) equivalents are 07:30, 09:30, 11:30, 13:30, 15:30, 17:30.
+# Cron is UTC. EAT = UTC+3. We poll every 5 min from 06:00 to 19:55 EAT
+# (03:00-16:55 UTC) so early morning badge-ins are captured quickly.
+# NOTE: GitHub schedules are best-effort — ticks can be delayed or skipped under load.
 on:
   schedule:
-    - cron: '30 4,6,8,10,12,14 * * *'
+    - cron: '*/5 3-16 * * *'
   workflow_dispatch: {}   # lets you run it on demand from the Actions tab
 
 concurrency:
@@ -25,6 +27,12 @@ jobs:
       - name: Install dependencies
         working-directory: scraper
         run: npm install --no-audit --no-fund
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('scraper/package-lock.json') }}
 
       - name: Install Chromium
         working-directory: scraper
