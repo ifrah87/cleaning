@@ -410,7 +410,7 @@ function unitsOwnedBy(personId) {
 }
 
 let state = {
-  tab: 'cleaning',
+  tab: 'rollcall',     // must always be a tab render() knows — see the guard in render()
   attendance: {},
   completions: {},
   logRefs: {},         // completion key -> cleaning_log row id (so un-marking removes the history entry)
@@ -420,6 +420,7 @@ let state = {
   servicedUnits: [],   // [{id, unit, guest, freq, startDate, assignedTo?}]
   plans: {},           // day plan: { 'YYYY-MM-DD': { 'kind:refId': {kind, refId, label, assignedTo} } }
   manualArrivals: {},  // people added by hand when they forgot to badge: { 'YYYY-MM-DD': { staffId: {time} } }
+  assignConfirmed: {}, // office signed off on a room's cleaner: { unitId: 'YYYY-MM-DD' } — today's date = confirmed today
   unitCover: {},       // confirmed cover today: unitId -> personId
   pendingCover: null,  // {absentId, suggestId} -> drives the confirm popup
   editingUnit: null,   // id of unit currently being edited inline
@@ -440,6 +441,7 @@ function finalizeState() {
   if (typeof state.floors !== 'number' || state.floors < 1) state.floors = DEFAULT_FLOORS;
   if (!state.plans || typeof state.plans !== 'object') state.plans = {};
   if (!state.manualArrivals || typeof state.manualArrivals !== 'object') state.manualArrivals = {};
+  if (!state.assignConfirmed || typeof state.assignConfirmed !== 'object') state.assignConfirmed = {};
   dedupeServicedUnits();
   STAFF = state.staff;
   refreshTeamColors();
@@ -776,7 +778,7 @@ function assignCover(floor, pid) { state.coverage[floor]=pid; state.coverageDay=
 function toggleUnit(uid) { const k=uid+'::perm'; if(state.completions[k])delete state.completions[k];else state.completions[k]=true; save(); render(); }
 function toggleZone(zid, freq) { const k=zid+'::'+freqKey(freq); if(state.completions[k])delete state.completions[k];else state.completions[k]=true; save(); render(); }
 function toggleFloorExpand(fid) { state.expandedFloors[fid]=!state.expandedFloors[fid]; save(); render(); }
-function setTab(t) { state.tab=t; save(); render(); }
+function setTab(t) { state.tab=t; _assignPick=null; save(); render(); }
 function resetCompletions() { showConfirm('Reset all completion checkmarks?', 'Attendance and assignments are kept.', () => { state.completions={}; save(); render(); }); }
 
 // --- Serviced unit actions ---
@@ -820,6 +822,54 @@ function setUnitFreq(id, freq) {
   if (u) { u.freq = freq; u.startDate = todayKey(); } // reset cycle anchor to today
   save(); render();
 }
+// Flip a whole group of rooms onto one schedule at once — one-by-one is painful
+// when most of the building should be on the same cadence.
+function setUnitsFreqBulk(ids, freq, groupLabel) {
+  const already = (state.servicedUnits || []).filter(u => ids.includes(u.id) && u.freq === freq).length;
+  const changing = ids.length - already;
+  if (!changing) return;
+  showConfirm(
+    `Set ${changing} room${changing === 1 ? '' : 's'} to ${FREQ_LABEL[freq]}?`,
+    `Applies to ${groupLabel} only. Any room can still be changed on its own afterwards.`,
+    () => {
+      (state.servicedUnits || []).forEach(u => {
+        if (ids.includes(u.id)) { u.freq = freq; u.startDate = todayKey(); }
+      });
+      save(); render();
+    },
+    'Set ' + FREQ_LABEL[freq],
+    'safe'
+  );
+}
+// Record a whole group as cleaned (or not) in one go — at the end of a day where
+// the crew got through everything, ticking 25 rooms individually is the bottleneck.
+function setUnitsLastCleanedBulk(ids, dayKey, groupLabel) {
+  const changing = (state.servicedUnits || []).filter(u => ids.includes(u.id) && (u.lastCleaned || null) !== dayKey).length;
+  if (!changing) return;
+  const what = dayKey === todayKey() ? 'cleaned today' : dayKey ? 'cleaned on ' + dayKey : 'not cleaned yet';
+  showConfirm(
+    `Mark ${changing} room${changing === 1 ? '' : 's'} ${what}?`,
+    `Applies to ${groupLabel} only. Their next clean is scheduled from this date.`,
+    () => {
+      (state.servicedUnits || []).forEach(u => { if (ids.includes(u.id)) u.lastCleaned = dayKey || null; });
+      save(); render();
+    },
+    dayKey ? 'Mark ' + what : 'Clear',
+    'safe'
+  );
+}
+
+// --- Assignment sign-off -----------------------------------------------------
+// Auto-assign hands rooms out immediately, but each one still needs a yes/no from
+// the office. Confirmation is stamped with the day so it expires on its own.
+let _assignPick = null;   // {unitId} while the "who should take this?" picker is open
+const assignConfirmedToday = (u) => (state.assignConfirmed || {})[u.id] === todayKey();
+function confirmAssignment(id) {
+  state.assignConfirmed[id] = todayKey();
+  save(); render();
+}
+function openAssignPicker(id) { _assignPick = { unitId: id }; render(); }
+function dismissAssignPicker() { _assignPick = null; render(); }
 function setUnitAssignee(id, pid) {
   const u = state.servicedUnits.find(x => x.id === id);
   if (u) {
@@ -827,6 +877,10 @@ function setUnitAssignee(id, pid) {
     // Remember this as the room's "usual" cleaner so auto-assign keeps the same person here.
     if (pid) u.usualTo = pid; else u.usualTo = null;
   }
+  // Choosing a cleaner by hand IS the sign-off; taking the room off someone
+  // leaves nothing to sign off on.
+  if (pid) state.assignConfirmed[id] = todayKey(); else delete state.assignConfirmed[id];
+  _assignPick = null;
   save(); render();
 }
 function setUnitPriority(id, on) {
@@ -879,7 +933,9 @@ function autoAssignRooms() {
     || String(a.time || '~').localeCompare(String(b.time || '~'))               // then earliest scheduled time
     || String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }));
   if (!rooms.length) { hikSyncMsg = { err: true, text: 'No rooms are due for cleaning today.' }; render(); return; }
-  rooms.forEach((u) => { u.assignedTo = null; });                               // start fresh
+  // Start fresh: every room it hands out is a new suggestion awaiting a yes/no,
+  // so any earlier sign-off for today is void.
+  rooms.forEach((u) => { u.assignedTo = null; delete state.assignConfirmed[u.id]; });
 
   const order = people.map((p) => p.id);   // clocked-in ids, earliest arrival first
   // Pass 1: early-preference rooms go to the earliest arrivals so they're done first.
@@ -897,7 +953,7 @@ function autoAssignRooms() {
     const pick = order.slice().sort((a, b) => load[a] - load[b])[0];
     u.assignedTo = pick; load[pick]++;
   });
-  hikSyncMsg = { text: `Assigned ${rooms.length} rooms to ${people.length} cleaners${kept ? ` (${kept} kept with their usual crew)` : ''}.` };
+  hikSyncMsg = { text: `Suggested ${rooms.length} rooms for ${people.length} cleaners${kept ? ` (${kept} kept with their usual crew)` : ''} — check each one below.` };
   save(); render();
 }
 
@@ -1544,7 +1600,7 @@ function viewRooms() {
   const wrap = el('<div class="body"></div>');
   const units = (state.servicedUnits || []).slice()
     .sort((a, b) => String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }));
-  wrap.appendChild(el(`<div class="note">Every room on the cleaning list — <b>${units.length}</b> total. Edit any room on its Airbnb / Buildings / Offices tab.</div>`));
+  wrap.appendChild(el(`<div class="note">Every room on the cleaning list — <b>${units.length}</b> total. Tap <b>Daily</b> / <b>Every other day</b> / <b>Weekly</b> on any room to change how often it&rsquo;s cleaned, or use <b>Set all</b> to flip a whole group.</div>`));
   if (!units.length) { wrap.appendChild(el(`<div class="empty">No rooms yet.</div>`)); return wrap; }
   const groups = {};
   units.forEach(u => { const t = unitType(u); (groups[t] = groups[t] || []).push(u); });
@@ -1556,6 +1612,35 @@ function viewRooms() {
     head.appendChild(el(`<div class="crew-name">${t.label}</div>`));
     head.appendChild(el(`<div class="crew-sub">${list.length}</div>`));
     wrap.appendChild(head);
+
+    // Group-level schedule flip + a breakdown of what this group is currently on,
+    // so an odd room out ("13 on every-other-day") is visible instead of hidden.
+    const ids = list.map(u => u.id);
+    const tally = {};
+    list.forEach(u => { const f = u.freq || 'daily'; tally[f] = (tally[f] || 0) + 1; });
+    const spread = Object.keys(tally).sort((a, b) => tally[b] - tally[a])
+      .map(f => `${tally[f]} ${FREQ_LABEL[f] || f}`).join(' · ');
+    const bulk = el(`<div style="margin:6px 0 4px"></div>`);
+    bulk.appendChild(el(`<div style="font-size:11px;color:#5b6a7f;font-weight:600;margin-bottom:6px">Now: ${esc(spread)} · <b>Set all:</b></div>`));
+    const bulkBtns = el(`<div style="display:flex;gap:6px"></div>`);
+    [['daily', 'Daily'], ['eod', 'Every other day'], ['weekly', 'Weekly']].forEach(([fk, lbl]) => {
+      const allOn = tally[fk] === list.length;
+      const b = el(`<button class="freqmini ${allOn ? 'on' : ''}">${lbl}</button>`);
+      b.onclick = () => setUnitsFreqBulk(ids, fk, t.label.toLowerCase());
+      bulkBtns.appendChild(b);
+    });
+    bulk.appendChild(bulkBtns);
+
+    const cleanedCount = list.filter(cleanedToday).length;
+    const markRow = el(`<div style="display:flex;align-items:center;gap:6px;margin-top:8px;flex-wrap:wrap"></div>`);
+    markRow.appendChild(el(`<div style="font-size:11px;color:#5b6a7f;font-weight:600;flex:0 0 auto">`
+      + `${cleanedCount} of ${list.length} cleaned today · <b>Mark all:</b></div>`));
+    const markToday = el(`<button class="freqmini ${cleanedCount === list.length ? 'on' : ''}" style="flex:0 0 auto;padding:6px 10px">✓ Cleaned today</button>`);
+    markToday.onclick = () => setUnitsLastCleanedBulk(ids, todayKey(), t.label.toLowerCase());
+    markRow.appendChild(markToday);
+    bulk.appendChild(markRow);
+    wrap.appendChild(bulk);
+
     list.forEach(u => {
       const due = unitDueToday(u);
       const nd = nextDueDate(u);
@@ -1808,20 +1893,87 @@ function viewRollCall() {
     body.appendChild(al);
   }
 
-  // WHO'S IN TODAY — only people who badged in, with clock-in times + room assignment.
   const arrIds = Object.keys(hikArrivals);
   const staffById = {};
   for (const s of (state.staff || [])) staffById[s.id] = s;
+
+  // TODAY'S ROOMS — surfaced up front so the office sees the actual workload when roll
+  // call opens, instead of only finding out after tapping auto-assign.
+  // Same order auto-assign uses: 🌅 early first, then ⭐ priority, then room number —
+  // so what you see at the top is what gets handed out first.
+  const todaysRooms = (state.servicedUnits || []).filter(onTodaysList).slice()
+    .sort((a, b) => (b.preferEarly ? 1 : 0) - (a.preferEarly ? 1 : 0)
+      || (b.priority ? 1 : 0) - (a.priority ? 1 : 0)
+      || String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }));
+  const flags = (u) => (u.preferEarly ? '🌅 ' : '') + (u.priority ? '⭐ ' : '');
+  if (todaysRooms.length) {
+    const doneR = todaysRooms.filter(cleanedToday);
+    const openR = todaysRooms.filter((u) => !cleanedToday(u));
+    const unass = openR.filter((u) => !u.assignedTo);
+    const toCheck = openR.filter((u) => u.assignedTo && !assignConfirmedToday(u));
+    const okCount = openR.filter((u) => u.assignedTo && assignConfirmedToday(u)).length;
+    const box = el('<div style="margin-bottom:18px"></div>');
+    box.appendChild(el(`<div class="section-label">◷ Rooms to clean today (${todaysRooms.length})</div>`));
+    box.appendChild(el(`<div style="font-size:12px;color:#5f7189;font-weight:600;margin:-6px 0 10px">`
+      + `${openR.length - unass.length} handed out`
+      + ` · <b style="color:${unass.length ? '#b45309' : '#15803d'}">${unass.length} still to hand out</b>`
+      + (toCheck.length ? ` · <b style="color:#b45309">${toCheck.length} to check</b>` : '')
+      + (doneR.length ? ` · <span style="color:#15803d">${doneR.length} done</span>` : '')
+      + `</div>`));
+    const chips = el('<div style="display:flex;flex-wrap:wrap;gap:6px"></div>');
+    todaysRooms.forEach((u) => {
+      const done = cleanedToday(u);
+      const who = (state.staff || []).find((p) => p.id === u.assignedTo);
+      const tone = done ? 'background:#eaf7ee;border-color:#bfe3ca;color:#15803d'
+        : who ? 'background:#eef6fd;border-color:#cfe8fb;color:#0369a1'
+        : 'background:#fff7ed;border-color:#fcd9a8;color:#b45309';
+      const signed = who && assignConfirmedToday(u);
+      const tip = done ? 'Cleaned today'
+        : who ? (signed ? 'Confirmed for ' + who.name : 'Suggested for ' + who.name + ' — not checked yet')
+        : 'Not assigned yet';
+      chips.appendChild(el(`<div class="freqmini" style="flex:0 0 auto;padding:6px 10px;${tone}" title="${esc(tip)}">`
+        + `${flags(u)}${esc(u.unit)}`
+        + `${done ? ' ✓' : who ? ' · ' + esc(who.name.split(' ')[0]) + (signed ? '' : ' ?') : ''}</div>`));
+    });
+    box.appendChild(chips);
+
+    // The button that hands rooms out belongs above the list it produces.
+    if (arrIds.length) {
+      const autoBtn = el('<button class="add-btn" style="background:#15803d;color:#ffffff;margin:12px 0 4px">⚡ Auto-assign rooms evenly</button>');
+      autoBtn.onclick = () => autoAssignRooms();
+      box.appendChild(autoBtn);
+    }
+
+    // SIGN-OFF: auto-assign hands rooms out straight away, but every one it picked
+    // still needs a yes/no. "No" opens the picker so the room goes somewhere else.
+    if (toCheck.length) {
+      box.appendChild(el(`<div class="section-label" style="margin-top:16px;color:#b45309">⚠ Check these assignments (${toCheck.length})</div>`));
+      toCheck.forEach((u) => {
+        const who = (state.staff || []).find((p) => p.id === u.assignedTo);
+        const row = el('<div class="su-card" style="display:flex;align-items:center;gap:8px;padding:10px 12px;margin-bottom:8px"></div>');
+        const info = el('<div style="flex:1;min-width:0"></div>');
+        info.appendChild(el(`<div style="font-size:15px;font-weight:800;color:#0f1a27">${flags(u)}${esc(u.unit)}</div>`));
+        info.appendChild(el(`<div style="font-size:12px;color:#5f7189;font-weight:600">→ ${esc(who ? who.name : 'unknown')}</div>`));
+        row.appendChild(info);
+        const yes = el('<button class="freqmini" style="flex:0 0 auto;padding:9px 14px;background:#15803d;border-color:#15803d;color:#ffffff">✓ Yes</button>');
+        yes.onclick = () => confirmAssignment(u.id);
+        const no = el('<button class="freqmini" style="flex:0 0 auto;padding:9px 14px">✕ No</button>');
+        no.onclick = () => openAssignPicker(u.id);
+        row.appendChild(yes); row.appendChild(no);
+        box.appendChild(row);
+      });
+    } else if (okCount) {
+      box.appendChild(el(`<div style="font-size:12px;color:#15803d;font-weight:700;margin-top:12px">✓ All ${okCount} assignment${okCount === 1 ? '' : 's'} confirmed</div>`));
+    }
+    body.appendChild(box);
+  }
+
+  // WHO'S IN TODAY — only people who badged in, with clock-in times + room assignment.
   const whoIn = el('<div style="margin-bottom:18px"></div>');
   const dayLbl = (selectedDay && selectedDay !== todayKey()) ? ('on ' + selectedDay) : 'today';
   const cleanersTagged = (state.staff || []).some((p) => p.isCleaner);
   whoIn.appendChild(el(`<div class="section-label" style="color:#15803d">✓ ${cleanersTagged ? 'Cleaners' : 'Staff'} clocked in ${dayLbl} (${arrIds.length})</div>`));
   if (!cleanersTagged) whoIn.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin:-6px 0 10px">Tip: tag people as <b>Cleaner</b> in the Team tab so sync only shows cleaners.</div>`));
-  if (arrIds.length && (state.servicedUnits || []).length) {
-    const autoBtn = el('<button class="add-btn" style="background:#15803d;color:#ffffff;margin-bottom:12px">⚡ Auto-assign rooms evenly</button>');
-    autoBtn.onclick = () => autoAssignRooms();
-    whoIn.appendChild(autoBtn);
-  }
   // Manually add a cleaner who forgot to badge in.
   const notIn = cleaningStaff().filter((p) => !hikArrivals[p.id]);
   if (notIn.length) {
@@ -1871,12 +2023,32 @@ function viewRollCall() {
           });
           card.appendChild(chips);
         }
-        const free = (state.servicedUnits || []).filter((u) => !u.assignedTo);
+        // Rooms still to hand out — due-today ones suggested first, everything else
+        // tucked below so an out-of-schedule room is a deliberate choice, not an accident.
+        const free = (state.servicedUnits || []).filter((u) => !u.assignedTo && !cleanedToday(u));
+        const byUnit = (a, b) => String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true });
+        const freeDue = free.filter(unitDueToday).sort((a, b) =>
+          (b.preferEarly ? 1 : 0) - (a.preferEarly ? 1 : 0)
+          || (b.priority ? 1 : 0) - (a.priority ? 1 : 0)
+          || byUnit(a, b));
+        const freeLater = free.filter((u) => !unitDueToday(u)).sort(byUnit);
         if (free.length) {
           const sel = el('<select class="area-select"></select>');
-          sel.appendChild(el('<option value="">+ Assign a room…</option>'));
-          free.slice().sort((a, b) => String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }))
-            .forEach((u) => sel.appendChild(el(`<option value="${esc(u.id)}">Room ${esc(u.unit)}</option>`)));
+          sel.appendChild(el(`<option value="">+ Assign a room…${freeDue.length ? ` (${freeDue.length} due today)` : ''}</option>`));
+          const optFor = (u, suffix) => el(`<option value="${esc(u.id)}">${flags(u)}Room ${esc(u.unit)}${suffix}</option>`);
+          if (freeDue.length) {
+            const g = el(`<optgroup label="Due today (${freeDue.length})"></optgroup>`);
+            freeDue.forEach((u) => g.appendChild(optFor(u, '')));
+            sel.appendChild(g);
+          }
+          if (freeLater.length) {
+            const g = el(`<optgroup label="Not due yet (${freeLater.length})"></optgroup>`);
+            freeLater.forEach((u) => {
+              const nd = nextDueDate(u);
+              g.appendChild(optFor(u, nd ? ' — next ' + new Date(nd + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''));
+            });
+            sel.appendChild(g);
+          }
           sel.onchange = (e) => { if (e.target.value) setUnitAssignee(e.target.value, s.id); };
           card.appendChild(sel);
         } else if (!mine.length) {
@@ -1886,8 +2058,47 @@ function viewRollCall() {
       });
   }
   body.appendChild(whoIn);
-
   wrap.appendChild(body);
+
+  // "No" on an assignment → pick who should take it instead. Everyone clocked in is
+  // listed with how many rooms they're already carrying, so the load stays visible.
+  if (_assignPick) {
+    const u = (state.servicedUnits || []).find((x) => x.id === _assignPick.unitId);
+    if (!u) { _assignPick = null; return wrap; }
+    const load = {};
+    (state.servicedUnits || []).forEach((x) => { if (x.assignedTo) load[x.assignedTo] = (load[x.assignedTo] || 0) + 1; });
+    const inNow = arrIds.map((id) => staffById[id]).filter(Boolean);
+    const lightest = inNow.slice().sort((a, b) => (load[a.id] || 0) - (load[b.id] || 0))[0];
+    const overlay = el('<div class="modal-overlay" id="assignPicker"></div>');
+    const modal = el('<div class="modal"></div>');
+    modal.appendChild(el(`<div class="modal-title">Who should take ${esc(u.unit)}?</div>`));
+    modal.appendChild(el(`<div class="modal-sub">Currently suggested for ${esc((state.staff || []).find((p) => p.id === u.assignedTo) ? (state.staff || []).find((p) => p.id === u.assignedTo).name : 'nobody')}.</div>`));
+    const picker = el('<div class="cover-picker" style="display:flex;flex-direction:column;gap:8px;margin-top:14px"></div>');
+    if (!inNow.length) {
+      picker.appendChild(el('<div class="empty">Nobody is clocked in yet.</div>'));
+    }
+    inNow.sort((a, b) => (load[a.id] || 0) - (load[b.id] || 0) || a.name.localeCompare(b.name)).forEach((p) => {
+      const n = load[p.id] || 0;
+      const isCur = p.id === u.assignedTo;
+      const b = el(`<button class="cover-opt ${isCur ? 'on' : ''}">${esc(p.name)}`
+        + `<span class="cover-load">${n} room${n === 1 ? '' : 's'}`
+        + `${lightest && p.id === lightest.id && !isCur ? ' · lightest' : ''}${isCur ? ' · suggested' : ''}</span></button>`);
+      b.onclick = () => setUnitAssignee(u.id, p.id);
+      picker.appendChild(b);
+    });
+    modal.appendChild(picker);
+    const btnRow = el('<div class="modal-btns"></div>');
+    const back = el('<button class="modal-confirm" style="background:#b45309">Put it back in the pool</button>');
+    back.onclick = () => setUnitAssignee(u.id, '');
+    const cancel = el('<button class="modal-skip">Cancel</button>');
+    cancel.onclick = () => dismissAssignPicker();
+    btnRow.appendChild(cancel); btnRow.appendChild(back);
+    modal.appendChild(btnRow);
+    overlay.appendChild(modal);
+    overlay.onclick = (e) => { if (e.target === overlay) dismissAssignPicker(); };
+    wrap.appendChild(overlay);
+  }
+
   return wrap;
 }
 
@@ -2405,8 +2616,10 @@ function viewTeam() {
 // CUSTOM CONFIRM MODAL
 // ============================================================
 let _confirmState = null;
-function showConfirm(title, message, onConfirm) {
-  _confirmState = { title, message, onConfirm };
+// okLabel/okTone let a non-destructive confirm (e.g. changing a schedule) avoid the
+// red "Remove" button, which reads as "you're about to delete something".
+function showConfirm(title, message, onConfirm, okLabel, okTone) {
+  _confirmState = { title, message, onConfirm, okLabel, okTone };
   renderConfirmModal();
 }
 function dismissConfirmModal() { _confirmState = null; const e = document.getElementById('confirmModal'); if (e) e.remove(); }
@@ -2421,7 +2634,7 @@ function renderConfirmModal() {
   const btnRow = el(`<div class="modal-btns"></div>`);
   const cancelBtn = el(`<button class="modal-skip">Cancel</button>`);
   cancelBtn.onclick = () => dismissConfirmModal();
-  const confirmBtn = el(`<button class="modal-danger">Remove</button>`);
+  const confirmBtn = el(`<button class="${_confirmState.okTone === 'safe' ? 'modal-confirm' : 'modal-danger'}">${esc(_confirmState.okLabel || 'Remove')}</button>`);
   confirmBtn.onclick = () => { const cb = _confirmState.onConfirm; dismissConfirmModal(); cb(); };
   btnRow.appendChild(cancelBtn);
   btnRow.appendChild(confirmBtn);
@@ -2444,6 +2657,9 @@ function render() {
   const header = el(`<div class="header"></div>`);
   header.appendChild(el(`<div class="h-eyebrow">66-UNIT BUILDING · 11 FLOORS</div>`));
   const titles = { offices:'Office Cleaning', buildings:'Building Cleaning', airbnb:'Airbnb Rooms', more:'More', rollcall:'Morning Roll Call', building:'Floors & Common Areas', exterior:'Exterior', history:'Cleaning History', team:'Team', settings:'Settings', plan:'Plan a Day', rooms:'All Rooms' };
+  // A tab with no view renders an empty screen, so never trust it blindly:
+  // fall back to Roll Call rather than showing a header over nothing.
+  if (!titles[state.tab]) state.tab = 'rollcall';
   header.appendChild(el(`<div class="h-title">${titles[state.tab]}</div>`));
   header.appendChild(el(`<div class="h-date">${dateStr}</div>`));
   const typeTab = { offices: 'office', buildings: 'building', airbnb: 'airbnb' }[state.tab];
