@@ -109,6 +109,7 @@ function serve() {
 
   const writes = [];        // every app_state upsert the app attempted
   const unexpected = [];    // any Supabase path we didn't plan for
+  const logged = [];        // every cleaning_log row the app tried to write
 
   await ctx.route(`**://${SUPA_HOST}/**`, async (route) => {
     const req = route.request();
@@ -140,7 +141,10 @@ function serve() {
       if (method === 'GET') return json(HIK_EVENTS);
       return json([{}], 201);
     }
-    if (url.includes('/rest/v1/cleaning_log')) return json([]);
+    if (url.includes('/rest/v1/cleaning_log')) {
+      if (method === 'POST') { logged.push(JSON.parse(req.postData() || '{}')); return json([{ id: 'log' + logged.length }], 201); }
+      return json([]);
+    }
 
     unexpected.push(method + ' ' + url);
     return json([]);
@@ -371,6 +375,7 @@ function serve() {
 
   // Bulk "mark all cleaned today".
   writes.length = 0;
+  logged.length = 0;
   const markLine = page.locator('text=/cleaned today · Mark all:/').first();
   contains('group shows how many are already cleaned', await markLine.textContent(), 'of 5 cleaned today');
   await markLine.locator('..').locator('button', { hasText: 'Cleaned today' }).click();
@@ -383,6 +388,11 @@ function serve() {
   check('every room in the group is dated today', airbnbCleaned.length === 5 && airbnbCleaned.every((u) => u.lastCleaned === TODAY), JSON.stringify(airbnbCleaned.map((u) => [u.unit, u.lastCleaned])));
   const officeUntouched = wMark && (wMark.data.servicedUnits || []).find((u) => u.id === 'u201');
   eq('the office group was not marked', officeUntouched && officeUntouched.lastCleaned, YESTERDAY);
+  // Marking rooms cleaned must reach Cleaning History, not just the schedule —
+  // an office using these buttons instead of ticking rooms off had an empty log.
+  check('marking rooms cleaned writes them to history', logged.length === 4, logged.length + ' history rows written');
+  check('history rows carry the room and who cleaned it', logged.every((l) => l.unit_label && l.cleaner_name), JSON.stringify(logged.map((l) => [l.unit_label, l.cleaner_name])));
+  check('history is dated the day of the clean', logged.every((l) => String(l.cleaned_at).slice(0, 10) === TODAY), JSON.stringify(logged.map((l) => l.cleaned_at)));
 
   // Every-other-day rooms cleaned together pile onto one morning. Set the office
   // group up that way, then prove "Even out the days" splits them.
