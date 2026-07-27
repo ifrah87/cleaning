@@ -344,11 +344,17 @@ function lastCleanDate(u) {
 }
 // Is a serviced unit due for cleaning today? Based on when it was last cleaned +
 // its frequency — so a room cleaned today won't be suggested again until it's due.
+// A one-off delay used to spread rooms that all fall due on the same morning.
+// Tied to the clean it was applied from, so as soon as the room is cleaned again
+// the shift lapses by itself — no stale offset to clean up, and lastCleaned
+// always reflects a real clean rather than a date invented to fudge the schedule.
+const dueShift = (u) =>
+  (u.cycleShiftFrom && lastCleanDate(u) === u.cycleShiftFrom) ? (u.cycleShift || 0) : 0;
+const cycleLen = (u) => (FREQ_DAYS[u.freq] || 1) + dueShift(u);
 function unitDueToday(u) {
   const base = lastCleanDate(u);
   if (!base) return true;                       // never cleaned → due now
-  const d = daysSince(base);
-  return d >= (FREQ_DAYS[u.freq] || 1);         // enough days have passed
+  return daysSince(base) >= cycleLen(u);        // enough days have passed
 }
 // Was this unit already cleaned today? Either ticked off in the app, or logged
 // as cleaned today from another phone (the shared history log wins across devices).
@@ -361,7 +367,7 @@ function nextDueDate(u) {
   const base = lastCleanDate(u);
   if (!base) return null;
   const dt = new Date(base + 'T00:00:00');
-  dt.setDate(dt.getDate() + (FREQ_DAYS[u.freq] || 1));
+  dt.setDate(dt.getDate() + cycleLen(u));
   return dt.toLocaleDateString('en-CA');
 }
 const FREQ_LABEL = { nightly: 'Nightly', daily: 'Daily', eod: 'Every other day', weekly: 'Weekly', monthly: 'Monthly' };
@@ -841,6 +847,59 @@ function setUnitsFreqBulk(ids, freq, groupLabel) {
     'safe'
   );
 }
+// Rooms on the same multi-day cadence that were all cleaned together stay locked
+// together forever — 13 every-other-day rooms all land on the same morning, giving
+// a 38-room day followed by a 25-room day. Spread them across the cycle instead.
+// Only ever DELAYS a room (one longer gap, once); never pulls a clean forward.
+function balancePlan(ids) {
+  const byFreq = {};
+  (state.servicedUnits || []).forEach(u => {
+    if (!ids.includes(u.id)) return;
+    const n = FREQ_DAYS[u.freq] || 1;
+    if (n > 1) (byFreq[u.freq] = byFreq[u.freq] || []).push(u);
+  });
+  const plan = [];
+  Object.keys(byFreq).forEach(f => {
+    const n = FREQ_DAYS[f];
+    // Sorted by room number, so the split falls on floor boundaries — "lower floors
+    // one day, upper floors the next" is something the crew can actually remember.
+    const list = byFreq[f].slice().sort((a, b) =>
+      String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }));
+    list.forEach((u, i) => {
+      const bucket = Math.floor(i * n / list.length);   // contiguous blocks, 0..n-1
+      if (!bucket) return;                              // first block keeps its date
+      const base = lastCleanDate(u);
+      if (!base) return;                                // never cleaned → already due, nothing to spread
+      if (dueShift(u) === bucket) return;             // already spread this way
+      plan.push({ u, base, shift: bucket });
+    });
+  });
+  return plan;
+}
+function balanceUnitsAcrossDays(ids, groupLabel) {
+  const plan = balancePlan(ids);
+  if (!plan.length) return;
+  // Preview the resulting spread so the trade is visible before committing.
+  const moved = {};
+  plan.forEach(p => {
+    const d = shiftDay(p.base, (FREQ_DAYS[p.u.freq] || 1) + p.shift);
+    moved[d] = (moved[d] || 0) + 1;
+  });
+  const spread = Object.keys(moved).sort()
+    .map(d => `${moved[d]} to ${new Date(d + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`)
+    .join(', ');
+  showConfirm(
+    `Spread ${plan.length} room${plan.length === 1 ? '' : 's'} onto later days?`,
+    `Applies to ${groupLabel}. Moves ${spread}, so the same work lands evenly instead of all on one morning. No room is cleaned sooner than its schedule — each moved room just waits one extra day, once.`,
+    () => {
+      plan.forEach(p => { p.u.cycleShift = p.shift; p.u.cycleShiftFrom = p.base; });
+      save(); render();
+    },
+    'Spread them out',
+    'safe'
+  );
+}
+
 // Record a whole group as cleaned (or not) in one go — at the end of a day where
 // the crew got through everything, ticking 25 rooms individually is the bottleneck.
 function setUnitsLastCleanedBulk(ids, dayKey, groupLabel) {
@@ -1666,6 +1725,34 @@ function viewRooms() {
     markToday.onclick = () => setUnitsLastCleanedBulk(ids, todayKey(), t.label.toLowerCase());
     markRow.appendChild(markToday);
     bulk.appendChild(markRow);
+
+    // Show the coming week's load, and offer to flatten it when one day spikes.
+    const upcoming = {};
+    list.forEach(u => { const d = nextDueDate(u) || todayKey(); upcoming[d] = (upcoming[d] || 0) + 1; });
+    const days = Object.keys(upcoming).sort().slice(0, 4);
+    const dayLabel = (d) => new Date(d + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    if (days.length) {
+      const peak = Math.max(...days.map(d => upcoming[d]));
+      const lightest = Math.min(...days.map(d => upcoming[d]));
+      // Everything landing on ONE day is the worst case, not a balanced one —
+      // don't let a single-day spread look like nothing is wrong.
+      const allOnOneDay = days.length === 1 && upcoming[days[0]] > 1;
+      const lopsided = allOnOneDay || peak - lightest > 1;
+      const loadRow = el(`<div style="display:flex;align-items:center;gap:6px;margin-top:8px;flex-wrap:wrap"></div>`);
+      loadRow.appendChild(el(`<div style="font-size:11px;color:#5b6a7f;font-weight:600;flex:0 0 auto">Next days: `
+        + days.map(d => `<b>${upcoming[d]}</b> ${dayLabel(d)}`).join(' · ')
+        + `</div>`));
+      if (lopsided && balancePlan(ids).length) {
+        loadRow.appendChild(el(`<div style="flex-basis:100%;height:0"></div>`));
+        loadRow.appendChild(el(`<div style="font-size:11px;color:#b45309;font-weight:700;flex:0 0 auto">`
+          + (allOnOneDay ? `⚠ all ${upcoming[days[0]]} land on ${dayLabel(days[0])}` : `⚠ ${peak} on one day vs ${lightest} on another`)
+          + `</div>`));
+        const balBtn = el(`<button class="freqmini" style="flex:0 0 auto;padding:6px 10px">⚖ Even out the days</button>`);
+        balBtn.onclick = () => balanceUnitsAcrossDays(ids, t.label.toLowerCase());
+        loadRow.appendChild(balBtn);
+      }
+      bulk.appendChild(loadRow);
+    }
     wrap.appendChild(bulk);
 
     list.forEach(u => {
