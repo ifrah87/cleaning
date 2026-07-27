@@ -2024,9 +2024,25 @@ function viewMore() {
 // Airbnb tab = guest rooms only, with checkout time.
 function viewAirbnb() {
   const wrap = el('<div class="body"></div>');
+  wrap.appendChild(offRollCallNote('airbnb'));
   wrap.appendChild(addUnitForm({ types: ['airbnb'], defaultType: 'airbnb', title: 'Add an Airbnb room', guestPlaceholder: 'Guest name', showTime: true, timeLabel: 'Checkout' }));
   unitGroups(wrap, ['airbnb'], 'No Airbnb rooms yet. Add your first guest room above.');
   return wrap;
+}
+
+// A kind of room kept off the morning roll call is a separate job, done by its own
+// people after the main round. Say so on its own tab — otherwise "it never appears
+// in Roll Call" reads as a fault, and nobody records the work.
+function offRollCallNote(typeKey) {
+  if (!Array.isArray(state.rollCallTypes) || state.rollCallTypes.includes(typeKey)) return el('<div></div>');
+  const cleared = (state.staff || []).filter((p) => p.isCleaner && canCleanType(p, typeKey)
+    && Array.isArray(p.canClean) && p.canClean.includes(typeKey));
+  const box = el('<div class="alert" style="background:#eef6fd;border-color:#cfe8fb"></div>');
+  box.appendChild(el(`<div class="alert-title" style="color:#0369a1">Not on the morning roll call</div>`));
+  box.appendChild(el(`<div class="alert-body">These rooms are a separate job, done after the main round. `
+    + (cleared.length ? `Assigned to <b>${esc(cleared.map((p) => p.name.split(' ')[0]).join(' and '))}</b>. ` : '')
+    + `Tick them off here as they're done — nothing on Roll Call will record them.</div>`));
+  return box;
 }
 
 function servicedCard(u, isDue) {
