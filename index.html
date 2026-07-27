@@ -2133,7 +2133,9 @@ function servicedCard(u, isDue) {
   assignRow.appendChild(el(`<div style="font-size:11px;color:#5b6a7f;font-weight:600;white-space:nowrap">Cleaned by</div>`));
   const asel = el(`<select class="area-select" style="flex:1"></select>`);
   asel.appendChild(el(`<option value="">Auto (by floor)</option>`));
-  cleaningStaff().forEach(p => {
+  // Only people cleared for this kind of room. Where a pair swaps rooms day to day,
+  // this turns "who cleaned it" into a two-name choice instead of a list of twenty.
+  cleaningStaff().filter(p => canCleanUnit(p, u)).forEach(p => {
     const o = el(`<option value="${esc(p.id)}">${esc(p.name)}</option>`);
     if (u.assignedTo === p.id) o.setAttribute('selected', '');
     asel.appendChild(o);
