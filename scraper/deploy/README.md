@@ -1,4 +1,21 @@
-# Running the attendance scraper on a VPS
+# Fixing the attendance lag
+
+## Options, cheapest first
+
+| | Cost | Lag | Needs |
+|---|---|---|---|
+| **Supabase pg_cron → GitHub dispatch** | **$0** | ~2-3 min | A GitHub token. No server. See `supabase-cron.sql` |
+| **A droplet you already pay for** | **$0 extra** | ~40s | SSH access. Run `setup.sh` on it |
+| New droplet, 1GB | $6/mo | ~40s | New box |
+| New droplet, 512MB + swap | $4/mo | ~60s | Tight for Chromium; works but slower |
+
+**Start with `supabase-cron.sql`.** It costs nothing, adds no server to maintain,
+and takes the lag from 30-45 minutes down to 2-3. The trick is that GitHub
+throttles `schedule:` triggers but *not* `workflow_dispatch` — so a clock that
+actually keeps time (Supabase's pg_cron) pokes the workflow directly.
+
+Only move to a VPS if 2-3 minutes still isn't tight enough, or if you want the
+scrape to keep working when GitHub Actions is down.
 
 ## Why
 
