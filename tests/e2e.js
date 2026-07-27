@@ -517,7 +517,7 @@ function serve() {
   await page.locator('.nav button', { hasText: 'More' }).click();
   await page.locator('.su-unit', { hasText: 'Settings' }).click();
   await page.waitForSelector('text=/Roll Call covers/');
-  const rcBox = page.locator('.addbox').first();
+  const rcBox = page.locator('.addbox').filter({ hasText: 'Kinds of room' }).first();
   await rcBox.locator('button', { hasText: 'Airbnb' }).click();
   await page.waitForTimeout(700);
   await page.locator('.nav button', { hasText: 'Roll Call' }).click();
@@ -533,6 +533,45 @@ function serve() {
     .map((id) => wRC.servicedUnits.find((u) => u.id === id))
     .filter(Boolean);
   check('auto-assign stops handing out the kinds Roll Call excludes', touched.length > 0 && touched.every((u) => u.type !== 'airbnb'), 'touched: ' + JSON.stringify(touched.map((u) => [u.unit, u.type])));
+
+  // ------------------------------------------------------------- AUTOMATIC
+  // A fresh morning should hand itself out — but never over a decision already made.
+  console.log('\n\x1b[1mAUTOMATIC — hands out the morning, never overwrites you\x1b[0m');
+  const auto = await browser.newContext({ viewport: { width: 420, height: 900 } });
+  const autoWrites = [];
+  await auto.route(`**://${SUPA_HOST}/**`, async (route) => {
+    const req = route.request(); const url = req.url(); const method = req.method();
+    const json = (b, s = 200) => route.fulfill({ status: s, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify(b) });
+    if (method === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*', 'Access-Control-Allow-Methods': '*' }, body: '' });
+    if (url.includes('/auth/v1/')) return json(SESSION);
+    if (url.includes('/rest/v1/app_state')) {
+      if (method === 'GET') {
+        // Nothing handed out yet, and no room already cleaned: a clean slate.
+        const fresh = JSON.parse(JSON.stringify(APP_STATE));
+        fresh.servicedUnits.forEach((u) => { u.assignedTo = null; u.lastCleaned = YESTERDAY; });
+        const row = { data: fresh };
+        return json(String(req.headers()['accept'] || '').includes('pgrst.object') ? row : [row]);
+      }
+      autoWrites.push(JSON.parse(req.postData() || '{}'));
+      return json([{}], 201);
+    }
+    if (url.includes('/rest/v1/hik_events')) return json(HIK_EVENTS);
+    if (url.includes('/rest/v1/cleaning_log')) return json([]);
+    return json([]);
+  });
+  await auto.addInitScript(([host, session]) => {
+    localStorage.setItem('sb-' + host.split('.')[0] + '-auth-token', JSON.stringify(session));
+  }, [SUPA_HOST, SESSION]);
+  const ap = await auto.newPage();
+  await ap.goto(`http://127.0.0.1:${port}/index.html`, { waitUntil: 'domcontentloaded' });
+  await ap.waitForSelector('.nav');
+  await ap.waitForTimeout(1500);
+  const autoState = autoWrites.length ? autoWrites[autoWrites.length - 1].data : null;
+  const handed = autoState ? autoState.servicedUnits.filter((u) => u.assignedTo) : [];
+  check('a fresh morning hands itself out with nobody pressing anything', handed.length > 0, 'nothing was assigned automatically');
+  eq('it records the day it ran, so it runs once', autoState && autoState.autoAssignedOn, TODAY);
+  check('everything it chose still needs a yes', (await ap.locator('.section-label', { hasText: 'Check these assignments' }).count()) > 0, 'no sign-off list');
+  await ap.close(); await auto.close();
 
   // ----------------------------------------------------------------- SAFETY
   console.log('\n\x1b[1mSAFETY + HEALTH\x1b[0m');

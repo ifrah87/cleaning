@@ -965,6 +965,48 @@ function undoAutoAssign() {
   hikSyncMsg = { text: 'Put the assignments back as they were.' };
   save(); render();
 }
+// Hand the rooms out on their own once the crew starts badging in, so the morning
+// works without anyone remembering to press anything. Deliberately conservative:
+// it runs once a day, only when NOTHING has been handed out yet, so it can never
+// overwrite a decision the office already made. Everything it does still needs a
+// yes/no, and Undo is there — it is a starting point, not a verdict.
+// Keep the week level on its own. Rooms cleaned together come due together, so
+// left alone the every-other-day rooms re-stack onto a single morning — 38 rooms
+// one day, 25 the next. This spreads them the moment that starts happening.
+// Only ever delays a room; a clean is never pulled forward.
+function maybeBalanceSchedule() {
+  if (state.autoBalance === false) return;
+  const ids = (state.servicedUnits || []).map((u) => u.id);
+  const upcoming = {};
+  (state.servicedUnits || []).forEach((u) => {
+    const d = nextDueDate(u); if (d) upcoming[d] = (upcoming[d] || 0) + 1;
+  });
+  const days = Object.keys(upcoming).sort().slice(0, 4);
+  if (!days.length) return;
+  const peak = Math.max(...days.map((d) => upcoming[d]));
+  const low = Math.min(...days.map((d) => upcoming[d]));
+  // One day carrying several more than another is the pile-up worth fixing; a
+  // difference of one or two is just how the rooms fall.
+  if (days.length > 1 && peak - low <= 2) return;
+  const plan = balancePlan(ids);
+  if (!plan.length) return;
+  plan.forEach((p) => { p.u.cycleShift = p.shift; p.u.cycleShiftFrom = p.base; });
+  save();
+}
+function maybeAutoAssign() {
+  if (state.autoAssign === false) return;                      // switched off in Settings
+  if (state.autoAssignedOn === todayKey()) return;             // already done today
+  const people = Object.keys(hikArrivals).filter((id) => (state.staff || []).some((s) => s.id === id));
+  if (!people.length) return;                                  // nobody in yet — wait
+  const due = (state.servicedUnits || []).filter((u) => onRollCall(u) && unitDueToday(u));
+  if (!due.length) return;
+  if (due.some((u) => u.assignedTo)) {                         // office got there first; don't touch it
+    state.autoAssignedOn = todayKey(); save(); return;
+  }
+  state.autoAssignedOn = todayKey();
+  maybeBalanceSchedule();   // level the week before handing today's rooms out
+  autoAssignRooms();
+}
 function openAssignPicker(id) { _assignPick = { unitId: id }; render(); }
 function dismissAssignPicker() { _assignPick = null; render(); }
 function setUnitAssignee(id, pid) {
@@ -1235,7 +1277,7 @@ function startArrivalPolling() {
     if (state.tab !== 'rollcall' || document.hidden || _assignPick) return;
     const before = JSON.stringify(hikArrivals);
     await loadHikArrivals();
-    if (JSON.stringify(hikArrivals) !== before) render(); else stampLastPull();
+    if (JSON.stringify(hikArrivals) !== before) { maybeAutoAssign(); render(); } else stampLastPull();
   }, 60000);
 }
 // Refresh just the "last updated" text in place — a full render would be wasteful
@@ -2405,7 +2447,32 @@ function viewRollCall() {
 function viewSettings() {
   const wrap = el('<div class="body"></div>');
 
+  // --- What the app does on its own ---
+  wrap.appendChild(el(`<div class="section-label">Automatic</div>`));
+  const autoBox = el(`<div class="addbox"></div>`);
+  [
+    ['autoAssign', 'Hand out rooms each morning',
+     'Once the first cleaners badge in, today\'s rooms are shared out automatically. Only ever when nothing has been handed out yet, so it can\'t undo your own decisions. Every room still needs your Yes.'],
+    ['autoBalance', 'Keep the week level',
+     'Stops the every-other-day rooms stacking onto one morning. Rooms are only ever delayed, never brought forward.'],
+  ].forEach(([k, label, why]) => {
+    const on = state[k] !== false;
+    const row = el(`<div style="display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-top:1px solid #e7ecf3"></div>`);
+    const info = el(`<div style="flex:1;min-width:0"></div>`);
+    info.appendChild(el(`<div style="font-size:14px;font-weight:600;color:#0f1a27">${label}</div>`));
+    info.appendChild(el(`<div style="font-size:11px;color:#5f7189;line-height:1.5;margin-top:2px">${why}</div>`));
+    row.appendChild(info);
+    const b = el(`<button class="freqmini ${on ? 'on' : ''}" style="flex:0 0 auto;padding:8px 14px">${on ? 'On' : 'Off'}</button>`);
+    b.onclick = () => { state[k] = !on ? undefined : false; save(); render(); };
+    row.appendChild(b);
+    autoBox.appendChild(row);
+  });
+  autoBox.appendChild(el(`<div style="font-size:11px;color:#5f7189;line-height:1.5;padding-top:10px;border-top:1px solid #e7ecf3;margin-top:4px">`
+    + `<b>Marking rooms cleaned is never automatic.</b> The app can plan the work, but only someone who saw it done can say it was done — guessing would fill your history with cleans that never happened.</div>`));
+  wrap.appendChild(autoBox);
+
   // --- What the morning roll call is about ---
+  wrap.appendChild(el(`<div style="height:22px"></div>`));
   wrap.appendChild(el(`<div class="section-label">Roll Call covers</div>`));
   const rcBox = el(`<div class="addbox"></div>`);
   rcBox.appendChild(el(`<div style="font-size:13px;color:#5f7189;margin-bottom:10px">Kinds of room the morning roll call plans and auto-assigns. Switch one off and it disappears from Roll Call — it still has its own tab and schedule.</div>`));
@@ -3179,7 +3246,7 @@ async function boot() {
   load();
   route();              // login → app
   await remotePull();   // wait for the staff roster before matching arrivals
-  loadHikArrivals().then(() => route());
+  loadHikArrivals().then(() => { maybeAutoAssign(); route(); });
   startArrivalPolling();
   subscribeRealtime();
   refreshHistory();
