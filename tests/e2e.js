@@ -171,6 +171,11 @@ function serve() {
   eq('fresh device with no cache lands on a real tab', title, 'Morning Roll Call');
   check('fresh device renders a body, not a blank screen', (await page.locator('.body').count()) > 0, 'no .body rendered');
 
+  // An empty roll call must be distinguishable from a stale one.
+  await page.waitForSelector('#lastPull');
+  contains('roll call reports when attendance was last read', await page.locator('#lastPull').textContent(), 'Attendance checked');
+  check('there is a manual re-check button', (await page.locator('button', { hasText: 'Check now' }).count()) > 0, 'no "Check now" button');
+
   // Roll Call is the landing tab; wait for arrivals to resolve.
   await page.waitForSelector('text=/Rooms to clean today/', { timeout: 10000 }).catch(() => {});
 

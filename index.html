@@ -1047,7 +1047,34 @@ async function loadHikArrivals() {
       else hikUnknown.push({ name: e.person_name, time: t });
     }
     mergeManualArrivals(day);   // people the office added by hand (forgot to badge)
+    hikLastPull = new Date();   // an empty roll call means "checked, nobody in" — not "no idea"
   } catch (e) { /* keep previous arrivals */ }
+}
+let hikLastPull = null;
+// Roll call is read at 6am while people are still badging in, so re-check on a timer
+// rather than making the office pull-to-refresh. Only redraws when something changed,
+// so an open dropdown isn't yanked away mid-assignment.
+let _arrivalPoll = null;
+function startArrivalPolling() {
+  clearInterval(_arrivalPoll);
+  _arrivalPoll = setInterval(async () => {
+    if (state.tab !== 'rollcall' || document.hidden || _assignPick) return;
+    const before = JSON.stringify(hikArrivals);
+    await loadHikArrivals();
+    if (JSON.stringify(hikArrivals) !== before) render(); else stampLastPull();
+  }, 60000);
+}
+// Refresh just the "last updated" text in place — a full render would be wasteful
+// and would close whatever the office has open.
+function stampLastPull() {
+  const e = document.getElementById('lastPull');
+  if (e) e.textContent = lastPullLabel();
+}
+function lastPullLabel() {
+  if (!hikLastPull) return 'Attendance not checked yet';
+  const mins = Math.floor((Date.now() - hikLastPull.getTime()) / 60000);
+  const t = hikLastPull.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+  return `Attendance checked ${t} · ${mins < 1 ? 'just now' : mins + ' min ago'}`;
 }
 // People manually marked in for a day (they forgot to clock in). Merged into the
 // clocked-in list so they show on Roll Call and get rooms in auto-assign.
@@ -1880,6 +1907,14 @@ function viewRollCall() {
     quick.appendChild(b);
   });
   syncBox.appendChild(quick);
+  // When was attendance last read? Without this, "nobody clocked in" and "we haven't
+  // looked since you opened the page" are indistinguishable.
+  const pullRow = el('<div style="display:flex;align-items:center;gap:8px;margin-top:10px"></div>');
+  pullRow.appendChild(el(`<div id="lastPull" style="flex:1;min-width:0;font-size:11px;color:#5b6a7f;font-weight:600">${esc(lastPullLabel())}</div>`));
+  const refreshBtn = el('<button class="freqmini" style="flex:0 0 auto;padding:6px 12px">↻ Check now</button>');
+  refreshBtn.onclick = async () => { refreshBtn.textContent = '…'; await loadHikArrivals(); render(); };
+  pullRow.appendChild(refreshBtn);
+  syncBox.appendChild(pullRow);
   if (hikSyncMsg) {
     syncBox.appendChild(el(`<div style="font-size:12px;margin-top:8px;font-weight:600;color:${hikSyncMsg.err ? '#dc2626' : '#15803d'}">${esc(hikSyncMsg.text)}</div>`));
   }
@@ -2840,6 +2875,7 @@ async function boot() {
   route();              // login → app
   await remotePull();   // wait for the staff roster before matching arrivals
   loadHikArrivals().then(() => route());
+  startArrivalPolling();
   subscribeRealtime();
   refreshHistory();
   subscribeHistory();
