@@ -160,6 +160,16 @@ function serve() {
   await page.goto(`http://127.0.0.1:${port}/index.html`, { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('.nav', { timeout: 15000 }).catch(() => {});
 
+  // Auto-assign asks before discarding assignments that already exist. Accept it
+  // when it appears; a fresh morning with nothing handed out won't show one.
+  const autoAssign = async () => {
+    await page.locator('button', { hasText: 'Auto-assign rooms evenly' }).click();
+    if (await page.locator('#confirmModal').count()) {
+      await page.locator('#confirmModal .modal-btns button').last().click();
+    }
+    await page.waitForTimeout(700);
+  };
+
   console.log('\n\x1b[1mBOOT\x1b[0m');
   const loggedIn = await page.locator('.nav').count();
   check('app boots past the login screen', loggedIn > 0, 'login screen still showing — session stub failed');
@@ -234,8 +244,7 @@ function serve() {
   // Room 104 arrived pre-assigned from the fixture and 101 was hand-picked above,
   // so only auto-assign's own picks should land in the check list.
   writes.length = 0;
-  await page.locator('button', { hasText: 'Auto-assign rooms evenly' }).click();
-  await page.waitForTimeout(700);
+  await autoAssign();
   const checkHead = await page.locator('.section-label', { hasText: 'Check these assignments' }).textContent();
   contains('auto-assigned rooms all land in the check list', checkHead, 'Check these assignments (3)');
   const status2 = await page.locator('.section-label', { hasText: 'Rooms to clean today' }).first()
@@ -285,12 +294,26 @@ function serve() {
   const afterNo = await page.locator('.section-label', { hasText: 'Check these assignments' }).count();
   check('reassigning clears it from the check list too', afterNo === 0 || !(await page.locator('.section-label', { hasText: 'Check these assignments' }).textContent()).includes('(2)'), 'still showing 2 to check');
 
+  // Auto-assign is one mis-tap from the room list, so it asks first — but only
+  // when there is something to lose.
+  console.log('\n\x1b[1mAUTO-ASSIGN — asks before discarding existing work\x1b[0m');
+  await page.locator('button', { hasText: 'Auto-assign rooms evenly' }).click();
+  await page.waitForSelector('#confirmModal');
+  contains('confirm counts every room it will reshuffle', await page.locator('#confirmModal .modal-title').textContent(), 'Reassign all 3 rooms?');
+  const reSub = await page.locator('#confirmModal .modal-sub').textContent();
+  contains('confirm says how many are already handed out', reSub, 'are already handed out');
+  contains('confirm reassures that permanent cleaners are kept', reSub, 'permanent cleaner stay');
+  contains('confirm mentions it can be undone', reSub, 'undo');
+  await page.locator('#confirmModal .modal-skip').click();
+  const kept = writes.length;
+  await page.waitForTimeout(400);
+  check('cancelling changes nothing', writes.length === kept, 'a write happened after cancel');
+
   // Auto-assign discards a morning of manual work and sits one mis-tap away.
   const beforeUndo = writes[writes.length - 1].data.servicedUnits
     .reduce((m, u) => { m[u.id] = u.assignedTo || null; return m; }, {});
   writes.length = 0;
-  await page.locator('button', { hasText: 'Auto-assign rooms evenly' }).click();
-  await page.waitForTimeout(700);
+  await autoAssign();
   const shuffled = writes[writes.length - 1].data.servicedUnits
     .reduce((m, u) => { m[u.id] = u.assignedTo || null; return m; }, {});
   const snap = writes[writes.length - 1].data.lastAutoAssign;
@@ -306,8 +329,7 @@ function serve() {
 
   // Re-running auto-assign must invalidate the sign-offs it overwrites.
   writes.length = 0;
-  await page.locator('button', { hasText: 'Auto-assign rooms evenly' }).click();
-  await page.waitForTimeout(700);
+  await autoAssign();
   const reRun = await page.locator('.section-label', { hasText: 'Check these assignments' }).textContent();
   contains('re-running auto-assign puts everything back up for checking', reRun, 'Check these assignments (3)');
 

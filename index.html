@@ -1008,6 +1008,27 @@ function autoAssignRooms() {
     || String(a.time || '~').localeCompare(String(b.time || '~'))               // then earliest scheduled time
     || String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }));
   if (!rooms.length) { hikSyncMsg = { err: true, text: 'No rooms are due for cleaning today.' }; render(); return; }
+
+  // Nothing handed out yet is the normal morning — don't make the common case
+  // pay for a confirm. Only ask when there is real work to lose.
+  const held = rooms.filter((u) => u.assignedTo);
+  const signed = held.filter((u) => assignConfirmedToday(u)).length;
+  if (held.length) {
+    showConfirm(
+      `Reassign all ${rooms.length} rooms?`,
+      `${held.length} ${held.length === 1 ? 'is' : 'are'} already handed out`
+        + (signed ? `, ${signed} of them checked` : '')
+        + `. This shuffles them all again — rooms with a permanent cleaner stay with that person. You can undo it afterwards.`,
+      () => runAutoAssign(rooms, people, inIds, load),
+      'Reassign',
+      'safe'
+    );
+    return;
+  }
+  runAutoAssign(rooms, people, inIds, load);
+}
+
+function runAutoAssign(rooms, people, inIds, load) {
   // Snapshot before reshuffling. Auto-assign silently discards a morning of manual
   // assignments, and it sits one mis-tap away from the room list, so it needs to be
   // reversible rather than merely careful.
