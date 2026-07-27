@@ -1079,7 +1079,21 @@ function runAutoAssign(rooms, people, inIds, load) {
     const owner = ownerOfFloor(floorOfUnit(u.unit));
     if (owner && inIds.has(owner.id)) { u.assignedTo = owner.id; load[owner.id]++; onFloor++; }
   });
-  // Pass 4: whatever is left goes to whoever's carrying the fewest (earliest breaks ties).
+  // Pass 4: rooms on a floor a TEAM owns go to that team, spread across whichever
+  // of its members clocked in. The leader answers for the zone; the app just keeps
+  // the work inside the right team rather than scattering it building-wide.
+  let onTeam = 0;
+  rooms.forEach((u) => {
+    if (u.assignedTo) return;
+    const t = teamOfFloor(floorOfUnit(u.unit));
+    if (!t) return;
+    const mates = teamMembers(t.name).filter((p) => inIds.has(p.id));
+    if (!mates.length) return;                    // nobody from that team in today
+    const pick = mates.slice().sort((a, b) =>
+      (load[a.id] || 0) - (load[b.id] || 0) || order.indexOf(a.id) - order.indexOf(b.id))[0];
+    u.assignedTo = pick.id; load[pick.id]++; onTeam++;
+  });
+  // Pass 5: whatever is left goes to whoever's carrying the fewest (earliest breaks ties).
   rooms.filter((u) => !u.assignedTo).forEach((u) => {
     const pick = order.slice().sort((a, b) => load[a] - load[b])[0];
     u.assignedTo = pick; load[pick]++;
@@ -1087,6 +1101,7 @@ function runAutoAssign(rooms, people, inIds, load) {
   const notes = [];
   if (kept) notes.push(`${kept} kept with their usual crew`);
   if (onFloor) notes.push(`${onFloor} kept on their own floor`);
+  if (onTeam) notes.push(`${onTeam} kept in their team's zone`);
   hikSyncMsg = { text: `Suggested ${rooms.length} rooms for ${people.length} cleaners${notes.length ? ` (${notes.join(', ')})` : ''} — check each one below.` };
   save(); render();
 }
@@ -1352,6 +1367,21 @@ function addTeam(name) {
   const color = TEAM_PALETTE.find(c => !usedColors.includes(c)) || TEAM_PALETTE[teams.length % TEAM_PALETTE.length];
   teams.push({ name: name.trim(), color });
   state.teams = teams;
+  save(); render();
+}
+// Teams own zones of the building; the leader divides the zone among whoever
+// from their team turned up. Floors sit on the team, not the person, so the zone
+// survives people coming and going.
+function teamOfFloor(floor) {
+  if (floor == null) return null;
+  return getTeams().find(t => (t.floors || []).includes(floor)) || null;
+}
+function teamMembers(name) { return (state.staff || []).filter(p => p.crew === name); }
+function setTeamFloors(name, floorsStr) {
+  const t = getTeams().find(x => x.name === name);
+  if (!t) return;
+  t.floors = parseFloors(floorsStr);
+  state.teams = getTeams();
   save(); render();
 }
 function removeTeam(name) {
@@ -2329,6 +2359,21 @@ function viewSettings() {
       tr.appendChild(rmBtn);
     }
     tbox.appendChild(tr);
+
+    // The team's zone, and who answers for it.
+    const lead = teamMembers(t.name).find(p => p.isLeader);
+    const zone = el(`<div style="display:flex;align-items:center;gap:8px;padding:0 0 10px 22px;flex-wrap:wrap"></div>`);
+    zone.appendChild(el(`<div style="font-size:11px;color:#5b6a7f;font-weight:600;flex:0 0 auto">Zone floors</div>`));
+    const zIn = el(`<input value="${esc((t.floors || []).join(', '))}" placeholder="e.g. 10, 11" style="flex:1;min-width:90px;font-size:13px;padding:7px 9px">`);
+    zIn.onchange = (e) => setTeamFloors(t.name, e.target.value);
+    zone.appendChild(zIn);
+    const roomCount = (state.servicedUnits || []).filter(u => (t.floors || []).includes(floorOfUnit(u.unit))).length;
+    zone.appendChild(el(`<div style="font-size:11px;color:#5b6a7f;flex:0 0 auto">${roomCount} room${roomCount === 1 ? '' : 's'}</div>`));
+    zone.appendChild(el(`<div style="flex-basis:100%;height:0"></div>`));
+    zone.appendChild(el(`<div style="font-size:11px;color:${lead ? '#b45309' : '#dc2626'};font-weight:600">`
+      + (lead ? `★ ${esc(lead.name)} leads this team` : 'No leader — tag one in the Team tab')
+      + `</div>`));
+    tbox.appendChild(zone);
   });
   wrap.appendChild(tbox);
 

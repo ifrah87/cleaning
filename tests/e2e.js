@@ -28,7 +28,7 @@ const STAFF = [
   { id: 'p1', name: 'Amina Yusuf', crew: 'Team A', isCleaner: true, floors: [] },
   // Fatima owns floor 1, so auto-assign should keep floor-1 rooms with her.
   { id: 'p2', name: 'Fatima Ali', crew: 'Team A', isCleaner: true, floors: [1] },
-  { id: 'p3', name: 'Hodan Omar', crew: 'Team B', isCleaner: true, floors: [] },
+  { id: 'p3', name: 'Hodan Omar', crew: 'Team B', isCleaner: true, isLeader: true, floors: [] },
   { id: 'p4', name: 'Office Person', crew: 'Team A', isCleaner: false, floors: [] },
 ];
 
@@ -48,9 +48,17 @@ const UNITS = [
   { id: 'u201', unit: '201', type: 'office', freq: 'weekly', lastCleaned: YESTERDAY, assignedTo: null, usualTo: null },
 ];
 
+// Team B owns floor 2; Hodan leads it. Fatima owns floor 1 personally, so the two
+// kinds of ownership can be told apart.
+const TEAMS = [
+  { name: 'Team A', color: '#0284c7', floors: [] },
+  { name: 'Team B', color: '#15803d', floors: [2] },
+];
+
 const APP_STATE = {
   servicedUnits: UNITS,
   staff: STAFF,
+  teams: TEAMS,
   attendance: {},
   completions: {},
   coverage: {},
@@ -450,6 +458,37 @@ function serve() {
   await page.waitForSelector('text=/Rooms to clean today/');
   const newHeading = await page.locator('.section-label', { hasText: 'Rooms to clean today' }).first().textContent();
   contains('newly-daily room joins today\'s list', newHeading, 'Rooms to clean today (5)');
+
+  // ------------------------------------------------------- TEAM-OWNED ZONES
+  console.log('\n\x1b[1mTEAMS — a team owns a zone, the leader answers for it\x1b[0m');
+  await page.locator('.nav button', { hasText: 'More' }).click();
+  await page.locator('.su-unit', { hasText: 'Settings' }).click();
+  await page.waitForSelector('#newTeam');
+  const teamBox = page.locator('.addbox').first();
+  contains('a team shows the zone it owns', await teamBox.innerText(), 'Zone floors');
+  contains('a team names its leader', await teamBox.innerText(), '★ Hodan Omar leads this team');
+  contains('a team without a leader says so', await teamBox.innerText(), 'No leader');
+
+  // Hand floor 2 to Team A, whose members actually clocked in.
+  const zoneInputs = teamBox.locator('input[placeholder="e.g. 10, 11"]');
+  await zoneInputs.first().fill('2');
+  await zoneInputs.first().dispatchEvent('change');
+  await page.waitForTimeout(700);
+
+  // Make the floor-2 room due so auto-assign has something to route.
+  await page.locator('.nav button', { hasText: 'More' }).click();
+  await page.locator('.su-unit', { hasText: 'All Rooms' }).click();
+  await page.waitForSelector('text=/Set all:/');
+  await page.locator('.su-card').filter({ hasText: '201' }).first().locator('button', { hasText: 'Daily' }).first().click();
+  await page.waitForTimeout(700);
+
+  await page.locator('.nav button', { hasText: 'Roll Call' }).click();
+  await page.waitForSelector('text=/Rooms to clean today/');
+  writes.length = 0;
+  await autoAssign();
+  const w201 = writes[writes.length - 1].data.servicedUnits.find((u) => u.id === 'u201');
+  check('a room in a team\'s zone goes to a member of that team', ['p1', 'p2'].includes(w201 && w201.assignedTo), '201 went to ' + (w201 && w201.assignedTo));
+  contains('the summary reports work kept inside the zone', await page.locator('.body').first().innerText(), "kept in their team's zone");
 
   // ----------------------------------------------------------------- SAFETY
   console.log('\n\x1b[1mSAFETY + HEALTH\x1b[0m');
