@@ -927,6 +927,22 @@ function confirmAssignment(id) {
   state.assignConfirmed[id] = todayKey();
   save(); render();
 }
+// Put every room back the way it was before the last auto-assign, including who
+// had already been signed off.
+function undoAutoAssign() {
+  const snap = state.lastAutoAssign;
+  if (!snap) return;
+  Object.keys(snap.who).forEach((id) => {
+    const u = (state.servicedUnits || []).find((x) => x.id === id);
+    if (!u) return;
+    u.assignedTo = snap.who[id];
+    if (snap.confirmed[id]) state.assignConfirmed[id] = snap.confirmed[id];
+    else delete state.assignConfirmed[id];
+  });
+  state.lastAutoAssign = null;
+  hikSyncMsg = { text: 'Put the assignments back as they were.' };
+  save(); render();
+}
 function openAssignPicker(id) { _assignPick = { unitId: id }; render(); }
 function dismissAssignPicker() { _assignPick = null; render(); }
 function setUnitAssignee(id, pid) {
@@ -992,6 +1008,14 @@ function autoAssignRooms() {
     || String(a.time || '~').localeCompare(String(b.time || '~'))               // then earliest scheduled time
     || String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }));
   if (!rooms.length) { hikSyncMsg = { err: true, text: 'No rooms are due for cleaning today.' }; render(); return; }
+  // Snapshot before reshuffling. Auto-assign silently discards a morning of manual
+  // assignments, and it sits one mis-tap away from the room list, so it needs to be
+  // reversible rather than merely careful.
+  state.lastAutoAssign = {
+    at: new Date().toISOString(),
+    who: rooms.reduce((m, u) => { m[u.id] = u.assignedTo || null; return m; }, {}),
+    confirmed: rooms.reduce((m, u) => { if (state.assignConfirmed[u.id]) m[u.id] = state.assignConfirmed[u.id]; return m; }, {}),
+  };
   // Start fresh: every room it hands out is a new suggestion awaiting a yes/no,
   // so any earlier sign-off for today is void.
   rooms.forEach((u) => { u.assignedTo = null; delete state.assignConfirmed[u.id]; });
@@ -2064,6 +2088,12 @@ function viewRollCall() {
       const autoBtn = el('<button class="add-btn" style="background:#15803d;color:#ffffff;margin:12px 0 4px">⚡ Auto-assign rooms evenly</button>');
       autoBtn.onclick = () => autoAssignRooms();
       box.appendChild(autoBtn);
+    }
+    // Reversible while today's shuffle is still the last thing that happened.
+    if (state.lastAutoAssign && String(state.lastAutoAssign.at).slice(0, 10) === todayKey()) {
+      const undoBtn = el('<button class="freqmini" style="width:100%;padding:9px;margin-bottom:4px">↩ Undo auto-assign</button>');
+      undoBtn.onclick = () => undoAutoAssign();
+      box.appendChild(undoBtn);
     }
 
     // SIGN-OFF: auto-assign hands rooms out straight away, but every one it picked

@@ -285,6 +285,25 @@ function serve() {
   const afterNo = await page.locator('.section-label', { hasText: 'Check these assignments' }).count();
   check('reassigning clears it from the check list too', afterNo === 0 || !(await page.locator('.section-label', { hasText: 'Check these assignments' }).textContent()).includes('(2)'), 'still showing 2 to check');
 
+  // Auto-assign discards a morning of manual work and sits one mis-tap away.
+  const beforeUndo = writes[writes.length - 1].data.servicedUnits
+    .reduce((m, u) => { m[u.id] = u.assignedTo || null; return m; }, {});
+  writes.length = 0;
+  await page.locator('button', { hasText: 'Auto-assign rooms evenly' }).click();
+  await page.waitForTimeout(700);
+  const shuffled = writes[writes.length - 1].data.servicedUnits
+    .reduce((m, u) => { m[u.id] = u.assignedTo || null; return m; }, {});
+  const snap = writes[writes.length - 1].data.lastAutoAssign;
+  check('auto-assign snapshots what it is about to overwrite', snap && Object.keys(snap.who || {}).length === Object.keys(shuffled).filter((id) => shuffled[id]).length, 'snapshot: ' + JSON.stringify(snap && snap.who));
+  eq('the snapshot holds the pre-shuffle owners, not the new ones', JSON.stringify(Object.keys(snap.who).reduce((m, k) => { m[k] = beforeUndo[k]; return m; }, {})), JSON.stringify(snap.who));
+  writes.length = 0;
+  await page.locator('button', { hasText: 'Undo auto-assign' }).click();
+  await page.waitForTimeout(700);
+  const restored = writes[writes.length - 1].data.servicedUnits
+    .reduce((m, u) => { m[u.id] = u.assignedTo || null; return m; }, {});
+  eq('undo puts every room back exactly as it was', JSON.stringify(restored), JSON.stringify(beforeUndo));
+  check('the undo button goes away once used', (await page.locator('button', { hasText: 'Undo auto-assign' }).count()) === 0, 'undo still offered');
+
   // Re-running auto-assign must invalidate the sign-offs it overwrites.
   writes.length = 0;
   await page.locator('button', { hasText: 'Auto-assign rooms evenly' }).click();
