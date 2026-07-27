@@ -1070,12 +1070,24 @@ function runAutoAssign(rooms, people, inIds, load) {
   rooms.forEach((u) => {
     if (!u.assignedTo && u.usualTo && inIds.has(u.usualTo)) { u.assignedTo = u.usualTo; load[u.usualTo]++; kept++; }
   });
-  // Pass 3: hand each still-unassigned room to whoever's carrying the fewest (earliest breaks ties).
+  // Pass 3: keep a room with whoever owns its floor, if they clocked in. Floors are
+  // already how the building is divided up, and a cleaner working one floor walks a
+  // lot less than one chasing rooms across eleven of them.
+  let onFloor = 0;
+  rooms.forEach((u) => {
+    if (u.assignedTo) return;
+    const owner = ownerOfFloor(floorOfUnit(u.unit));
+    if (owner && inIds.has(owner.id)) { u.assignedTo = owner.id; load[owner.id]++; onFloor++; }
+  });
+  // Pass 4: whatever is left goes to whoever's carrying the fewest (earliest breaks ties).
   rooms.filter((u) => !u.assignedTo).forEach((u) => {
     const pick = order.slice().sort((a, b) => load[a] - load[b])[0];
     u.assignedTo = pick; load[pick]++;
   });
-  hikSyncMsg = { text: `Suggested ${rooms.length} rooms for ${people.length} cleaners${kept ? ` (${kept} kept with their usual crew)` : ''} — check each one below.` };
+  const notes = [];
+  if (kept) notes.push(`${kept} kept with their usual crew`);
+  if (onFloor) notes.push(`${onFloor} kept on their own floor`);
+  hikSyncMsg = { text: `Suggested ${rooms.length} rooms for ${people.length} cleaners${notes.length ? ` (${notes.join(', ')})` : ''} — check each one below.` };
   save(); render();
 }
 

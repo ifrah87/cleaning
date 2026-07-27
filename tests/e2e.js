@@ -26,7 +26,8 @@ const YESTERDAY = key(new Date(Date.now() - 864e5));
 // Three cleaners; Hodan never badges in, so she must not appear on the roll call.
 const STAFF = [
   { id: 'p1', name: 'Amina Yusuf', crew: 'Team A', isCleaner: true, floors: [] },
-  { id: 'p2', name: 'Fatima Ali', crew: 'Team A', isCleaner: true, floors: [] },
+  // Fatima owns floor 1, so auto-assign should keep floor-1 rooms with her.
+  { id: 'p2', name: 'Fatima Ali', crew: 'Team A', isCleaner: true, floors: [1] },
   { id: 'p3', name: 'Hodan Omar', crew: 'Team B', isCleaner: true, floors: [] },
   { id: 'p4', name: 'Office Person', crew: 'Team A', isCleaner: false, floors: [] },
 ];
@@ -254,6 +255,12 @@ function serve() {
   const status2 = await page.locator('.section-label', { hasText: 'Rooms to clean today' }).first()
     .evaluate((e) => e.nextElementSibling.textContent);
   contains('status line flags how many need checking', status2, '3 to check');
+  // Floors are how the building is already divided up, and a cleaner working one
+  // floor walks far less than one chasing rooms across eleven. Room 104 has no
+  // usual cleaner and isn't prefers-early, so it falls to the floor-1 owner.
+  const w104 = writes[writes.length - 1].data.servicedUnits.find((u) => u.id === 'u104');
+  eq('a room with no usual cleaner goes to whoever owns its floor', w104 && w104.assignedTo, 'p2');
+  contains('the summary says how many stayed on their own floor', await page.locator('.body').first().innerText(), 'kept on their own floor');
   const pendingChips = await page.locator('.section-label', { hasText: 'Rooms to clean today' }).first()
     .evaluate((e) => Array.from(e.nextElementSibling.nextElementSibling.children).map((c) => c.textContent.trim()));
   check('unchecked suggestions are marked with ?', pendingChips.filter((c) => c.endsWith('?')).length === 3, 'chips: ' + JSON.stringify(pendingChips));
