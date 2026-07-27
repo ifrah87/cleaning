@@ -464,7 +464,7 @@ function serve() {
   await page.locator('.nav button', { hasText: 'More' }).click();
   await page.locator('.su-unit', { hasText: 'Settings' }).click();
   await page.waitForSelector('#newTeam');
-  const teamBox = page.locator('.addbox').first();
+  const teamBox = page.locator('.addbox').filter({ hasText: 'Zone floors' }).first();
   contains('a team shows the zone it owns', await teamBox.innerText(), 'Zone floors');
   contains('a team names its leader', await teamBox.innerText(), '★ Hodan Omar leads this team');
   contains('a team without a leader says so', await teamBox.innerText(), 'No leader');
@@ -489,6 +489,50 @@ function serve() {
   const w201 = writes[writes.length - 1].data.servicedUnits.find((u) => u.id === 'u201');
   check('a room in a team\'s zone goes to a member of that team', ['p1', 'p2'].includes(w201 && w201.assignedTo), '201 went to ' + (w201 && w201.assignedTo));
   contains('the summary reports work kept inside the zone', await page.locator('.body').first().innerText(), "kept in their team's zone");
+
+  // -------------------------------------------------- TRAINEES / CLEARANCES
+  console.log('\n\x1b[1mCLEARANCES — trainees kept off rooms they cannot take\x1b[0m');
+  await page.locator('.nav button', { hasText: 'More' }).click();
+  await page.locator('.su-unit', { hasText: 'Team' }).first().click();
+  await page.waitForTimeout(300);
+  // Amina is a trainee: clear her off offices.
+  const aminaCard = page.locator('.person').filter({ hasText: 'Amina Yusuf' }).first();
+  await aminaCard.locator('.su-edit').click();
+  await page.waitForSelector('text=/Cleared to clean/');
+  const editing = page.locator('.person').filter({ hasText: 'Cleared to clean' }).first();
+  await editing.locator('button', { hasText: 'Office' }).click();
+  await page.waitForTimeout(700);
+  const wClear = writes[writes.length - 1].data.staff.find((p) => p.id === 'p1');
+  check('clearing someone off a room type is saved', wClear && Array.isArray(wClear.canClean) && !wClear.canClean.includes('office'), 'canClean: ' + JSON.stringify(wClear && wClear.canClean));
+
+  await page.locator('.nav button', { hasText: 'Roll Call' }).click();
+  await page.waitForSelector('text=/Rooms to clean today/');
+  writes.length = 0;
+  await autoAssign();
+  const office = writes[writes.length - 1].data.servicedUnits.filter((u) => u.type === 'office' && u.assignedTo);
+  check('an office room never lands on someone not cleared for it', office.every((u) => u.assignedTo !== 'p1'), 'office rooms: ' + JSON.stringify(office.map((u) => [u.unit, u.assignedTo])));
+
+  // ------------------------------------------------ ROLL CALL ROOM FILTERING
+  console.log('\n\x1b[1mROLL CALL — only the kinds of room it is meant to cover\x1b[0m');
+  await page.locator('.nav button', { hasText: 'More' }).click();
+  await page.locator('.su-unit', { hasText: 'Settings' }).click();
+  await page.waitForSelector('text=/Roll Call covers/');
+  const rcBox = page.locator('.addbox').first();
+  await rcBox.locator('button', { hasText: 'Airbnb' }).click();
+  await page.waitForTimeout(700);
+  await page.locator('.nav button', { hasText: 'Roll Call' }).click();
+  await page.waitForSelector('text=/Rooms to clean today/');
+  const chipsNow = await page.locator('.section-label', { hasText: 'Rooms to clean today' }).first()
+    .evaluate((e) => Array.from(e.nextElementSibling.nextElementSibling.children).map((c) => c.textContent.trim()));
+  check('switching a kind off removes it from Roll Call', !chipsNow.some((c) => /1\d\d/.test(c)), 'chips: ' + JSON.stringify(chipsNow));
+  writes.length = 0;
+  await autoAssign();
+  // The snapshot lists exactly what auto-assign reshuffled, so it proves what it touched.
+  const wRC = writes[writes.length - 1].data;
+  const touched = Object.keys(wRC.lastAutoAssign.who)
+    .map((id) => wRC.servicedUnits.find((u) => u.id === id))
+    .filter(Boolean);
+  check('auto-assign stops handing out the kinds Roll Call excludes', touched.length > 0 && touched.every((u) => u.type !== 'airbnb'), 'touched: ' + JSON.stringify(touched.map((u) => [u.unit, u.type])));
 
   // ----------------------------------------------------------------- SAFETY
   console.log('\n\x1b[1mSAFETY + HEALTH\x1b[0m');

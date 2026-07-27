@@ -802,6 +802,16 @@ const UNIT_TYPES = {
   building: { label: 'Building', color: '#15803d' },
 };
 const UNIT_TYPE_ORDER = ['airbnb', 'office', 'building'];
+// Which kinds of room the morning roll call is about. Some kinds are run as a
+// separate operation and only clutter it. No list set = all of them.
+const onRollCall = (u) => !Array.isArray(state.rollCallTypes) || state.rollCallTypes.includes(unitType(u));
+function toggleRollCallType(typeKey) {
+  const cur = Array.isArray(state.rollCallTypes) ? state.rollCallTypes.slice() : UNIT_TYPE_ORDER.slice();
+  const next = cur.includes(typeKey) ? cur.filter((k) => k !== typeKey) : cur.concat(typeKey);
+  if (!next.length) return;               // roll call with nothing on it is not a state worth having
+  state.rollCallTypes = next.length === UNIT_TYPE_ORDER.length ? null : next;
+  save(); render();
+}
 const unitType = (u) => UNIT_TYPES[u && u.type] ? u.type : 'building';
 
 function addServicedUnit(unit, guest, freq, type, time) {
@@ -1020,7 +1030,7 @@ function autoAssignRooms() {
   const inIds = new Set(people.map((p) => p.id));
   const load = {}; people.forEach((p) => { load[p.id] = 0; });
 
-  const rooms = (state.servicedUnits || []).filter(unitDueToday).slice().sort((a, b) =>   // only rooms due today
+  const rooms = (state.servicedUnits || []).filter((u) => onRollCall(u) && unitDueToday(u)).slice().sort((a, b) =>   // due today, of the kinds roll call covers
     (b.preferEarly ? 1 : 0) - (a.preferEarly ? 1 : 0)                            // 🌅 early-preference rooms first → earliest arrivals
     || (b.priority ? 1 : 0) - (a.priority ? 1 : 0)                               // then priority ⭐ rooms
     || String(a.time || '~').localeCompare(String(b.time || '~'))               // then earliest scheduled time
@@ -1060,15 +1070,24 @@ function runAutoAssign(rooms, people, inIds, load) {
   rooms.forEach((u) => { u.assignedTo = null; delete state.assignConfirmed[u.id]; });
 
   const order = people.map((p) => p.id);   // clocked-in ids, earliest arrival first
+  const staffById = {};
+  for (const s of (state.staff || [])) staffById[s.id] = s;
+  // Nobody gets handed a kind of room they aren't cleared for — a trainee kept off
+  // offices must stay off them however the room reaches them.
+  const ableFor = (u) => order.filter((id) => canCleanUnit(staffById[id], u));
+  const lightestFor = (u) => ableFor(u).sort((a, b) => load[a] - load[b])[0] || null;
+
   // Pass 1: early-preference rooms go to the earliest arrivals so they're done first.
   rooms.filter((u) => u.preferEarly).forEach((u) => {
-    const pick = order.slice().sort((a, b) => load[a] - load[b])[0];   // fewest load, earliest breaks ties
-    u.assignedTo = pick; load[pick]++;
+    const pick = lightestFor(u);   // fewest load, earliest breaks ties
+    if (pick) { u.assignedTo = pick; load[pick]++; }
   });
   // Pass 2: remaining rooms keep their usual cleaner if that person clocked in.
   let kept = 0;
   rooms.forEach((u) => {
-    if (!u.assignedTo && u.usualTo && inIds.has(u.usualTo)) { u.assignedTo = u.usualTo; load[u.usualTo]++; kept++; }
+    if (!u.assignedTo && u.usualTo && inIds.has(u.usualTo) && canCleanUnit(staffById[u.usualTo], u)) {
+      u.assignedTo = u.usualTo; load[u.usualTo]++; kept++;
+    }
   });
   // Pass 3: keep a room with whoever owns its floor, if they clocked in. Floors are
   // already how the building is divided up, and a cleaner working one floor walks a
@@ -1077,7 +1096,7 @@ function runAutoAssign(rooms, people, inIds, load) {
   rooms.forEach((u) => {
     if (u.assignedTo) return;
     const owner = ownerOfFloor(floorOfUnit(u.unit));
-    if (owner && inIds.has(owner.id)) { u.assignedTo = owner.id; load[owner.id]++; onFloor++; }
+    if (owner && inIds.has(owner.id) && canCleanUnit(owner, u)) { u.assignedTo = owner.id; load[owner.id]++; onFloor++; }
   });
   // Pass 4: rooms on a floor a TEAM owns go to that team, spread across whichever
   // of its members clocked in. The leader answers for the zone; the app just keeps
@@ -1087,21 +1106,23 @@ function runAutoAssign(rooms, people, inIds, load) {
     if (u.assignedTo) return;
     const t = teamOfFloor(floorOfUnit(u.unit));
     if (!t) return;
-    const mates = teamMembers(t.name).filter((p) => inIds.has(p.id));
-    if (!mates.length) return;                    // nobody from that team in today
+    const mates = teamMembers(t.name).filter((p) => inIds.has(p.id) && canCleanUnit(p, u));
+    if (!mates.length) return;                    // nobody from that team in today who can take it
     const pick = mates.slice().sort((a, b) =>
       (load[a.id] || 0) - (load[b.id] || 0) || order.indexOf(a.id) - order.indexOf(b.id))[0];
     u.assignedTo = pick.id; load[pick.id]++; onTeam++;
   });
   // Pass 5: whatever is left goes to whoever's carrying the fewest (earliest breaks ties).
+  let unstaffed = 0;
   rooms.filter((u) => !u.assignedTo).forEach((u) => {
-    const pick = order.slice().sort((a, b) => load[a] - load[b])[0];
-    u.assignedTo = pick; load[pick]++;
+    const pick = lightestFor(u);
+    if (pick) { u.assignedTo = pick; load[pick]++; } else unstaffed++;   // nobody in today is cleared for it
   });
   const notes = [];
   if (kept) notes.push(`${kept} kept with their usual crew`);
   if (onFloor) notes.push(`${onFloor} kept on their own floor`);
   if (onTeam) notes.push(`${onTeam} kept in their team's zone`);
+  if (unstaffed) notes.push(`${unstaffed} left unassigned — nobody in today is cleared for them`);
   hikSyncMsg = { text: `Suggested ${rooms.length} rooms for ${people.length} cleaners${notes.length ? ` (${notes.join(', ')})` : ''} — check each one below.` };
   save(); render();
 }
@@ -1149,6 +1170,7 @@ async function syncFromHik() {
 // Today's badge-in events → first arrival per person, matched to staff by name.
 let hikArrivals = {};   // staff id -> { time }
 let hikUnknown = [];    // [{ name, time }] badged in but no matching staff (the "unknown" alert)
+let hikOther = [];      // [{ id, name, time }] known staff who badged in but aren't tagged as cleaners
 let selectedDay = null; // which day Roll Call is showing (null = today)
 function fmtEventTime(v) {
   if (!v) return '';
@@ -1184,7 +1206,7 @@ async function loadHikArrivals() {
     for (const s of cleaners) cleanerByName[(s.name || '').trim().toLowerCase()] = s;
     const staffByName = {};
     for (const s of (state.staff || [])) staffByName[(s.name || '').trim().toLowerCase()] = s;
-    hikArrivals = {}; hikUnknown = [];
+    hikArrivals = {}; hikUnknown = []; hikOther = [];
     for (const key in firstByName) {
       const e = firstByName[key];
       const t = fmtEventTime(e.event_time);
@@ -1192,7 +1214,10 @@ async function loadHikArrivals() {
       const outT = (outE && outE.event_time !== e.event_time) ? fmtEventTime(outE.event_time) : null;
       const s = onlyCleaners ? cleanerByName[key] : staffByName[key];   // case-insensitive name match
       if (s) hikArrivals[s.id] = { time: t, out: outT, raw: e.event_time };
-      else if (onlyCleaners && staffByName[key]) { /* known staff but not a cleaner — skip */ }
+      // The door reader sees everyone, cleaners or not. Keep the non-cleaners out
+      // of the roll call, but don't drop them without trace — silently vanishing
+      // makes an untagged cleaner look like someone who never turned up.
+      else if (onlyCleaners && staffByName[key]) hikOther.push({ id: staffByName[key].id, name: staffByName[key].name, time: t });
       else hikUnknown.push({ name: e.person_name, time: t });
     }
     mergeManualArrivals(day);   // people the office added by hand (forgot to badge)
@@ -1463,6 +1488,26 @@ const CLEAN_TYPES = {
   both:    { label: 'In + Out', icon: '🔁', color: '#7c3aed' },
 };
 const TYPE_ORDER = ['inside', 'outside', 'both'];
+// Which kinds of room a person is cleared to clean. Trainees are often kept off
+// offices while they learn, so "can this person take this room" has to be a
+// property of the person, not something the office remembers each morning.
+// No list set = cleared for everything, so existing staff are unaffected.
+const canCleanType = (p, typeKey) => {
+  const allowed = p && p.canClean;
+  return !Array.isArray(allowed) || !allowed.length || allowed.includes(typeKey);
+};
+const canCleanUnit = (p, u) => canCleanType(p, unitType(u));
+function toggleCanClean(id, typeKey) {
+  const p = (state.staff || []).find((s) => s.id === id);
+  if (!p) return;
+  // Start from "everything" so the first tap removes one kind rather than
+  // silently clearing the rest.
+  let allowed = Array.isArray(p.canClean) && p.canClean.length ? p.canClean.slice() : UNIT_TYPE_ORDER.slice();
+  allowed = allowed.includes(typeKey) ? allowed.filter((k) => k !== typeKey) : allowed.concat(typeKey);
+  if (!allowed.length) return;            // never leave someone unable to clean anything
+  p.canClean = allowed.length === UNIT_TYPE_ORDER.length ? null : allowed;
+  save(); render();
+}
 function typeOf(p) { return (p && CLEAN_TYPES[p.cleanType]) ? p.cleanType : 'inside'; }
 function cycleCleanType(id) {
   const p = state.staff.find((s) => s.id === id);
@@ -2128,7 +2173,7 @@ function viewRollCall() {
   // call opens, instead of only finding out after tapping auto-assign.
   // Same order auto-assign uses: 🌅 early first, then ⭐ priority, then room number —
   // so what you see at the top is what gets handed out first.
-  const todaysRooms = (state.servicedUnits || []).filter(onTodaysList).slice()
+  const todaysRooms = (state.servicedUnits || []).filter((u) => onRollCall(u) && onTodaysList(u)).slice()
     .sort((a, b) => (b.preferEarly ? 1 : 0) - (a.preferEarly ? 1 : 0)
       || (b.priority ? 1 : 0) - (a.priority ? 1 : 0)
       || String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }));
@@ -2290,6 +2335,22 @@ function viewRollCall() {
         whoIn.appendChild(card);
       });
   }
+  // Everyone else the door reader saw. Kept out of the roll call, but visible — and
+  // one tap fixes the common case, which is a cleaner nobody tagged as one.
+  if (hikOther.length) {
+    const other = el('<div style="margin-bottom:18px"></div>');
+    other.appendChild(el(`<div class="section-label">Also badged in — not cleaners (${hikOther.length})</div>`));
+    other.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin:-6px 0 10px">The door reader sees all staff. Tap someone to add them to the cleaning roll call.</div>`));
+    const chips = el('<div style="display:flex;flex-wrap:wrap;gap:6px"></div>');
+    hikOther.slice().sort((a, b) => a.name.localeCompare(b.name)).forEach((o) => {
+      const c = el(`<button class="freqmini" style="flex:0 0 auto;padding:7px 11px">${esc(o.name)} <span style="color:#5b6a7f">${esc(o.time)}</span> +</button>`);
+      c.onclick = () => { toggleCleaner(o.id); loadHikArrivals().then(() => render()); };
+      chips.appendChild(c);
+    });
+    other.appendChild(chips);
+    body.appendChild(other);
+  }
+
   body.appendChild(whoIn);
   wrap.appendChild(body);
 
@@ -2313,6 +2374,12 @@ function viewRollCall() {
     inNow.sort((a, b) => (load[a.id] || 0) - (load[b.id] || 0) || a.name.localeCompare(b.name)).forEach((p) => {
       const n = load[p.id] || 0;
       const isCur = p.id === u.assignedTo;
+      // Someone not cleared for this kind of room shouldn't be offered it by mistake.
+      if (!canCleanUnit(p, u)) {
+        picker.appendChild(el(`<div class="cover-opt" style="opacity:0.5">${esc(p.name)}`
+          + `<span class="cover-load">not cleared for ${esc(UNIT_TYPES[unitType(u)].label.toLowerCase())}</span></div>`));
+        return;
+      }
       const b = el(`<button class="cover-opt ${isCur ? 'on' : ''}">${esc(p.name)}`
         + `<span class="cover-load">${n} room${n === 1 ? '' : 's'}`
         + `${lightest && p.id === lightest.id && !isCur ? ' · lightest' : ''}${isCur ? ' · suggested' : ''}</span></button>`);
@@ -2338,8 +2405,23 @@ function viewRollCall() {
 function viewSettings() {
   const wrap = el('<div class="body"></div>');
 
+  // --- What the morning roll call is about ---
+  wrap.appendChild(el(`<div class="section-label">Roll Call covers</div>`));
+  const rcBox = el(`<div class="addbox"></div>`);
+  rcBox.appendChild(el(`<div style="font-size:13px;color:#5f7189;margin-bottom:10px">Kinds of room the morning roll call plans and auto-assigns. Switch one off and it disappears from Roll Call — it still has its own tab and schedule.</div>`));
+  const rcRow = el(`<div style="display:flex;gap:6px"></div>`);
+  UNIT_TYPE_ORDER.forEach(tk => {
+    const on = !Array.isArray(state.rollCallTypes) || state.rollCallTypes.includes(tk);
+    const n = (state.servicedUnits || []).filter(u => unitType(u) === tk).length;
+    const b = el(`<button class="freqmini ${on ? 'on' : ''}" style="flex:1;padding:9px 4px">${on ? '✓ ' : ''}${UNIT_TYPES[tk].label}<br><span style="font-weight:500;font-size:10px">${n} rooms</span></button>`);
+    b.onclick = () => toggleRollCallType(tk);
+    rcRow.appendChild(b);
+  });
+  rcBox.appendChild(rcRow);
+  wrap.appendChild(rcBox);
+
   // --- Teams ---
-  wrap.appendChild(el(`<div class="section-label">Teams</div>`));
+  wrap.appendChild(el(`<div class="section-label" style="margin-top:22px">Teams</div>`));
   const tbox = el(`<div class="addbox"></div>`);
   const tRow = el(`<div style="display:flex;gap:8px;margin-bottom:10px"></div>`);
   const tIn = el(`<input id="newTeam" placeholder="New team name" style="flex:1">`);
@@ -2698,6 +2780,16 @@ function employeeCard(p) {
     card.appendChild(teamRow);
     const floorsIn = el(`<input id="eeFloors_${p.id}" value="${esc((p.floors||[]).join(', '))}" placeholder="Floors (e.g. 1, 2, 3)">`);
     card.appendChild(floorsIn);
+    // What this person is cleared to clean. Trainees are commonly kept off offices.
+    card.appendChild(el(`<div style="font-size:11px;color:#5b6a7f;font-weight:600;margin-top:8px">Cleared to clean</div>`));
+    const canRow = el(`<div style="display:flex;gap:6px;flex-wrap:wrap"></div>`);
+    UNIT_TYPE_ORDER.forEach(tk => {
+      const on = canCleanType(p, tk);
+      const b = el(`<button class="freqmini ${on ? 'on' : ''}" style="flex:1 1 28%">${on ? '✓ ' : ''}${UNIT_TYPES[tk].label}</button>`);
+      b.onclick = () => toggleCanClean(p.id, tk);
+      canRow.appendChild(b);
+    });
+    card.appendChild(canRow);
     const row = el(`<div style="display:flex;gap:8px"></div>`);
     const sv = el(`<button class="add-btn" style="flex:1">Save</button>`);
     sv.onclick = () => editEmployee(p.id, document.getElementById('eeName_'+p.id).value, chosenTeam, document.getElementById('eeFloors_'+p.id).value);
