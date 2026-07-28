@@ -2363,7 +2363,9 @@ function viewRollCall() {
         }
         // Rooms still to hand out — due-today ones suggested first, everything else
         // tucked below so an out-of-schedule room is a deliberate choice, not an accident.
-        const free = (state.servicedUnits || []).filter((u) => !u.assignedTo && !cleanedToday(u));
+        // Kinds of room roll call doesn't cover must not be offered here either —
+        // otherwise they're off the board but still handed out one by one.
+        const free = (state.servicedUnits || []).filter((u) => onRollCall(u) && !u.assignedTo && !cleanedToday(u));
         const byUnit = (a, b) => String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true });
         const freeDue = free.filter(unitDueToday).sort((a, b) =>
           (b.preferEarly ? 1 : 0) - (a.preferEarly ? 1 : 0)

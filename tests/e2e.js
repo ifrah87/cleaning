@@ -525,6 +525,9 @@ function serve() {
   const chipsNow = await page.locator('.section-label', { hasText: 'Rooms to clean today' }).first()
     .evaluate((e) => Array.from(e.nextElementSibling.nextElementSibling.children).map((c) => c.textContent.trim()));
   check('switching a kind off removes it from Roll Call', !chipsNow.some((c) => /1\d\d/.test(c)), 'chips: ' + JSON.stringify(chipsNow));
+  // Off the board is not enough — it must not be offered room-by-room either.
+  const offered = await page.locator('.person select.area-select').first().locator('option').allTextContents();
+  check('an excluded kind is not offered in the assign list', !offered.some((o) => /Room 1\d\d/.test(o)), 'offered: ' + JSON.stringify(offered));
   writes.length = 0;
   await autoAssign();
   // The snapshot lists exactly what auto-assign reshuffled, so it proves what it touched.
