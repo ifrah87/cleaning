@@ -1960,11 +1960,17 @@ function viewRooms() {
       const mid = el(`<div style="flex:1;min-width:0"></div>`);
       mid.appendChild(el(`<div style="font-size:12px;color:#5f7189;font-weight:600">${esc(t.label)}${who ? ' · ' + esc(who.name.split(' ')[0]) : ''}</div>`));
       const doneToday = cleanedToday(u);
+      // "Due" and "we have no idea" are different things, and mixing them makes the
+      // whole list untrustworthy: a room nobody has ever recorded looks identical to
+      // one that genuinely came round again today.
+      const noRecord = !lastCleanDate(u);
       const dueLabel = doneToday ? '✓ Cleaned today'
+        : noRecord ? 'No record yet — set when it was last cleaned'
         : due ? 'Due today'
         : nd ? 'Next: ' + new Date(nd + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
         : '';
-      mid.appendChild(el(`<div style="font-size:11px;color:${due || doneToday ? '#15803d' : '#5b6a7f'};font-weight:600">${esc(dueLabel)}</div>`));
+      const tone = doneToday ? '#15803d' : noRecord ? '#b45309' : due ? '#15803d' : '#5b6a7f';
+      mid.appendChild(el(`<div style="font-size:11px;color:${tone};font-weight:600">${esc(dueLabel)}</div>`));
       top.appendChild(mid);
       card.appendChild(top);
 
@@ -2246,6 +2252,7 @@ function viewRollCall() {
     const okCount = openR.filter((u) => u.assignedTo && assignConfirmedToday(u)).length;
     const box = el('<div style="margin-bottom:18px"></div>');
     box.appendChild(el(`<div class="section-label">◷ Rooms to clean today (${todaysRooms.length})</div>`));
+    const noRec = openR.filter((u) => !lastCleanDate(u)).length;
     box.appendChild(el(`<div style="font-size:12px;color:#5f7189;font-weight:600;margin:-6px 0 10px">`
       + `${openR.length - unass.length} handed out`
       + ` · <b style="color:${unass.length ? '#b45309' : '#15803d'}">${unass.length} still to hand out</b>`
@@ -2260,7 +2267,9 @@ function viewRollCall() {
         : who ? 'background:#eef6fd;border-color:#cfe8fb;color:#0369a1'
         : 'background:#fff7ed;border-color:#fcd9a8;color:#b45309';
       const signed = who && assignConfirmedToday(u);
+      const noRecord = !lastCleanDate(u);
       const tip = done ? 'Cleaned today'
+        : noRecord ? 'No record of this room ever being cleaned'
         : who ? (signed ? 'Confirmed for ' + who.name : 'Suggested for ' + who.name + ' — not checked yet')
         : 'Not assigned yet';
       chips.appendChild(el(`<div class="freqmini" style="flex:0 0 auto;padding:6px 10px;${tone}" title="${esc(tip)}">`
@@ -2268,6 +2277,12 @@ function viewRollCall() {
         + `${done ? ' ✓' : who ? ' · ' + esc(who.name.split(' ')[0]) + (signed ? '' : ' ?') : ''}</div>`));
     });
     box.appendChild(chips);
+    // Sits under the chips so the counts above stay the first thing read.
+    if (noRec) {
+      box.appendChild(el(`<div style="font-size:11px;color:#b45309;font-weight:600;margin-top:8px">`
+        + `⚠ ${noRec} of these have never been recorded as cleaned — they may not actually be dirty. `
+        + `Set "Last cleaned" on them in All Rooms and this list gets shorter.</div>`));
+    }
 
     // The button that hands rooms out belongs above the list it produces.
     if (arrIds.length) {
