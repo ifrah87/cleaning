@@ -1,12 +1,22 @@
 name: Attendance scrape
 
 # Runs the Hik-Connect Time Card scraper in the cloud, independent of any laptop.
-# Cron is UTC. EAT = UTC+3. We poll every 5 min from 06:00 to 19:55 EAT
-# (03:00-16:55 UTC) so early morning badge-ins are captured quickly.
-# NOTE: GitHub schedules are best-effort — ticks can be delayed or skipped under load.
+# Cron is UTC. EAT = UTC+3. The crew badges in around 06:40 EAT (03:40 UTC).
+#
+# GitHub's scheduler is best-effort and has been running HOURS late, not minutes:
+#   26 Jul  window opened 03:00 UTC, first run 07:07 UTC  (4h07 late)
+#   27 Jul  window opened 03:00 UTC, first run 06:16 UTC  (3h16 late)
+#   28 Jul  window opened 03:00 UTC, first run 05:36 UTC  (2h36 late)
+#
+# The first run of the day seems to arrive a few hours after the window opens, so
+# the window now opens at 00:00 UTC (03:00 EAT) rather than 03:00 UTC. That pulls
+# the first delayed run earlier, closer to when the crew actually arrives.
+#
+# This is a mitigation, not a fix — the real answer is our own cron on a small box,
+# see scraper/deploy/. Nothing here can make GitHub run on time.
 on:
   schedule:
-    - cron: '*/5 3-16 * * *'
+    - cron: '*/5 0-16 * * *'
   workflow_dispatch: {}   # lets you run it on demand from the Actions tab
 
 concurrency:
