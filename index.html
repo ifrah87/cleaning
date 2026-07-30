@@ -1495,14 +1495,13 @@ function toggleCleaner(id) {
   if (p) p.isCleaner = !p.isCleaner;
   save(); render();
 }
-// Team leader — exactly one per team (crew). Marking someone clears the previous
-// leader of their team. Badge only; no effect on assignments.
+// Team leader — mark as many as you like. This used to allow exactly one per team
+// and silently un-marked the previous leader, which looked like the button was
+// broken when everyone was in the same team. Badge only; no effect on assignments.
 function toggleLeader(id) {
   const p = state.staff.find((s) => s.id === id);
   if (!p) return;
-  const makeLeader = !p.isLeader;
-  state.staff.forEach((s) => { if (s.crew === p.crew) s.isLeader = false; });
-  p.isLeader = makeLeader;
+  p.isLeader = !p.isLeader;
   save(); render();
 }
 // Shifts — a person works Day (default), Afternoon, or Night. Tapping the chip
@@ -2545,7 +2544,7 @@ function viewSettings() {
     tbox.appendChild(tr);
 
     // The team's zone, and who answers for it.
-    const lead = teamMembers(t.name).find(p => p.isLeader);
+    const leads = teamMembers(t.name).filter(p => p.isLeader);
     const zone = el(`<div style="display:flex;align-items:center;gap:8px;padding:0 0 10px 22px;flex-wrap:wrap"></div>`);
     zone.appendChild(el(`<div style="font-size:11px;color:#5b6a7f;font-weight:600;flex:0 0 auto">Zone floors</div>`));
     const zIn = el(`<input value="${esc((t.floors || []).join(', '))}" placeholder="e.g. 10, 11" style="flex:1;min-width:90px;font-size:13px;padding:7px 9px">`);
@@ -2554,8 +2553,10 @@ function viewSettings() {
     const roomCount = (state.servicedUnits || []).filter(u => (t.floors || []).includes(floorOfUnit(u.unit))).length;
     zone.appendChild(el(`<div style="font-size:11px;color:#5b6a7f;flex:0 0 auto">${roomCount} room${roomCount === 1 ? '' : 's'}</div>`));
     zone.appendChild(el(`<div style="flex-basis:100%;height:0"></div>`));
-    zone.appendChild(el(`<div style="font-size:11px;color:${lead ? '#b45309' : '#dc2626'};font-weight:600">`
-      + (lead ? `★ ${esc(lead.name)} leads this team` : 'No leader — tag one in the Team tab')
+    zone.appendChild(el(`<div style="font-size:11px;color:${leads.length ? '#b45309' : '#dc2626'};font-weight:600">`
+      + (leads.length
+        ? `★ ${esc(leads.map(p => p.name).join(', '))} lead${leads.length === 1 ? 's' : ''} this team`
+        : 'No leader — tag one in the Team tab')
       + `</div>`));
     tbox.appendChild(zone);
   });
