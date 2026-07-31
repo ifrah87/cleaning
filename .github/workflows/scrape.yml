@@ -14,9 +14,16 @@ name: Attendance scrape
 #
 # This is a mitigation, not a fix — the real answer is our own cron on a small box,
 # see scraper/deploy/. Nothing here can make GitHub run on time.
+# Earliest anyone has ever badged in, across 27 days of records:
+#   06:03 Hassan · 06:22 Sadaaq · 06:23 Mahamed Nur · 06:31 Abdirisaq · 06:34 Dauud
+# So the morning window opens at 05:00 EAT (02:00 UTC), an hour of headroom.
+#
+# This schedule is only a backup — GitHub runs it hours late or not at all. The
+# reliable trigger is an external cron calling workflow_dispatch every 5 minutes
+# from 05:00 to 09:59 EAT; see scraper/deploy/external-cron.md.
 on:
   schedule:
-    - cron: '*/5 0-16 * * *'
+    - cron: '*/5 2-6 * * *'
   workflow_dispatch: {}   # lets you run it on demand from the Actions tab
 
 concurrency:
