@@ -21,6 +21,7 @@ const SUPA_HOST = 'issnrivggzkhrcjfhzit.supabase.co';
 const key = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 const TODAY = key(new Date());
 const YESTERDAY = key(new Date(Date.now() - 864e5));
+const TWO_DAYS_AGO = key(new Date(Date.now() - 2 * 864e5));   // a day nobody badged in for
 
 // --- fixtures ---------------------------------------------------------------
 // Three cleaners; Hodan never badges in, so she must not appear on the roll call.
@@ -70,9 +71,13 @@ const APP_STATE = {
 };
 
 // Amina and Fatima badged in; Hodan did not.
+// Yesterday's crew is deliberately nobody from today's: Hodan worked last night and
+// never badges in today. Anything recorded against yesterday must carry her name,
+// not whoever today's roll call happens to have assigned.
 const HIK_EVENTS = [
   { person_name: 'Amina Yusuf', person_code: '1001', event_time: TODAY + ' 06:12:00' },
   { person_name: 'Fatima Ali', person_code: '1002', event_time: TODAY + ' 06:40:00' },
+  { person_name: 'Hodan Omar', person_code: '1003', event_time: YESTERDAY + ' 19:05:00' },
 ];
 
 const SESSION = {
@@ -83,6 +88,13 @@ const SESSION = {
   refresh_token: 'test-refresh-token',
   user: { id: 'test-user', aud: 'authenticated', role: 'authenticated', email: 'test@example.com' },
 };
+
+// The app asks for one day at a time (event_time=like.YYYY-MM-DD*). Answering with
+// every day's scans would let a broken day filter still pass.
+function eventsForRequestedDay(url) {
+  const m = decodeURIComponent(url).match(/event_time=like\.(\d{4}-\d{2}-\d{2})/);
+  return m ? HIK_EVENTS.filter((e) => e.event_time.startsWith(m[1])) : HIK_EVENTS;
+}
 
 // --- tiny assertion harness -------------------------------------------------
 const results = [];
@@ -147,11 +159,19 @@ function serve() {
       return json([{}], 201);
     }
     if (url.includes('/rest/v1/hik_events')) {
-      if (method === 'GET') return json(HIK_EVENTS);
+      // Honour the day filter the app asks for — recording a past day reads a
+      // different day's badge-ins than the roll call is showing.
+      if (method === 'GET') return json(eventsForRequestedDay(url));
       return json([{}], 201);
     }
     if (url.includes('/rest/v1/cleaning_log')) {
-      if (method === 'POST') { logged.push(JSON.parse(req.postData() || '{}')); return json([{ id: 'log' + logged.length }], 201); }
+      if (method === 'POST') {
+        // A backdated night is written as one insert of many rows.
+        const body = JSON.parse(req.postData() || '{}');
+        const rows = Array.isArray(body) ? body : [body];
+        rows.forEach((r) => logged.push(r));
+        return json(rows.map((_, i) => ({ id: 'log' + (logged.length - rows.length + i + 1) })), 201);
+      }
       return json([]);
     }
 
@@ -409,6 +429,53 @@ function serve() {
   check('history rows carry the room and who cleaned it', logged.every((l) => l.unit_label && l.cleaner_name), JSON.stringify(logged.map((l) => [l.unit_label, l.cleaner_name])));
   check('history is dated the day of the clean', logged.every((l) => String(l.cleaned_at).slice(0, 10) === TODAY), JSON.stringify(logged.map((l) => l.cleaned_at)));
 
+  // ------------------------------------------------ A PAST DAY
+  // Last night's work is entered the next morning. It must land on last night's
+  // date and carry last night's crew — today's assignment is the wrong answer.
+  console.log('\n\x1b[1mA PAST DAY — entered the morning after\x1b[0m');
+  writes.length = 0;
+  logged.length = 0;
+  await page.locator('text=/cleaned today · Mark all:/').first().locator('..')
+    .locator('button', { hasText: 'A past day' }).click();
+  const sheet = page.locator('.modal-overlay').last();
+  await sheet.locator('.modal-title', { hasText: 'Record a past day' }).waitFor();
+  await page.waitForTimeout(900);            // the chosen day's badge-ins are fetched
+  const crewLine = await sheet.locator('text=/\\d+ badged in —/').first().textContent();
+  contains('the sheet reads the chosen day, not this morning', crewLine, 'Hodan');
+  check('today\'s crew is not offered for last night', !/Amina|Fatima/.test(crewLine), crewLine);
+  const picked = await sheet.locator('select').evaluateAll((els) => els.map((e) => e.value));
+  check('each room is pre-named from that day\'s badge-ins', picked.length === 5 && picked.every((v) => v === 'p3'), JSON.stringify(picked));
+  eq('the group arrives ticked', (await sheet.locator('.modal-confirm').textContent()).trim(), 'Log 5 cleanings');
+
+  // A day nobody badged in for cannot be silently credited to "Office".
+  await sheet.locator('input[type=date]').fill(TWO_DAYS_AGO);
+  await page.waitForTimeout(900);
+  contains('a day with no badge-ins says so', await sheet.textContent(), 'Nobody badged in');
+  await sheet.locator('button', { hasText: 'Tick all' }).click();
+  await sheet.locator('.modal-confirm').click();
+  await page.waitForTimeout(500);
+  contains('an unnamed room is refused, not credited to nobody', await sheet.textContent(), 'still need a name');
+  check('nothing is written until every room has a name', logged.length === 0, logged.length + ' rows written');
+
+  // Back to last night, and record it.
+  await sheet.locator('button', { hasText: 'Yesterday' }).click();
+  await page.waitForTimeout(900);
+  await sheet.locator('button', { hasText: 'Tick all' }).click();
+  writes.length = 0;
+  logged.length = 0;
+  await sheet.locator('.modal-confirm').click();
+  await page.waitForTimeout(1200);
+  check('the night is written in one go', logged.length === 5, logged.length + ' rows written');
+  check('every row carries the crew who badged in that night', logged.every((l) => l.cleaner_name === 'Hodan Omar'), JSON.stringify(logged.map((l) => l.cleaner_name)));
+  check('every row is dated that night', logged.every((l) => String(l.cleaned_at).slice(0, 10) === YESTERDAY), JSON.stringify(logged.map((l) => l.cleaned_at)));
+  const wPast = writes[writes.length - 1];
+  const airbnbAfter = wPast ? (wPast.data.servicedUnits || []).filter((u) => u.type === 'airbnb') : [];
+  // These rooms were also cleaned today. Recording an older night must not pull
+  // their schedule back and make them look due again.
+  check('an older night never drags the schedule backwards', airbnbAfter.length === 5 && airbnbAfter.every((u) => u.lastCleaned === TODAY), JSON.stringify(airbnbAfter.map((u) => [u.unit, u.lastCleaned])));
+  eq('recording a day lands you in History to see it', await page.locator('.h-title').textContent(), 'Cleaning History');
+  check('the sheet closes once the night is saved', (await page.locator('.modal-overlay').count()) === 0, 'sheet still open');
+
   // Every-other-day rooms cleaned together pile onto one morning. Set the office
   // group up that way, then prove "Even out the days" splits them.
   writes.length = 0;
@@ -558,7 +625,7 @@ function serve() {
       autoWrites.push(JSON.parse(req.postData() || '{}'));
       return json([{}], 201);
     }
-    if (url.includes('/rest/v1/hik_events')) return json(HIK_EVENTS);
+    if (url.includes('/rest/v1/hik_events')) return json(eventsForRequestedDay(url));
     if (url.includes('/rest/v1/cleaning_log')) return json([]);
     return json([]);
   });
