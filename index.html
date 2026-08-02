@@ -172,6 +172,20 @@
   .su-card.done .su-mark { background: #15803d; }
   .su-next { font-size: 11px; color: #5f7189; font-weight: 600; padding: 6px 10px; border: 1px solid #d8e0ea; border-radius: 7px; white-space: nowrap; }
   .su-ctl { display: flex; gap: 6px; margin-top: 11px; padding-top: 11px; border-top: 1px solid #e7ecf3; }
+  /* Communal areas: a plain list, not nine stacked cards. One thin rule between
+     rows carries the separation a box was doing at ten times the height. */
+  .area-list { background: #ffffff; border: 1px solid #e2e8f1; border-radius: 10px; overflow: hidden; margin-bottom: 12px; }
+  .area-item { border-top: 1px solid #eef2f7; }
+  .area-item:first-child { border-top: none; }
+  .area-row { display: flex; align-items: center; gap: 8px; padding: 6px 9px; }
+  .area-tick { flex: 0 0 auto; width: 19px; height: 19px; padding: 0; border-radius: 50%; border: 1.5px solid #cbd5e1; background: #ffffff; color: transparent; font-size: 10px; line-height: 1; }
+  .area-tick.on { background: #15803d; border-color: #15803d; color: #ffffff; }
+  .area-name { flex: 1; min-width: 0; font-size: 12.5px; font-weight: 700; color: #15202e; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .area-item.done .area-name { color: #94a3b8; }
+  .area-freq { font-size: 9px; font-weight: 700; color: #94a3b8; letter-spacing: 0.05em; }
+  .area-who { flex: 0 1 112px; min-width: 0; font-size: 11.5px; padding: 3px 5px; border: 1px solid #e2e8f1; border-radius: 6px; background: #f8fafc; color: #334155; }
+  .area-more { flex: 0 0 auto; width: 22px; padding: 3px 0; font-size: 12px; color: #94a3b8; background: transparent; border: none; }
+  .area-ctl { display: flex; gap: 4px; padding: 0 9px 7px; }
   .freqmini { flex: 1; padding: 7px 4px; border-radius: 7px; font-size: 10px; font-weight: 600; color: #5f7189; background: #f4f7fb; border: 1px solid #d8e0ea; }
   .freqmini.on { color: #ffffff; background: #0284c7; border-color: #0284c7; }
   .su-rm { padding: 7px 12px; border-radius: 7px; font-size: 10px; font-weight: 600; color: #dc2626; background: transparent; border: 1px solid #f6d5d5; }
@@ -296,6 +310,25 @@ const STATUS_ORDER = ['present', 'late', 'noshow', 'off'];
 // Areas live in state (editable). Helpers to read them:
 function areasInterior() { return (state.areas || []).filter(a => a.kind === 'interior'); }
 function areasExterior() { return (state.areas || []).filter(a => a.kind === 'exterior'); }
+
+// --- Communal areas as work --------------------------------------------------
+// The interior areas are a job somebody has to be given, the same as a room. They
+// were only ever visible on the Floors & Common Areas checklist, which is not where
+// the morning is allocated, so nobody was ever handed the corridors.
+// An area stays outstanding until it's ticked off for its current period: daily
+// areas come back each day, weekly each week, monthly each month.
+const areaDoneKey = (a) => a.id + '::' + freqKey(a.freq);
+const areaDone = (a) => !!state.completions[areaDoneKey(a)];
+// History holds areas next to rooms. The 'area:' prefix keeps an area's id from ever
+// colliding with a room's, and tells History to print the name plainly.
+const areaLogId = (a) => 'area:' + a.id;
+const areaAsUnit = (a) => ({ id: areaLogId(a), unit: a.label });
+const isAreaLog = (unitId) => String(unitId || '').startsWith('area:');
+const areasOutstanding = () => areasInterior().filter(a => !areaDone(a));
+// Outstanding first — what's left to do is what the morning is about.
+const areasByOpenFirst = () => areasInterior().slice().sort((a, b) => (areaDone(a) ? 1 : 0) - (areaDone(b) ? 1 : 0));
+let _areaCtlOpen = null;   // which area's change/remove controls are showing (one at a time)
+let _areaAddOpen = false;  // the add form stays folded away until it's wanted
 // The cleaning crew = staff tagged as cleaners. Until anyone is tagged, fall
 // back to everyone so cleaning screens are never empty after a Hik import.
 function cleaningStaff() {
@@ -1594,6 +1627,115 @@ function toggleServicedDone(id) {
 }
 const servicedDone = (id) => !!state.completions['su:' + id + '::' + todayKey()];
 
+// Ticking off a communal area is a cleaning like any other: it goes to History with
+// who did it and when, and un-ticking takes that entry back out again.
+function toggleAreaDone(id) {
+  const a = (state.areas || []).find(x => x.id === id);
+  if (!a) return;
+  const k = areaDoneKey(a);
+  if (!state.logRefs) state.logRefs = {};
+  if (state.completions[k]) {
+    delete state.completions[k];
+    const ref = state.logRefs[k];
+    if (ref) { unlogClean(ref); delete state.logRefs[k]; }
+    save(); render();
+  } else {
+    state.completions[k] = true;
+    save(); render();
+    // An area has no floor to fall back on, so an unassigned one is logged as Office
+    // rather than being credited to whoever happens to own the floor it sits on.
+    logClean(areaAsUnit(a), null, a.assignedTo || 'office').then((logId) => {
+      if (logId) { if (!state.logRefs) state.logRefs = {}; state.logRefs[k] = logId; save(); }
+    });
+  }
+}
+
+// One card for a communal area wherever it needs doing, so an area can't read as
+// done in one place and open in another. presentOnly limits the names to whoever
+// clocked in — right for Roll Call, wrong for the Buildings tab.
+function areaWorkCard(a, opts) {
+  opts = opts || {};
+  const presentOnly = !!opts.presentOnly;
+  const done = areaDone(a);
+  const item = el(`<div class="area-item ${done ? 'done' : ''}"></div>`);
+
+  // Renaming happens where the list is built, not where it's worked.
+  if (opts.manage && state.editingArea === a.id) {
+    const ed = el(`<div style="padding:8px 9px"></div>`);
+    const inp = el(`<input id="bldArea_${a.id}" value="${esc(a.label)}" style="margin-bottom:8px">`);
+    ed.appendChild(inp);
+    const erow = el(`<div style="display:flex;gap:6px"></div>`);
+    const sv = el(`<button class="freqmini on" style="padding:7px 10px">Save</button>`);
+    sv.onclick = () => renameArea(a.id, document.getElementById('bldArea_' + a.id).value);
+    const cn = el(`<button class="freqmini" style="padding:7px 10px">Cancel</button>`);
+    cn.onclick = () => { state.editingArea = null; render(); };
+    erow.appendChild(sv); erow.appendChild(cn);
+    ed.appendChild(erow);
+    item.appendChild(ed);
+    return item;
+  }
+
+  const row = el(`<div class="area-row"></div>`);
+  const tick = el(`<button class="area-tick ${done ? 'on' : ''}" title="${done ? 'Cleaned — tap to undo' : 'Mark clean'}">✓</button>`);
+  tick.onclick = () => toggleAreaDone(a.id);
+  row.appendChild(tick);
+  const last = lastCleanedByUnit[areaLogId(a)];
+  row.appendChild(el(`<div class="area-name su-unit">${esc(a.label)}`
+    + `<span class="area-freq"> · ${esc(FREQ[a.freq].label.toUpperCase())}</span>`
+    + (last ? `<span class="area-freq"> · ${esc(fmtWhen(last.cleaned_at))}</span>` : '')
+    + `</div>`));
+
+  const sel = el(`<select class="area-who"></select>`);
+  sel.appendChild(el(`<option value="">Unassigned</option>`));
+  // On a morning where attendance hasn't landed yet, an empty list would leave the
+  // office unable to allocate at all — fall back to the full roster.
+  const present = cleaningStaff().filter(p => hikArrivals[p.id]);
+  const pool = (presentOnly && present.length) ? present : cleaningStaff();
+  pool.forEach(p => {
+    const o = el(`<option value="${esc(p.id)}">${esc(p.name)}</option>`);
+    if (a.assignedTo === p.id) o.setAttribute('selected', '');
+    sel.appendChild(o);
+  });
+  // Someone holding an area who isn't in today would otherwise drop off the list and
+  // the area would look unassigned when it isn't.
+  if (a.assignedTo && !pool.some(p => p.id === a.assignedTo)) {
+    const p = (state.staff || []).find(x => x.id === a.assignedTo);
+    if (p) {
+      const o = el(`<option value="${esc(p.id)}">${esc(p.name)} (not clocked in)</option>`);
+      o.setAttribute('selected', '');
+      sel.appendChild(o);
+    }
+  }
+  sel.onchange = (e) => setAreaAssign(a.id, e.target.value);
+  row.appendChild(sel);
+
+  // The controls belong to one area at a time. Repeated on every row they tripled the
+  // height of the list to show a frequency that's already printed next to the name.
+  if (opts.manage) {
+    const more = el(`<button class="area-more" title="Change or remove">⋯</button>`);
+    more.onclick = () => { _areaCtlOpen = _areaCtlOpen === a.id ? null : a.id; render(); };
+    row.appendChild(more);
+  }
+  item.appendChild(row);
+
+  // Buildings tab only — on Roll Call these would be rows of controls nobody uses at 7am.
+  if (opts.manage && _areaCtlOpen === a.id) {
+    const ctl = el(`<div class="area-ctl"></div>`);
+    ['daily', 'weekly', 'monthly'].forEach(fk => {
+      const b = el(`<button class="freqmini ${a.freq === fk ? 'on' : ''}" style="padding:5px 4px;font-size:9px">${FREQ[fk].label}</button>`);
+      b.onclick = () => setAreaFreq(a.id, fk);
+      ctl.appendChild(b);
+    });
+    const edb = el(`<button class="freqmini" style="padding:5px 8px;font-size:9px">Rename</button>`);
+    edb.onclick = () => { state.editingArea = a.id; render(); };
+    const rm = el(`<button class="freqmini" style="padding:5px 8px;font-size:9px;color:#dc2626">Remove</button>`);
+    rm.onclick = () => removeArea(a.id);
+    ctl.appendChild(edb); ctl.appendChild(rm);
+    item.appendChild(ctl);
+  }
+  return item;
+}
+
 // --- Team actions ---
 const DEFAULT_TEAMS = [
   { name: 'Team A', color: '#0284c7' },
@@ -1928,6 +2070,54 @@ function viewOffices() {
 }
 function viewBuildings() {
   const wrap = el('<div class="body"></div>');
+  // Communal areas are building work. They belong on this tab, not only on the
+  // Floors & Common Areas checklist — that page is a walk-through, not an allocation.
+  const areas = areasInterior();
+  const left = areasOutstanding().length;
+  wrap.appendChild(el(`<div class="section-label">Communal areas · ${left} to do</div>`));
+  wrap.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin:-6px 0 10px">Build the list here — every one of these also shows on Roll Call each morning, so it gets handed to someone.</div>`));
+
+  // Building the list belongs on the tab where the work is read, not three taps away
+  // in Settings. Interior only: exterior areas are their own job on their own tab.
+  if (!_areaAddOpen) {
+    const open = el(`<button class="freqmini" style="width:100%;padding:9px;margin-bottom:12px">＋ Add a communal area</button>`);
+    open.onclick = () => { _areaAddOpen = true; render(); };
+    wrap.appendChild(open);
+  } else {
+    const abox = el(`<div class="addbox" style="margin-bottom:12px"></div>`);
+    const aName = el(`<input id="newBldArea" placeholder="Area name (e.g. Lift lobby, Bin store)" style="margin-bottom:8px">`);
+    abox.appendChild(aName);
+    let aFreq = 'daily';
+    const freqRow = el(`<div style="display:flex;gap:6px;margin-bottom:10px"></div>`);
+    const freqBtns = {};
+    ['daily', 'weekly', 'monthly'].forEach(fk => {
+      const b = el(`<button class="freqpick ${fk === 'daily' ? 'on' : ''}">${FREQ[fk].label}</button>`);
+      b.onclick = () => { aFreq = fk; Object.values(freqBtns).forEach(x => x.classList.remove('on')); b.classList.add('on'); };
+      freqBtns[fk] = b; freqRow.appendChild(b);
+    });
+    abox.appendChild(freqRow);
+    const btnRow = el(`<div style="display:flex;gap:8px"></div>`);
+    const aBtn = el(`<button class="add-btn" style="flex:1">+ Add communal area</button>`);
+    aBtn.onclick = () => {
+      const v = document.getElementById('newBldArea').value;
+      if (!v.trim()) { document.getElementById('newBldArea').focus(); return; }
+      _areaAddOpen = false;
+      addArea(v, 'interior', aFreq);
+    };
+    const cBtn = el(`<button class="modal-skip">Cancel</button>`);
+    cBtn.onclick = () => { _areaAddOpen = false; render(); };
+    btnRow.appendChild(aBtn); btnRow.appendChild(cBtn);
+    abox.appendChild(btnRow);
+    wrap.appendChild(abox);
+  }
+
+  if (!areas.length) wrap.appendChild(el(`<div class="empty">No communal areas yet. Add the first one above.</div>`));
+  else {
+    const list = el(`<div class="area-list"></div>`);
+    areasByOpenFirst().forEach(a => list.appendChild(areaWorkCard(a, { manage: true })));
+    wrap.appendChild(list);
+  }
+  wrap.appendChild(el(`<div class="section-label" style="margin-top:18px">Building units</div>`));
   wrap.appendChild(addUnitForm({ types: ['building'], defaultType: 'building', title: 'Add a building unit' }));
   unitGroups(wrap, ['building'], 'No building units yet. Add your first above.');
   return wrap;
@@ -2506,6 +2696,40 @@ function viewRollCall() {
     body.appendChild(box);
   }
 
+  // COMMUNAL AREAS — the corridors, stairs and lobby still have to be given to
+  // someone each morning. Hand-assigned on purpose: an area is a walk of the
+  // building rather than a room on a count, so auto-assign leaves them alone.
+  if (areasInterior().length) {
+    const openA = areasOutstanding();
+    const doneA = areasInterior().filter(areaDone);
+    const abox = el('<div style="margin-bottom:18px"></div>');
+    abox.appendChild(el(`<div class="section-label">▦ Communal areas (${openA.length} to do)</div>`));
+    abox.appendChild(el(`<div style="font-size:12px;color:#5f7189;font-weight:600;margin:-6px 0 10px">`
+      + `Hand these out yourself — auto-assign only spreads rooms.`
+      + (doneA.length ? ` · <span style="color:#15803d">${doneA.length} done</span>` : '')
+      + `</div>`));
+    // Only what's left gets a card. A finished area collapses to a chip, so the
+    // section shrinks through the morning instead of staying a wall of nine.
+    if (openA.length) {
+      const list = el(`<div class="area-list"></div>`);
+      openA.forEach(a => list.appendChild(areaWorkCard(a, { presentOnly: true })));
+      abox.appendChild(list);
+    }
+    if (!openA.length) abox.appendChild(el(`<div style="font-size:12px;color:#15803d;font-weight:700;margin-bottom:8px">✓ Every communal area is done</div>`));
+    if (doneA.length) {
+      const chips = el('<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px"></div>');
+      doneA.forEach(a => {
+        const who = (state.staff || []).find(p => p.id === a.assignedTo);
+        const chip = el(`<button class="freqmini" style="flex:0 0 auto;padding:6px 10px;background:#eaf7ee;border-color:#bfe3ca;color:#15803d" `
+          + `title="Tap to undo">${esc(a.label)}${who ? ' · ' + esc(who.name.split(' ')[0]) : ''} ✓</button>`);
+        chip.onclick = () => toggleAreaDone(a.id);   // a mis-tap has to be undoable
+        chips.appendChild(chip);
+      });
+      abox.appendChild(chips);
+    }
+    body.appendChild(abox);
+  }
+
   // WHO'S IN TODAY — only people who badged in, with clock-in times + room assignment.
   const whoIn = el('<div style="margin-bottom:18px"></div>');
   const dayLbl = (selectedDay && selectedDay !== todayKey()) ? ('on ' + selectedDay) : 'today';
@@ -2552,11 +2776,19 @@ function viewRollCall() {
         info.appendChild(el(`<div class="person-floors" style="color:#15803d;font-weight:600">${timecard}</div>`));
         card.appendChild(info);
         const mine = (state.servicedUnits || []).filter((u) => u.assignedTo === s.id);
-        if (mine.length) {
+        const myAreas = areasInterior().filter((a) => a.assignedTo === s.id);
+        if (mine.length || myAreas.length) {
           const chips = el('<div style="display:flex;flex-wrap:wrap;gap:6px"></div>');
           mine.forEach((u) => {
             const chip = el(`<button class="freqmini on" style="flex:0 0 auto;padding:6px 11px">${esc(u.unit)} ✕</button>`);
             chip.onclick = () => setUnitAssignee(u.id, '');
+            chips.appendChild(chip);
+          });
+          // Areas carry their name, not a number, so they read differently from rooms
+          // in the same row — which is the point: you can see what someone is holding.
+          myAreas.forEach((a) => {
+            const chip = el(`<button class="freqmini on" style="flex:0 0 auto;padding:6px 11px;background:#15803d;border-color:#15803d">${esc(a.label)}${areaDone(a) ? ' ✓' : ''} ✕</button>`);
+            chip.onclick = () => setAreaAssign(a.id, '');
             chips.appendChild(chip);
           });
           card.appendChild(chips);
@@ -2572,9 +2804,12 @@ function viewRollCall() {
           || (b.priority ? 1 : 0) - (a.priority ? 1 : 0)
           || byUnit(a, b));
         const freeLater = free.filter((u) => !unitDueToday(u)).sort(byUnit);
-        if (free.length) {
+        // Areas are handed out from the same place as rooms — a separate control for
+        // them would mean remembering to use it.
+        const freeAreas = areasInterior().filter((a) => !a.assignedTo && !areaDone(a));
+        if (free.length || freeAreas.length) {
           const sel = el('<select class="area-select"></select>');
-          sel.appendChild(el(`<option value="">+ Assign a room…${freeDue.length ? ` (${freeDue.length} due today)` : ''}</option>`));
+          sel.appendChild(el(`<option value="">+ Assign a room or area…${freeDue.length ? ` (${freeDue.length} due today)` : ''}</option>`));
           const optFor = (u, suffix) => el(`<option value="${esc(u.id)}">${flags(u)}Room ${esc(u.unit)}${suffix}</option>`);
           if (freeDue.length) {
             const g = el(`<optgroup label="Due today (${freeDue.length})"></optgroup>`);
@@ -2589,9 +2824,18 @@ function viewRollCall() {
             });
             sel.appendChild(g);
           }
-          sel.onchange = (e) => { if (e.target.value) setUnitAssignee(e.target.value, s.id); };
+          if (freeAreas.length) {
+            const g = el(`<optgroup label="Communal areas (${freeAreas.length})"></optgroup>`);
+            freeAreas.forEach((a) => g.appendChild(el(`<option value="${esc(areaLogId(a))}">${esc(a.label)} — ${esc(FREQ[a.freq].label)}</option>`)));
+            sel.appendChild(g);
+          }
+          sel.onchange = (e) => {
+            const v = e.target.value;
+            if (!v) return;
+            if (isAreaLog(v)) setAreaAssign(v.slice(5), s.id); else setUnitAssignee(v, s.id);
+          };
           card.appendChild(sel);
-        } else if (!mine.length) {
+        } else if (!mine.length && !myAreas.length) {
           card.appendChild(el('<div style="font-size:11px;color:#5b6a7f">No rooms yet — add units on the Cleaning tab, then assign here.</div>'));
         }
         whoIn.appendChild(card);
@@ -3170,6 +3414,16 @@ function viewHistory() {
       if (historyFilter === u.id) o.setAttribute('selected', '');
       sel.appendChild(o);
     });
+  // Areas are logged like rooms, so they have to be findable like rooms.
+  if (areasInterior().length) {
+    const g = el(`<optgroup label="Communal areas"></optgroup>`);
+    areasInterior().forEach(a => {
+      const o = el(`<option value="${esc(areaLogId(a))}">${esc(a.label)}</option>`);
+      if (historyFilter === areaLogId(a)) o.setAttribute('selected', '');
+      g.appendChild(o);
+    });
+    sel.appendChild(g);
+  }
   sel.onchange = (e) => { historyFilter = e.target.value; render(); };
   wrap.appendChild(sel);
 
@@ -3215,7 +3469,8 @@ function viewHistory() {
     const card = el(`<div class="su-card"></div>`);
     const top = el(`<div class="su-top"></div>`);
     const info = el(`<div style="flex:1;min-width:0"></div>`);
-    info.appendChild(el(`<div class="su-unit" style="font-size:15px">Unit ${esc(r.unit_label || r.unit_id)}</div>`));
+    // A communal area has a name, not a number — "Unit Main Lobby" reads as a fault.
+    info.appendChild(el(`<div class="su-unit" style="font-size:15px">${isAreaLog(r.unit_id) ? '' : 'Unit '}${esc(r.unit_label || r.unit_id)}</div>`));
     info.appendChild(el(`<div class="su-guest">by ${esc(r.cleaner_name || 'Unknown')}</div>`));
     top.appendChild(info);
     top.appendChild(el(`<div class="su-next">${esc(fmtWhen(r.cleaned_at))}</div>`));

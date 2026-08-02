@@ -604,6 +604,66 @@ function serve() {
     .filter(Boolean);
   check('auto-assign stops handing out the kinds Roll Call excludes', touched.length > 0 && touched.every((u) => u.type !== 'airbnb'), 'touched: ' + JSON.stringify(touched.map((u) => [u.unit, u.type])));
 
+  // -------------------------------------------------- COMMUNAL AREAS
+  // The corridors and lobby are work somebody has to be given. They must reach the
+  // morning allocation, and a cleaned one must leave a record like a room does.
+  console.log('\n\x1b[1mCOMMUNAL AREAS — allocated in the morning, logged like a room\x1b[0m');
+  await page.locator('.nav button', { hasText: 'Roll Call' }).click();
+  await page.waitForSelector('text=/Communal areas/');
+  const lobby = page.locator('.area-item').filter({ has: page.locator('.su-unit', { hasText: 'Main Lobby' }) }).first();
+  check('Roll Call carries the communal areas', (await lobby.count()) > 0, 'no Main Lobby card on Roll Call');
+  // Only people who actually clocked in can be handed an area this morning.
+  const areaNames = await lobby.locator('select option').allTextContents();
+  check('only people who clocked in are offered an area', !areaNames.some((o) => /Hodan/.test(o)), 'offered: ' + JSON.stringify(areaNames));
+
+  writes.length = 0;
+  await lobby.locator('select').selectOption('p1');
+  await page.waitForTimeout(700);
+  const wArea = writes[writes.length - 1];
+  const lobbyRow = wArea && (wArea.data.areas || []).find((a) => a.id === 'lobby');
+  eq('an area handed to someone is remembered', lobbyRow && lobbyRow.assignedTo, 'p1');
+
+  logged.length = 0;
+  await page.locator('.area-item').filter({ has: page.locator('.su-unit', { hasText: 'Main Lobby' }) }).first()
+    .locator('button[title="Mark clean"]').click();
+  await page.waitForTimeout(900);
+  check('cleaning an area reaches History', logged.length === 1, logged.length + ' rows written');
+  const aLog = logged[0] || {};
+  eq('the area is logged under its own name', aLog.unit_label, 'Main Lobby');
+  eq('an area id can never collide with a room id', aLog.unit_id, 'area:lobby');
+  eq('the area is credited to whoever was given it', aLog.cleaner_name, 'Amina Yusuf');
+
+  // Nine areas as nine cards buries the rest of the roll call, so a finished one
+  // collapses to a chip and the section shrinks as the morning goes on.
+  check('a finished area drops out of the to-do cards',
+    (await page.locator('.area-item').filter({ has: page.locator('.su-unit', { hasText: 'Main Lobby' }) }).count()) === 0,
+    'Main Lobby still listed as to-do after being cleaned');
+  contains('a finished area is still visible, and undoable', await page.locator('.section-label', { hasText: 'Communal areas' }).first().locator('..').textContent(), 'Main Lobby · Amina ✓');
+
+  // The Buildings tab is where building work is read; areas belong there too.
+  await page.locator('.nav button', { hasText: 'Buildings' }).click();
+  await page.waitForTimeout(400);
+  check('the Buildings tab shows the communal areas', (await page.locator('.section-label', { hasText: 'Communal areas' }).count()) > 0, 'no areas section on Buildings');
+
+  // The list has to be buildable where it's read — not three taps away in Settings.
+  writes.length = 0;
+  await page.locator('button', { hasText: '＋ Add a communal area' }).click();
+  await page.fill('#newBldArea', 'Lift Lobby');
+  await page.locator('button', { hasText: '+ Add communal area' }).click();
+  await page.waitForTimeout(700);
+  const wNewArea = writes[writes.length - 1];
+  const addedArea = wNewArea && (wNewArea.data.areas || []).find((a) => a.label === 'Lift Lobby');
+  check('a communal area can be added from the Buildings tab', !!addedArea && addedArea.kind === 'interior' && addedArea.freq === 'daily', JSON.stringify(addedArea || null));
+  // The change/remove controls are folded away — one row per area — until asked for.
+  const liftCard = page.locator('.area-item').filter({ has: page.locator('.su-unit', { hasText: 'Lift Lobby' }) }).first();
+  check('the controls stay out of the way until wanted', (await liftCard.locator('button', { hasText: 'Rename' }).count()) === 0, 'rename control showing unasked');
+  await liftCard.locator('button[title="Change or remove"]').click();
+  await page.waitForTimeout(400);
+  check('an area added there can be renamed and removed there', (await page.locator('.area-item').filter({ has: page.locator('.su-unit', { hasText: 'Lift Lobby' }) }).first().locator('button', { hasText: 'Rename' }).count()) > 0, 'no rename control');
+  await page.locator('.nav button', { hasText: 'Roll Call' }).click();
+  await page.waitForTimeout(700);
+  check('a newly built area reaches the morning roll call', (await page.locator('.su-unit', { hasText: 'Lift Lobby' }).count()) > 0, 'not on Roll Call');
+
   // ------------------------------------------------------------- AUTOMATIC
   // A fresh morning should hand itself out — but never over a decision already made.
   console.log('\n\x1b[1mAUTOMATIC — hands out the morning, never overwrites you\x1b[0m');
@@ -641,6 +701,10 @@ function serve() {
   check('a fresh morning hands itself out with nobody pressing anything', handed.length > 0, 'nothing was assigned automatically');
   eq('it records the day it ran, so it runs once', autoState && autoState.autoAssignedOn, TODAY);
   check('everything it chose still needs a yes', (await ap.locator('.section-label', { hasText: 'Check these assignments' }).count()) > 0, 'no sign-off list');
+  // Areas are hand-assigned on purpose — an even spread of rooms must not quietly
+  // hand somebody the stairwells as well.
+  const autoAreas = autoState ? (autoState.areas || []).filter((a) => a.assignedTo) : [];
+  check('auto-assign never hands out communal areas', autoAreas.length === 0, 'assigned: ' + JSON.stringify(autoAreas.map((a) => a.label)));
   await ap.close(); await auto.close();
 
   // ----------------------------------------------------------------- SAFETY
