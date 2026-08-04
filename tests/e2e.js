@@ -408,6 +408,41 @@ function serve() {
   const officeFreq = wBulk && (wBulk.data.servicedUnits || []).find((u) => u.id === 'u201');
   eq('the office group was left alone', officeFreq && officeFreq.freq, 'weekly');
 
+  // ------------------------------------------ LAST CLEANED IS DURABLE
+  // The history log only holds the newest 1000 rows for the whole building, so a
+  // room that is cleaned rarely falls out of it. If that log is the only record,
+  // the room's last-cleaned line vanishes and it goes back to looking never-cleaned.
+  console.log('\n\x1b[1mLAST CLEANED — stamped on the room, not just the log\x1b[0m');
+  await page.locator('.nav button', { hasText: 'Airbnb' }).click();
+  await page.waitForTimeout(600);
+  const room101 = page.locator('.su-card').filter({ has: page.locator('.su-unit', { hasText: '101' }) }).first();
+  writes.length = 0;
+  await room101.locator('button.su-mark').first().click();
+  await page.waitForTimeout(900);
+  const wTick = writes[writes.length - 1];
+  const u101 = wTick && (wTick.data.servicedUnits || []).find((u) => u.id === 'u101');
+  eq('ticking a room stamps its own last-cleaned date', u101 && u101.lastCleaned, TODAY);
+  check('and records who it is credited to', Boolean(u101 && u101.lastCleanedByName), JSON.stringify(u101 && { by: u101.lastCleanedBy, name: u101.lastCleanedByName }));
+
+  // Un-ticking must not leave today's date behind as the last clean.
+  writes.length = 0;
+  await page.locator('.su-card').filter({ has: page.locator('.su-unit', { hasText: '101' }) }).first()
+    .locator('button.su-mark').first().click();
+  await page.waitForTimeout(900);
+  const wUntick = writes[writes.length - 1];
+  const u101back = wUntick && (wUntick.data.servicedUnits || []).find((u) => u.id === 'u101');
+  eq('un-ticking restores the previous date', u101back && u101back.lastCleaned, YESTERDAY);
+  check('and clears the name it had stamped', !u101back || !u101back.lastCleanedByName, JSON.stringify(u101back && u101back.lastCleanedByName));
+
+  // A room nobody has ever recorded says so, rather than showing nothing at all.
+  const room104 = page.locator('.su-card').filter({ has: page.locator('.su-unit', { hasText: '104' }) }).first();
+  contains('a never-cleaned room says so instead of hiding the line', await room104.textContent(), 'no record yet');
+
+  // Back to All Rooms for the bulk tests that follow.
+  await page.locator('.nav button', { hasText: 'More' }).click();
+  await page.locator('.su-unit', { hasText: 'All Rooms' }).click();
+  await page.waitForSelector('text=/Set all:/');
+
   // Bulk "mark all cleaned today".
   writes.length = 0;
   logged.length = 0;
@@ -603,6 +638,53 @@ function serve() {
     .map((id) => wRC.servicedUnits.find((u) => u.id === id))
     .filter(Boolean);
   check('auto-assign stops handing out the kinds Roll Call excludes', touched.length > 0 && touched.every((u) => u.type !== 'airbnb'), 'touched: ' + JSON.stringify(touched.map((u) => [u.unit, u.type])));
+
+  // -------------------------------------- THE ROUND CROSSES MIDNIGHT
+  // A room finished at 00:30 belongs to the night the crew was working, not to the
+  // morning that just started. Stamping it with the calendar day gave every
+  // after-midnight clean an extra day and walked every-other-day rooms off their
+  // rota, so auto-assign stopped handing them out on the days they were expected.
+  console.log('\n\x1b[1mAFTER MIDNIGHT — the round keeps the night it belongs to\x1b[0m');
+  const clockCheck = await page.evaluate(() => {
+    const RealDate = Date;
+    const freeze = (iso) => {
+      globalThis.Date = class extends RealDate {
+        constructor(...args) { return args.length ? new RealDate(...args) : new RealDate(iso); }
+        static now() { return new RealDate(iso).getTime(); }
+      };
+    };
+    const out = {};
+    freeze('2026-08-04T00:30:00');
+    out.afterMidnight = workToday();
+    out.calendarAfterMidnight = todayKey();
+    freeze('2026-08-04T09:00:00');
+    out.morning = workToday();
+    freeze('2026-08-04T02:59:00');
+    out.justBeforeCutoff = workToday();
+    freeze('2026-08-04T03:01:00');
+    out.justAfterCutoff = workToday();
+    globalThis.Date = RealDate;
+    return out;
+  });
+  eq('a clean at 00:30 counts for the night before', clockCheck.afterMidnight, '2026-08-03');
+  eq('the calendar day has already rolled over by then', clockCheck.calendarAfterMidnight, '2026-08-04');
+  eq('a clean at 09:00 counts for that same day', clockCheck.morning, '2026-08-04');
+  eq('the work day still holds at 02:59', clockCheck.justBeforeCutoff, '2026-08-03');
+  eq('and rolls over at 03:01', clockCheck.justAfterCutoff, '2026-08-04');
+
+  // ---------------------------------------------- TONIGHT'S ROUND
+  // The crew works into the night, so "what is still outstanding" needs its own
+  // screen — and it must not list work already done, nor work not yet due.
+  console.log('\n\x1b[1mTONIGHT — what is still outstanding on this round\x1b[0m');
+  await page.locator('.nav button', { hasText: 'More' }).click();
+  await page.locator('.su-unit', { hasText: 'Tonight' }).click();
+  await page.waitForTimeout(800);
+  const tonightText = await page.locator('.body').first().textContent();
+  contains('the round lists what is still outstanding', tonightText, 'to clean tonight');
+  check('a room already cleaned today has dropped off', !/Unit 102/.test(tonightText), 'unit 102 was cleaned today and must not be listed');
+  check('an every-other-day room not yet due is NOT listed', !/Unit 103/.test(tonightText), 'unit 103 is not due tonight');
+  contains('communal areas are part of the round', tonightText, 'Interior areas');
+  contains('each job says why it is due', tonightText, 'Daily');
 
   // -------------------------------------------------- COMMUNAL AREAS
   // The corridors and lobby are work somebody has to be given. They must reach the

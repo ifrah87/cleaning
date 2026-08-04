@@ -353,9 +353,26 @@ const STORE = 'cleaning_app_v5';
 // daysSince()/unitDueToday(), which also use local time.
 const todayKey = () => { const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); };
 const shiftDay = (key, delta) => { const [y,m,d]=key.split('-').map(Number); const dt=new Date(y,m-1,d+delta); return dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')+'-'+String(dt.getDate()).padStart(2,'0'); };
-const weekKey = () => { const d=new Date(),o=new Date(d.getFullYear(),0,1); return d.getFullYear()+'-W'+Math.ceil(((d-o)/864e5+o.getDay()+1)/7); };
-const monthKey = () => { const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); };
+// The round runs into the evening and can finish after midnight, so the calendar
+// day is the wrong unit for planning: at 00:20 the crew is still on last night's
+// round, and asking for "tomorrow" then should still mean the day after the one
+// they started. The work day rolls over at WORKDAY_CUTOFF_HOUR instead.
+// Scope note: only the Plan view uses this. Tick-offs, the daily reset and the
+// history stamp still flip at midnight — see the todayKey() callers.
+const WORKDAY_CUTOFF_HOUR = 3;
+const workToday = () => (new Date().getHours() < WORKDAY_CUTOFF_HOUR) ? shiftDay(todayKey(), -1) : todayKey();
+
+const weekKeyOf = (d) => { const o=new Date(d.getFullYear(),0,1); return d.getFullYear()+'-W'+Math.ceil(((d-o)/864e5+o.getDay()+1)/7); };
+const monthKeyOf = (d) => d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
+const weekKey = () => weekKeyOf(new Date());
+const monthKey = () => monthKeyOf(new Date());
 const freqKey = f => f==='daily'?todayKey():f==='weekly'?weekKey():f==='monthly'?monthKey():'perm';
+// The same period key for any day, so the planner can ask "is this area still
+// outstanding on Thursday?" rather than only ever "…today?".
+const freqKeyOn = (f, day) => {
+  const d = new Date(day + 'T12:00:00');
+  return f==='daily'?day:f==='weekly'?weekKeyOf(d):f==='monthly'?monthKeyOf(d):'perm';
+};
 
 // Days difference between an ISO date and today (whole days)
 const daysSince = (iso) => {
@@ -371,12 +388,55 @@ const FREQ_DAYS = { nightly: 1, daily: 1, eod: 2, weekly: 7, monthly: 30 };
 function lastCleanDate(u) {
   const log = lastCleanedByUnit[u.id];
   const logDay = log ? dayKeyLocal(log.cleaned_at) : null;
-  const manual = u.lastCleaned || null;
-  if (logDay && manual) return logDay >= manual ? logDay : manual;
-  return logDay || manual;
+  const own = u.lastCleaned || null;
+  // The room's own stamp wins when it exists. It is written against the WORK day,
+  // so a room finished at 00:30 counts for the night the crew was working, while
+  // the log keeps the true clock time for history. Taking the later of the two
+  // instead would hand every after-midnight clean an extra day and walk an
+  // every-other-day room off its rota — which is how they end up skipped.
+  if (own) return own;
+  return logDay;
 }
 // Is a serviced unit due for cleaning today? Based on when it was last cleaned +
 // its frequency — so a room cleaned today won't be suggested again until it's due.
+// Who gets credited for a clean: an explicit name, else whoever the room is
+// assigned to, else the office. Shared by the tick and the history row so the two
+// can never name different people for the same clean.
+function resolveCleanerFor(unit, whoId) {
+  const picked = (whoId && whoId !== 'office') ? (state.staff || []).find(p => p.id === whoId) : null;
+  if (picked) return { id: picked.id, name: picked.name };
+  if (whoId === 'office') return { id: 'office', name: 'Office' };
+  const c = cleanerForUnit(unit);
+  return c ? { id: c.person.id, name: c.person.name } : { id: 'office', name: 'Office' };
+}
+// Record who a clean is credited to on the room itself, alongside the date.
+// Clearing the date clears the name with it — a room with no last-cleaned date
+// must not keep a stale cleaner's name attached to nothing.
+function stampCleanedBy(u, dayKey, whoId) {
+  if (!dayKey) { u.lastCleanedBy = null; u.lastCleanedByName = null; return; }
+  const who = resolveCleanerFor(u, whoId);
+  u.lastCleanedBy = who.id;
+  u.lastCleanedByName = who.name;
+}
+const fmtDay = (day) => {
+  try { return new Date(day + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); }
+  catch (e) { return day; }
+};
+// The last clean, for showing on a card: when, and by whom. The history log carries
+// the exact time but holds only the newest 1000 rows for the whole building, so a
+// room cleaned rarely drops out of it. The room's own stamp is the stable fallback —
+// without it the line disappears from rooms that were definitely cleaned.
+function lastCleanInfo(u) {
+  const log = lastCleanedByUnit[u.id];
+  const logDay = log ? dayKeyLocal(log.cleaned_at) : null;
+  const ownDay = u.lastCleaned || null;
+  if (logDay && (!ownDay || logDay >= ownDay)) {
+    return { when: fmtWhen(log.cleaned_at), who: log.cleaner_name || null };
+  }
+  if (ownDay) return { when: fmtDay(ownDay), who: u.lastCleanedByName || null };
+  return null;
+}
+
 // A one-off delay used to spread rooms that all fall due on the same morning.
 // Tied to the clean it was applied from, so as soon as the room is cleaned again
 // the shift lapses by itself — no stale offset to clean up, and lastCleaned
@@ -391,7 +451,7 @@ function unitDueToday(u) {
 }
 // Was this unit already cleaned today? Either ticked off in the app, or logged
 // as cleaned today from another phone (the shared history log wins across devices).
-const cleanedToday = (u) => servicedDone(u.id) || lastCleanDate(u) === todayKey();
+const cleanedToday = (u) => servicedDone(u.id) || lastCleanDate(u) === workToday();
 // Rooms that belong on today's list: due now, OR already cleaned today. Cleaned
 // rooms stay on the list with a ✓ so the daily list doesn't shrink as work gets done.
 const onTodaysList = (u) => unitDueToday(u) || cleanedToday(u);
@@ -404,6 +464,14 @@ function nextDueDate(u) {
   return dt.toLocaleDateString('en-CA');
 }
 const FREQ_LABEL = { nightly: 'Nightly', daily: 'Daily', eod: 'Every other day', weekly: 'Weekly', monthly: 'Monthly' };
+// "What needs doing tomorrow?" is "what's due today?" asked about a later date.
+// A room is due on `day` once its next-due date has arrived, and stays due after
+// that: work nobody got to doesn't stop needing doing.
+function dueOnDay(u, day) {
+  const base = lastCleanDate(u);
+  if (!base) return true;                  // never recorded → due now
+  return nextDueDate(u) <= day;
+}
 
 // Infer floor from unit number: 906->9, 1106->11, 506->5
 function floorOfUnit(unitStr) {
@@ -458,6 +526,7 @@ let state = {
   expandedFloors: {},
   servicedUnits: [],   // [{id, unit, guest, freq, startDate, assignedTo?}]
   plans: {},           // day plan: { 'YYYY-MM-DD': { 'kind:refId': {kind, refId, label, assignedTo} } }
+  planSeeded: {},      // day -> true once auto-filled, so a cleared plan stays cleared
   manualArrivals: {},  // people added by hand when they forgot to badge: { 'YYYY-MM-DD': { staffId: {time} } }
   assignConfirmed: {}, // office signed off on a room's cleaner: { unitId: 'YYYY-MM-DD' } — today's date = confirmed today
   unitCover: {},       // confirmed cover today: unitId -> personId
@@ -479,6 +548,7 @@ function finalizeState() {
   if (!Array.isArray(state.teams)) state.teams = DEFAULT_TEAMS.map(t => ({ ...t }));
   if (typeof state.floors !== 'number' || state.floors < 1) state.floors = DEFAULT_FLOORS;
   if (!state.plans || typeof state.plans !== 'object') state.plans = {};
+  if (!state.planSeeded || typeof state.planSeeded !== 'object') state.planSeeded = {};
   if (!state.manualArrivals || typeof state.manualArrivals !== 'object') state.manualArrivals = {};
   if (!state.assignConfirmed || typeof state.assignConfirmed !== 'object') state.assignConfirmed = {};
   dedupeServicedUnits();
@@ -999,6 +1069,7 @@ function setUnitsLastCleanedBulk(ids, dayKey, groupLabel, whoId) {
         if (!ids.includes(u.id)) return;
         const was = u.lastCleaned || null;
         u.lastCleaned = dayKey || null;
+        stampCleanedBy(u, dayKey, whoId);
         if (dayKey && dayKey !== was) logClean(u, dayKey, whoId);   // record it, don't just reschedule
       });
       save(); render();
@@ -1119,11 +1190,13 @@ async function saveBackdate() {
   b.saving = true; render();
   const ok = await logCleanMany(entries, day);
   if (!ok) { if (_backdate === b) { b.saving = false; b.warn = 'Nothing was saved — try again.'; render(); } return; }
-  entries.forEach(({ u }) => {
+  entries.forEach(({ u, who }) => {
     const was = u.lastCleaned || null;
     // Never drag a schedule backwards: a room cleaned again since that night is
-    // still due from the later clean.
-    if (!was || day > was) u.lastCleaned = day;
+    // still due from the later clean. The name only moves with the date — crediting
+    // that night's cleaner for a later clean they didn't do would be worse than
+    // leaving the newer name in place.
+    if (!was || day > was) { u.lastCleaned = day; stampCleanedBy(u, day, who); }
   });
   save();
   _backdate = null;
@@ -1234,6 +1307,7 @@ function setUnitLastCleaned(id, dayKey, whoId) {
   if (!u) return;
   const was = u.lastCleaned || null;
   u.lastCleaned = dayKey || null;
+  stampCleanedBy(u, dayKey, whoId);
   // Marking a room cleaned is a cleaning — it belongs in the history, not just in
   // the schedule. Without this, an office that uses these buttons instead of
   // ticking rooms off ends up with an empty Cleaning History.
@@ -1607,25 +1681,52 @@ function editServicedUnit(id, newUnit, newGuest, lastCleaned, note) {
 function startEditUnit(id) { state.editingUnit = id; render(); }
 function cancelEditUnit() { state.editingUnit = null; render(); }
 function toggleServicedDone(id) {
-  const k = 'su:' + id + '::' + todayKey();
+  // Keyed by the WORK day, not the calendar day: a tick at 00:30 belongs to the
+  // round the crew is still on, not to the morning that has just started.
+  const k = 'su:' + id + '::' + workToday();
   const unit = state.servicedUnits.find(u => u.id === id);
   if (!state.logRefs) state.logRefs = {};
+  if (!state.lastCleanUndo) state.lastCleanUndo = {};
   if (state.completions[k]) {
     // Un-mark: clear the checkmark and remove the history entry we created for it.
     delete state.completions[k];
     const ref = state.logRefs[k];
     if (ref) { unlogClean(ref); delete state.logRefs[k]; }
+    // Put the room's own record back to what it was before this tick — otherwise
+    // an un-tick leaves today's date behind as the last clean.
+    const undo = state.lastCleanUndo[k];
+    if (unit && undo) {
+      unit.lastCleaned = undo.date || null;
+      unit.lastCleanedBy = undo.by || null;
+      unit.lastCleanedByName = undo.byName || null;
+      delete state.lastCleanUndo[k];
+    }
     save(); render();
   } else {
     // Mark clean: check it off now, then log who + when to history.
     state.completions[k] = true;
+    if (unit) {
+      // Stamp the room itself, not just the history log. The log holds only the
+      // newest 1000 rows for the whole building, so a room cleaned rarely drops out
+      // of it and the app forgets it was ever cleaned — which is what left rooms
+      // sitting permanently "due" and made the last-cleaned line come and go.
+      state.lastCleanUndo[k] = {
+        date: unit.lastCleaned || null,
+        by: unit.lastCleanedBy || null,
+        byName: unit.lastCleanedByName || null,
+      };
+      const who = resolveCleanerFor(unit, null);
+      unit.lastCleaned = workToday();
+      unit.lastCleanedBy = who.id;
+      unit.lastCleanedByName = who.name;
+    }
     save(); render();
     if (unit) logClean(unit).then((logId) => {
       if (logId) { if (!state.logRefs) state.logRefs = {}; state.logRefs[k] = logId; save(); }
     });
   }
 }
-const servicedDone = (id) => !!state.completions['su:' + id + '::' + todayKey()];
+const servicedDone = (id) => !!state.completions['su:' + id + '::' + workToday()];
 
 // Ticking off a communal area is a cleaning like any other: it goes to History with
 // who did it and when, and un-ticking takes that entry back out again.
@@ -2127,8 +2228,56 @@ function viewBuildings() {
 // PLAN A DAY — build tomorrow's job list, then fill it with whoever badges in.
 // ============================================================
 let planDay = null;   // selected day in the Plan view (null => tomorrow)
-const tomorrowKey = () => { const d = new Date(); d.setDate(d.getDate() + 1); return d.toLocaleDateString('en-CA'); };
+// Anchored to the work day, not the clock day: at 00:20 the crew is still on the
+// round that started last night, so "tomorrow" must not skip a day under them.
+const tomorrowKey = () => shiftDay(workToday(), 1);
 function curPlanDay() { return planDay || tomorrowKey(); }
+// Tomorrow's list, computed from the schedule instead of typed in by hand. Rooms
+// come from their own cycle (daily / every other day / weekly), interior areas
+// from whether their period is still outstanding. Overdue work is carried in and
+// flagged rather than quietly dropped.
+function suggestedJobsFor(day) {
+  const out = [];
+  (state.servicedUnits || []).forEach(u => {
+    if (!dueOnDay(u, day)) return;
+    const due = lastCleanDate(u) ? nextDueDate(u) : null;
+    out.push({
+      kind: 'unit', id: u.id, label: 'Unit ' + u.unit,
+      group: UNIT_TYPES[unitType(u)].label,
+      why: !due ? 'No record yet' : (due < day ? 'Overdue since ' + due : (FREQ_LABEL[u.freq] || 'Daily')),
+      late: !!due && due < day,
+    });
+  });
+  areasInterior().forEach(a => {
+    if (state.completions[a.id + '::' + freqKeyOn(a.freq, day)]) return;
+    out.push({ kind: 'area', id: a.id, label: a.label, group: 'Interior areas',
+               why: FREQ_LABEL[a.freq] || (FREQ[a.freq] || {}).label || '', late: false });
+  });
+  return out;
+}
+// Fill a day's plan from the schedule. Additive: anything already on the plan
+// keeps its assignee, so seeding can never wipe a hand-made list.
+function applySuggestions(day, jobs) {
+  const plan = getPlan(day);
+  let added = 0;
+  jobs.forEach(s => {
+    const k = planKey(s.kind, s.id);
+    if (plan[k]) return;
+    plan[k] = { kind: s.kind, refId: s.id, label: s.label, assignedTo: null };
+    added++;
+  });
+  return added;
+}
+// Seed a day once, the first time it's looked at. Recorded per day so that
+// clearing a plan on purpose stays cleared instead of springing back on re-render.
+function seedPlanOnce(day) {
+  if (!state.planSeeded) state.planSeeded = {};
+  if (state.planSeeded[day]) return 0;
+  state.planSeeded[day] = true;
+  const added = applySuggestions(day, suggestedJobsFor(day));
+  save();
+  return added;
+}
 function getPlan(day) { if (!state.plans) state.plans = {}; if (!state.plans[day]) state.plans[day] = {}; return state.plans[day]; }
 function planJobs(day) { return Object.entries(getPlan(day)).map(([key, v]) => ({ key, ...v })); }
 const planKey = (kind, id) => kind + ':' + id;
@@ -2164,7 +2313,12 @@ function viewPlan() {
   const isTomorrow = day === tomorrowKey();
   const isToday = day === todayKey();
 
-  wrap.appendChild(el(`<div class="note">Plan the jobs for a day, then assign whoever badges in — auto-spread or pick per job.</div>`));
+  // Fill the day from the schedule before drawing it, so the list is already
+  // there on arrival instead of being an empty screen the office has to type in.
+  const seeded = seedPlanOnce(day);
+
+  wrap.appendChild(el(`<div class="note">Planned from the schedule — daily rooms, every-other-day rooms that fall due, and anything overdue. Add or remove below, then assign whoever badges in.</div>`));
+  if (seeded) wrap.appendChild(el(`<div class="section-label" style="color:#15803d">Filled in ${seeded} job${seeded === 1 ? '' : 's'} due on ${esc(day)}.</div>`));
 
   // Day picker
   const dayRow = el('<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"></div>');
@@ -2180,11 +2334,29 @@ function viewPlan() {
 
   if (hikSyncMsg) wrap.appendChild(el(`<div class="section-label" style="color:${hikSyncMsg.err ? '#dc2626' : '#15803d'}">${esc(hikSyncMsg.text)}</div>`));
 
+  // Due from the schedule but not on the plan — either removed by hand, or fallen
+  // due since the day was seeded. Offered back rather than silently re-added.
+  const plan0 = getPlan(day);
+  const missing = suggestedJobsFor(day).filter(s => !plan0[planKey(s.kind, s.id)]);
+  if (missing.length) {
+    wrap.appendChild(el(`<div class="section-label" style="margin-top:6px;color:#b45309">Due but not planned (${missing.length})</div>`));
+    const addAll = el(`<button class="add-btn" style="background:#b45309;margin-bottom:8px">＋ Add all ${missing.length} due job${missing.length === 1 ? '' : 's'}</button>`);
+    addAll.onclick = () => { applySuggestions(day, missing); save(); render(); };
+    wrap.appendChild(addAll);
+    const box = el('<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px"></div>');
+    missing.forEach(s => {
+      const b = el(`<button class="freqmini" style="flex:0 0 auto;padding:8px 12px${s.late ? ';border-color:#b45309;color:#b45309' : ''}">+ ${esc(s.label)} · ${esc(s.why)}</button>`);
+      b.onclick = () => togglePlanJob(day, s.kind, s.id, s.label);
+      box.appendChild(b);
+    });
+    wrap.appendChild(box);
+  }
+
   // Planned jobs + assignment
   const jobs = planJobs(day);
   wrap.appendChild(el(`<div class="section-label" style="margin-top:6px">Planned jobs (${jobs.length})</div>`));
   if (!jobs.length) {
-    wrap.appendChild(el(`<div class="empty" style="padding:14px 0">Nothing planned yet. Tap items below to add them.</div>`));
+    wrap.appendChild(el(`<div class="empty" style="padding:14px 0">Nothing due on this day, and nothing added by hand.</div>`));
   } else {
     const auto = el(`<button class="add-btn" style="background:#15803d;margin-bottom:6px">⚡ Auto-assign to who's clocked in</button>`);
     auto.onclick = () => autoAssignPlan(day);
@@ -2378,9 +2550,63 @@ function viewRooms() {
   return wrap;
 }
 
+// What still has to be cleaned on tonight's round. The roll call is a morning
+// tool; the crew works into the night, so "what's left" needs its own screen that
+// uses the work day (rolling over at 3am) rather than the calendar day.
+function viewTonight() {
+  const day = workToday();
+  const wrap = el('<div class="body"></div>');
+  const unitById = {};
+  (state.servicedUnits || []).forEach(u => { unitById[u.id] = u; });
+  const areaById = {};
+  (state.areas || []).forEach(a => { areaById[a.id] = a; });
+
+  // suggestedJobsFor is the schedule's own answer to "what's due on this day" —
+  // reused here so tonight's list and the day plan can never disagree.
+  const jobs = suggestedJobsFor(day).filter(j =>
+    j.kind === 'unit' ? (unitById[j.id] && !cleanedToday(unitById[j.id])) : !!areaById[j.id]);
+
+  const dayLabel = new Date(day + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+  wrap.appendChild(el(`<div class="note">Everything still outstanding for <b>${esc(dayLabel)}</b>. Rooms already cleaned today have dropped off. Tick them here as the round goes.</div>`));
+
+  if (!jobs.length) {
+    wrap.appendChild(el(`<div class="empty" style="text-align:center;padding:28px 0;color:#15803d;font-weight:700">✓ Nothing outstanding — the round is done.</div>`));
+    return wrap;
+  }
+
+  const late = jobs.filter(j => j.late).length;
+  wrap.appendChild(el(`<div class="section-label">${jobs.length} to clean tonight${late ? ` · <span style="color:#b45309">${late} overdue</span>` : ''}</div>`));
+
+  const groups = {};
+  jobs.forEach(j => { (groups[j.group] = groups[j.group] || []).push(j); });
+  Object.keys(groups).forEach(g => {
+    wrap.appendChild(el(`<div class="section-label" style="margin-top:14px;color:#5f7189">${esc(g)} (${groups[g].length})</div>`));
+    const list = el(`<div class="area-list"></div>`);
+    groups[g].forEach(j => {
+      const item = el(`<div class="area-item"></div>`);
+      const row = el(`<div class="area-row"></div>`);
+      const tick = el(`<button class="area-tick" title="Mark clean">✓</button>`);
+      tick.onclick = () => { if (j.kind === 'unit') toggleServicedDone(j.id); else toggleAreaDone(j.id); };
+      row.appendChild(tick);
+      const who = j.kind === 'unit' ? cleanerForUnit(unitById[j.id]) : null;
+      const whoName = who ? who.person.name.split(' ')[0] : (areaById[j.id] && areaById[j.id].assignedTo
+        ? ((state.staff || []).find(p => p.id === areaById[j.id].assignedTo) || {}).name : null);
+      row.appendChild(el(`<div class="area-name su-unit">${esc(j.label)}`
+        + `<span class="area-freq" style="${j.late ? 'color:#b45309' : ''}"> · ${esc(j.why)}</span>`
+        + (whoName ? `<span class="area-freq"> · ${esc(String(whoName).split(' ')[0])}</span>` : '')
+        + `</div>`));
+      item.appendChild(row);
+      list.appendChild(item);
+    });
+    wrap.appendChild(list);
+  });
+  return wrap;
+}
+
 function viewMore() {
   const wrap = el('<div class="body"></div>');
   const items = [
+    { id: 'tonight', label: 'Tonight', ico: '🌙', sub: 'What still needs cleaning on tonight’s round' },
     { id: 'rooms', label: 'All Rooms', ico: '▤', sub: 'Every room we clean, at a glance' },
     { id: 'plan', label: 'Plan a Day', ico: '🗓', sub: 'Set tomorrow’s jobs & assign who’s in' },
     { id: 'building', label: 'Floors & Common Areas', ico: '▦', sub: 'Rooftop → floors → ground checklist' },
@@ -2465,11 +2691,13 @@ function servicedCard(u, isDue) {
   if (u.note) info.appendChild(el(`<div class="su-guest" style="color:#7c3aed">📝 ${esc(u.note)}</div>`));
   if (u.usualTo) { const usual = (state.staff||[]).find(x=>x.id===u.usualTo); if (usual) info.appendChild(el(`<div class="su-assign" style="color:#7c3aed">★ Usual: ${esc(usual.name.split(' ')[0])}</div>`)); }
 
-  // Last cleaned (from the shared history log)
-  const lastClean = lastCleanedByUnit[u.id];
-  if (lastClean) {
-    info.appendChild(el(`<div class="su-assign" style="color:#5f7189">🧹 Last: ${esc(fmtWhen(lastClean.cleaned_at))} · ${esc(lastClean.cleaner_name || '—')}</div>`));
-  }
+  // Last cleaned — always shown. It used to render only when the room happened to
+  // still be inside the newest-1000 history rows, so the line appeared and vanished
+  // for no reason the office could see. "No record yet" is information too.
+  const last = lastCleanInfo(u);
+  info.appendChild(last
+    ? el(`<div class="su-assign" style="color:#5f7189">🧹 Last: ${esc(last.when)}${last.who ? ' · ' + esc(last.who) : ''}</div>`)
+    : el(`<div class="su-assign" style="color:#b45309">🧹 Last: no record yet</div>`));
 
   // Assigned cleaner line
   if (c) {
@@ -3674,7 +3902,7 @@ function render() {
 
   const header = el(`<div class="header"></div>`);
   header.appendChild(el(`<div class="h-eyebrow">66-UNIT BUILDING · 11 FLOORS</div>`));
-  const titles = { offices:'Office Cleaning', buildings:'Building Cleaning', airbnb:'Airbnb Rooms', more:'More', rollcall:'Morning Roll Call', building:'Floors & Common Areas', exterior:'Exterior', history:'Cleaning History', team:'Team', settings:'Settings', plan:'Plan a Day', rooms:'All Rooms' };
+  const titles = { offices:'Office Cleaning', buildings:'Building Cleaning', airbnb:'Airbnb Rooms', more:'More', rollcall:'Morning Roll Call', building:'Floors & Common Areas', exterior:'Exterior', history:'Cleaning History', team:'Team', settings:'Settings', plan:'Plan a Day', rooms:'All Rooms', tonight:'Tonight’s Round' };
   // A tab with no view renders an empty screen, so never trust it blindly:
   // fall back to Roll Call rather than showing a header over nothing.
   if (!titles[state.tab]) state.tab = 'rollcall';
@@ -3709,6 +3937,7 @@ function render() {
   else if (state.tab==='airbnb') app.appendChild(viewAirbnb());
   else if (state.tab==='more') app.appendChild(viewMore());
   else if (state.tab==='plan') app.appendChild(viewPlan());
+  else if (state.tab==='tonight') app.appendChild(viewTonight());
   else if (state.tab==='rooms') app.appendChild(viewRooms());
   else if (state.tab==='rollcall') app.appendChild(viewRollCall());
   else if (state.tab==='building') app.appendChild(viewBuilding());
