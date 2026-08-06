@@ -1253,6 +1253,45 @@ function confirmAssignment(id) {
 }
 // Put every room back the way it was before the last auto-assign, including who
 // had already been signed off.
+// Take the whole morning back off its cleaners in one go. Undo already covers the
+// last auto-assign, but only while it is still the last thing that happened; this
+// works any time — the usual reason being that the crew who turned up is not the
+// crew the board was built for, so it is easier to start again than to move a
+// dozen rooms one at a time. A permanent cleaner is a standing decision made in
+// Settings rather than a hand-out for the morning, so those rooms keep their person.
+function unassignAllRooms() {
+  const rooms = (state.servicedUnits || []).filter((u) =>
+    onRollCall(u) && onTodaysList(u) && u.assignedTo && !u.usualTo);
+  if (!rooms.length) return;
+  const signed = rooms.filter((u) => assignConfirmedToday(u)).length;
+  const kept = (state.servicedUnits || []).filter((u) =>
+    onRollCall(u) && onTodaysList(u) && u.assignedTo && u.usualTo).length;
+  showConfirm(
+    'Put all ' + rooms.length + ' rooms back in the pool?',
+    'They all come off their cleaner' + (signed ? ', including ' + signed + ' already checked' : '')
+      + ', ready to hand out again.'
+      + (kept ? ' ' + kept + ' room' + (kept === 1 ? ' with a permanent cleaner keeps' : 's with a permanent cleaner keep') + ' that person.' : '')
+      + ' You can undo it afterwards.',
+    () => runUnassignAll(rooms),
+    'Put back in pool',
+    'safe'
+  );
+}
+
+function runUnassignAll(rooms) {
+  // Same snapshot the auto-assign undo reads, so one Undo covers whichever bulk
+  // change to the board happened last.
+  state.lastAutoAssign = {
+    at: new Date().toISOString(),
+    kind: 'unassign',
+    who: rooms.reduce((m, u) => { m[u.id] = u.assignedTo || null; return m; }, {}),
+    confirmed: rooms.reduce((m, u) => { if (state.assignConfirmed[u.id]) m[u.id] = state.assignConfirmed[u.id]; return m; }, {}),
+  };
+  rooms.forEach((u) => { u.assignedTo = null; delete state.assignConfirmed[u.id]; });
+  hikSyncMsg = { text: rooms.length + ' room' + (rooms.length === 1 ? ' is' : 's are') + ' back in the pool.' };
+  save(); render();
+}
+
 function undoAutoAssign() {
   const snap = state.lastAutoAssign;
   if (!snap) return;
@@ -1267,6 +1306,8 @@ function undoAutoAssign() {
   hikSyncMsg = { text: 'Put the assignments back as they were.' };
   save(); render();
 }
+const lastBoardChangeLabel = () => (state.lastAutoAssign && state.lastAutoAssign.kind === 'unassign')
+  ? '↩ Undo putting them back' : '↩ Undo auto-assign';
 // Hand the rooms out on their own once the crew starts badging in, so the morning
 // works without anyone remembering to press anything. Deliberately conservative:
 // it runs once a day, only when NOTHING has been handed out yet, so it can never
@@ -3096,9 +3137,16 @@ function viewRollCall() {
       autoBtn.onclick = () => autoAssignRooms();
       box.appendChild(autoBtn);
     }
+    // Clearing the board only makes sense when something is actually on it.
+    const heldNow = openR.filter((u) => u.assignedTo && !u.usualTo);
+    if (heldNow.length) {
+      const clearBtn = el(`<button class="freqmini" style="width:100%;padding:9px;margin-bottom:4px;border-color:#b45309;color:#b45309">✕ Put all ${heldNow.length} room${heldNow.length === 1 ? '' : 's'} back in the pool</button>`);
+      clearBtn.onclick = () => unassignAllRooms();
+      box.appendChild(clearBtn);
+    }
     // Reversible while today's shuffle is still the last thing that happened.
     if (state.lastAutoAssign && String(state.lastAutoAssign.at).slice(0, 10) === todayKey()) {
-      const undoBtn = el('<button class="freqmini" style="width:100%;padding:9px;margin-bottom:4px">↩ Undo auto-assign</button>');
+      const undoBtn = el(`<button class="freqmini" style="width:100%;padding:9px;margin-bottom:4px">${lastBoardChangeLabel()}</button>`);
       undoBtn.onclick = () => undoAutoAssign();
       box.appendChild(undoBtn);
     }
@@ -3125,6 +3173,33 @@ function viewRollCall() {
       box.appendChild(el(`<div style="font-size:12px;color:#15803d;font-weight:700;margin-top:12px">✓ All ${okCount} assignment${okCount === 1 ? '' : 's'} confirmed</div>`));
     }
     body.appendChild(box);
+  }
+
+  // NOT DUE TODAY — every-other-day and weekly rooms vanish from the roll call on
+  // their off day, which reads as "a room has gone missing" rather than "it isn't
+  // due yet". Listing them greyed out, with the day they come round, keeps the whole
+  // estate accounted for. Outside the block above on purpose, twice over: they must
+  // never join the count, the hand-out or the close-out, and a morning with nothing
+  // due is exactly when "here is what is coming" is worth reading.
+  {
+    const notDue = (state.servicedUnits || []).filter((u) => onRollCall(u) && !onTodaysList(u) && !u.paused).slice()
+      .sort((a, b) => String(nextDueDate(a) || '~').localeCompare(String(nextDueDate(b) || '~'))
+        || String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }));
+    if (notDue.length) {
+      const ndBox = el('<div style="margin-bottom:18px"></div>');
+      ndBox.appendChild(el(`<div style="font-size:11px;color:#5f7189;font-weight:700">Not due today (${notDue.length})</div>`));
+      const ndChips = el('<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px"></div>');
+      notDue.forEach((u) => {
+        const nd = nextDueDate(u);
+        const when = !nd ? 'no date yet'
+          : nd === shiftDay(todayKey(), 1) ? 'tomorrow'
+          : new Date(nd + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short' });
+        ndChips.appendChild(el(`<div class="freqmini" style="flex:0 0 auto;padding:5px 9px;opacity:0.6;font-size:11px" `
+          + `title="${esc((FREQ_LABEL[u.freq] || 'Daily') + (nd ? ' · next due ' + nd : ''))}">${esc(u.unit)} · ${esc(when)}</div>`));
+      });
+      ndBox.appendChild(ndChips);
+      body.appendChild(ndBox);
+    }
   }
 
   // COMMUNAL AREAS — the corridors, stairs and lobby still have to be given to

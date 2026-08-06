@@ -791,9 +791,78 @@ function serve() {
   check('auto-assign never hands out communal areas', autoAreas.length === 0, 'assigned: ' + JSON.stringify(autoAreas.map((a) => a.label)));
   await ap.close(); await auto.close();
 
-  console.log('\n\x1b[1mCLOSE OUT THE MORNING — one button for the whole roll call\x1b[0m');
+  console.log('\n\x1b[1mPUT THE BOARD BACK — unassign the whole morning at once\x1b[0m');
   await page.locator('.nav button', { hasText: 'Roll Call' }).click();
   await page.waitForTimeout(400);
+  await autoAssign();                                   // give the board something to clear
+  const heldBefore = await page.evaluate(() => (state.servicedUnits || [])
+    .filter((u) => onRollCall(u) && onTodaysList(u) && u.assignedTo && !u.usualTo).map((u) => u.unit));
+  check('rooms are handed out to begin with', heldBefore.length > 0, 'nothing was assigned');
+  const clearBtn = page.locator('button', { hasText: 'back in the pool' }).first();
+  check('the roll call offers a clear-the-board button', await clearBtn.count() > 0, 'no unassign-all button');
+  contains('it says how many it will clear', await clearBtn.textContent(), String(heldBefore.length));
+  await clearBtn.click();
+  await page.locator('#confirmModal .modal-btns button').last().click();
+  await page.waitForTimeout(600);
+  const heldAfter = await page.evaluate(() => (state.servicedUnits || [])
+    .filter((u) => onRollCall(u) && onTodaysList(u) && u.assignedTo && !u.usualTo).map((u) => u.unit));
+  eq('every hand-out is back in the pool', heldAfter.length, 0);
+  const stillSigned = await page.evaluate(() => Object.keys(state.assignConfirmed || {}).length);
+  eq('nothing is left signed off for a room nobody holds', stillSigned, 0);
+  // A permanent cleaner is a standing decision, not a morning hand-out.
+  const usualKept = await page.evaluate(() => (state.servicedUnits || [])
+    .filter((u) => u.usualTo).every((u) => u.assignedTo === u.usualTo));
+  check('rooms with a permanent cleaner keep that person', usualKept, 'a permanent assignment was cleared');
+  // Undo has to speak about what actually happened, not always "auto-assign".
+  const undoLabel = await page.locator('button', { hasText: 'Undo' }).first().textContent();
+  contains('undo names the change it will reverse', undoLabel, 'Undo putting them back');
+  await page.locator('button', { hasText: 'Undo' }).first().click();
+  await page.waitForTimeout(600);
+  const heldRestored = await page.evaluate(() => (state.servicedUnits || [])
+    .filter((u) => onRollCall(u) && onTodaysList(u) && u.assignedTo && !u.usualTo).map((u) => u.unit));
+  eq('undo puts the whole board back', heldRestored.sort().join(','), heldBefore.sort().join(','));
+
+  console.log('\n\x1b[1mNOT DUE TODAY — off-day rooms stay visible, and stay out of the way\x1b[0m');
+  // Earlier sections have flipped frequencies about, so put one room on a genuine
+  // off day: every-other-day, cleaned yesterday, so it is next due tomorrow.
+  const ndDiag = await page.evaluate(() => {
+    // Has to be a room the roll call actually covers — an earlier section switches
+    // Airbnb off, and a room that is off the roll call is a different case entirely.
+    const u = (state.servicedUnits || []).find((x) => onRollCall(x)) || (state.servicedUnits || [])[0];
+    // daysSince() measures from todayKey(), so the off-day date has to be built
+    // from todayKey() too — workToday() rolls over at 3am and would be a day out.
+    u.freq = 'eod';
+    u.lastCleaned = shiftDay(todayKey(), -1);
+    u.cycleShiftFrom = null; u.cycleShift = 0;      // no stale spread offset in the way
+    delete state.completions['su:' + u.id + '::' + workToday()];
+    delete state.logRefs['su:' + u.id + '::' + workToday()];
+    save(); render();
+    return { unit: u.unit, last: lastCleanDate(u), cycleLen: cycleLen(u),
+      due: unitDueToday(u), cleaned: cleanedToday(u), onList: onTodaysList(u), onRoll: onRollCall(u) };
+  });
+  await page.waitForTimeout(400);
+  const notDue = await page.evaluate(() => (state.servicedUnits || [])
+    .filter((u) => onRollCall(u) && !onTodaysList(u) && !u.paused).map((u) => u.unit));
+  check('there are off-day rooms to show', notDue.length > 0, 'set-up room: ' + JSON.stringify(ndDiag));
+  const rollText = await page.locator('.body').first().innerText();
+  contains('the roll call lists them rather than dropping them', rollText, 'Not due today (' + notDue.length + ')');
+  contains('and says when each one comes round', rollText, notDue[0] + ' · ');
+  // The whole point of keeping them separate: they must not be swept into the count,
+  // the hand-out, or the close-out.
+  const bleed = await page.evaluate(() => {
+    const o = rollCallOutstanding();
+    return o.rooms.filter((u) => !onTodaysList(u)).map((u) => u.unit);
+  });
+  eq('an off-day room is never part of the close-out', bleed.length, 0);
+  // Put it back on the board — the close-out sections below need real work to do.
+  await page.evaluate((u) => {
+    const room = (state.servicedUnits || []).find((x) => x.unit === u);
+    if (room) { room.freq = 'daily'; room.lastCleaned = null; }
+    save(); render();
+  }, ndDiag.unit);
+  await page.waitForTimeout(300);
+
+  console.log('\n\x1b[1mCLOSE OUT THE MORNING — one button for the whole roll call\x1b[0m');
   const allBtn = page.locator('button', { hasText: 'Mark all' }).first();
   check('the roll call offers a single mark-all button', await allBtn.count() > 0, 'no mark-all button on Roll Call');
   const allLabel = await allBtn.textContent();
