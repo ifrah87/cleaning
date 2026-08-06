@@ -131,6 +131,7 @@ function serve() {
   const writes = [];        // every app_state upsert the app attempted
   const unexpected = [];    // any Supabase path we didn't plan for
   const logged = [];        // every cleaning_log row the app tried to write
+  let logPosts = 0;         // how many separate inserts those rows arrived in
 
   await ctx.route(`**://${SUPA_HOST}/**`, async (route) => {
     const req = route.request();
@@ -169,6 +170,7 @@ function serve() {
         // A backdated night is written as one insert of many rows.
         const body = JSON.parse(req.postData() || '{}');
         const rows = Array.isArray(body) ? body : [body];
+        logPosts += 1;
         rows.forEach((r) => logged.push(r));
         return json(rows.map((_, i) => ({ id: 'log' + (logged.length - rows.length + i + 1) })), 201);
       }
@@ -788,6 +790,104 @@ function serve() {
   const autoAreas = autoState ? (autoState.areas || []).filter((a) => a.assignedTo) : [];
   check('auto-assign never hands out communal areas', autoAreas.length === 0, 'assigned: ' + JSON.stringify(autoAreas.map((a) => a.label)));
   await ap.close(); await auto.close();
+
+  console.log('\n\x1b[1mCLOSE OUT THE MORNING — one button for the whole roll call\x1b[0m');
+  await page.locator('.nav button', { hasText: 'Roll Call' }).click();
+  await page.waitForTimeout(400);
+  const allBtn = page.locator('button', { hasText: 'Mark all' }).first();
+  check('the roll call offers a single mark-all button', await allBtn.count() > 0, 'no mark-all button on Roll Call');
+  const allLabel = await allBtn.textContent();
+  const allTotal = Number((allLabel.match(/Mark all (\d+)/) || [])[1] || 0);
+  check('it says how many it will close out', allTotal > 0, 'label: ' + JSON.stringify(allLabel));
+  // What is still open right now, straight from the app, so the assertion does not
+  // depend on how earlier sections left the state.
+  const before = await page.evaluate(() => {
+    const o = rollCallOutstanding();
+    return { rooms: o.rooms.map((u) => u.unit), areas: o.areas.map((a) => a.label) };
+  });
+  eq('the count matches what is actually outstanding', allTotal, before.rooms.length + before.areas.length);
+  check('it covers the communal areas too, not just rooms', before.areas.length > 0, 'no areas were outstanding to prove this');
+
+  const loggedBefore = logged.length;
+  const postsBefore = logPosts;
+  await allBtn.click();
+  await page.locator('#confirmModal .modal-btns button').last().click();   // it asks first
+  await page.waitForTimeout(900);
+
+  const after = await page.evaluate(() => {
+    const o = rollCallOutstanding();
+    return { rooms: o.rooms.map((u) => u.unit), areas: o.areas.map((a) => a.label) };
+  });
+  eq('every room on the roll call is now cleaned', after.rooms.length, 0);
+  eq('every communal area is now done', after.areas.length, 0);
+  eq('the whole lot went in one write, not one per room', logPosts - postsBefore, 1);
+  eq('one history row per job', logged.length - loggedBefore, before.rooms.length + before.areas.length);
+  const wrote = logged.slice(loggedBefore);
+  check('each row names the job it was for', wrote.every((r) => r.unit_label), 'rows: ' + JSON.stringify(wrote.map((r) => r.unit_label)));
+  check('each row is credited to somebody', wrote.every((r) => r.cleaner_id && r.cleaner_name), 'rows: ' + JSON.stringify(wrote.map((r) => r.cleaner_name)));
+  check('the areas are in there under their own names', before.areas.every((l) => wrote.some((r) => r.unit_label === l)),
+    'wrote: ' + JSON.stringify(wrote.map((r) => r.unit_label)));
+  // Airbnb is a separate job on its own tab and is deliberately off the roll call —
+  // a bulk close-out of the morning must never tick it off as well.
+  const airbnbSwept = await page.evaluate(() => (state.servicedUnits || [])
+    .filter((u) => !onRollCall(u) && servicedDone(u.id)).map((u) => u.unit));
+  eq('nothing off the roll call was swept in with it', airbnbSwept.length, 0);
+
+  // The point of keeping a history id per tick: the bulk close-out must not weld
+  // the morning shut. Any single job can still be put back on its own.
+  const oneRoom = before.rooms[0];
+  const undone = await page.evaluate((unit) => {
+    const u = (state.servicedUnits || []).find((x) => x.unit === unit);
+    if (!u) return null;
+    const hadRef = !!state.logRefs['su:' + u.id + '::' + workToday()];
+    toggleServicedDone(u.id);
+    return { hadRef, nowDone: servicedDone(u.id) };
+  }, oneRoom);
+  check('a bulk-ticked room keeps its own history reference', undone && undone.hadRef, 'no logRef stored for ' + oneRoom);
+  check('and can still be un-ticked on its own afterwards', undone && undone.nowDone === false, 'could not un-tick ' + oneRoom);
+
+  console.log('\n\x1b[1mCLOSE OUT THE ROUND — one button for the whole night\x1b[0m');
+  // By this point the earlier sections have ticked nearly everything off, so put the
+  // board back to a full night's work and match the live config: Airbnb is switched
+  // off the roll call, being a separate job done by its own pair on its own tab.
+  // Without both, "roll call skips Airbnb" and "tonight picks it up" prove nothing.
+  await page.evaluate(() => {
+    if (!Array.isArray(state.rollCallTypes) || state.rollCallTypes.includes('airbnb')) toggleRollCallType('airbnb');
+    (state.servicedUnits || []).forEach((u) => {
+      delete state.completions['su:' + u.id + '::' + workToday()];
+      u.lastCleaned = null;                 // never recorded → due, whatever its frequency
+    });
+    save(); render();
+  });
+  await page.locator('.nav button', { hasText: 'More' }).click();
+  await page.locator('.su-card', { hasText: 'Tonight' }).first().click();
+  await page.waitForTimeout(400);
+  const offRollCall = await page.evaluate(() => tonightOutstanding().rooms
+    .filter((u) => !onRollCall(u)).map((u) => u.unit));
+  check('tonight still lists the jobs roll call leaves out', offRollCall.length > 0,
+    'nothing off-roll-call was outstanding, so this proves nothing');
+  const nightBtn = page.locator('button', { hasText: 'Mark all' }).first();
+  check("tonight's round offers the same one-button close-out", await nightBtn.count() > 0, 'no mark-all button on Tonight');
+  const nightLabel = await nightBtn.textContent();
+  const nightTotal = Number((nightLabel.match(/Mark all (\d+)/) || [])[1] || 0);
+  const nightBefore = await page.evaluate(() => {
+    const o = tonightOutstanding();
+    return { rooms: o.rooms.map((u) => u.unit), areas: o.areas.map((a) => a.label), cards: o.jobs.length };
+  });
+  eq('the button counts the same jobs the list shows', nightTotal, nightBefore.cards);
+
+  const nightLogged = logged.length, nightPosts = logPosts;
+  await nightBtn.click();
+  await page.locator('#confirmModal .modal-btns button').last().click();
+  await page.waitForTimeout(900);
+
+  const nightAfter = await page.evaluate(() => tonightOutstanding().jobs.length);
+  eq('the whole round is closed out', nightAfter, 0);
+  eq('it too went in a single write', logPosts - nightPosts, 1);
+  eq('one history row per job on the round', logged.length - nightLogged, nightBefore.rooms.length + nightBefore.areas.length);
+  const nightRows = logged.slice(nightLogged).map((r) => r.unit_label);
+  check('the off-roll-call jobs are in there', offRollCall.every((u) => nightRows.includes(u)),
+    'expected ' + JSON.stringify(offRollCall) + ' in ' + JSON.stringify(nightRows));
 
   // ----------------------------------------------------------------- SAFETY
   console.log('\n\x1b[1mSAFETY + HEALTH\x1b[0m');

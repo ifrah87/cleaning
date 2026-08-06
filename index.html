@@ -473,6 +473,39 @@ function dueOnDay(u, day) {
   return nextDueDate(u) <= day;
 }
 
+// The shape of the days ahead: how much work each upcoming day actually carries.
+// dueOnDay can't answer this on its own — it treats anything not yet cleaned as
+// still due, so every future day inherits today's backlog and the counts only ever
+// climb. Here each day's rooms are marked clean as they come round before moving to
+// the next, which is what will really happen, so the numbers show which days are
+// heavy and which are light instead of one ever-growing pile.
+function scheduleAhead(nDays) {
+  const start = workToday();
+  const proj = {};
+  const units = (state.servicedUnits || []).filter((u) => !u.paused);
+  units.forEach((u) => { proj[u.id] = lastCleanDate(u) || null; });
+  const out = [];
+  for (let i = 0; i < nDays; i += 1) {
+    const day = shiftDay(start, i);
+    const due = [];
+    units.forEach((u) => {
+      const base = proj[u.id];
+      let isDue;
+      if (!base) isDue = true;                       // never recorded → due straight away
+      else {
+        const dt = new Date(base + 'T00:00:00');
+        dt.setDate(dt.getDate() + cycleLen(u));
+        isDue = dt.toLocaleDateString('en-CA') <= day;
+      }
+      if (isDue) { due.push(u); proj[u.id] = day; }  // cleaned today → next one is a full cycle away
+    });
+    const byType = {};
+    due.forEach((u) => { const t = unitType(u); byType[t] = (byType[t] || 0) + 1; });
+    out.push({ day, due, byType, count: due.length });
+  }
+  return out;
+}
+
 // Infer floor from unit number: 906->9, 1106->11, 506->5
 function floorOfUnit(unitStr) {
   const n = parseInt(String(unitStr).replace(/\D/g, ''), 10);
@@ -796,13 +829,16 @@ async function logCleanMany(entries, dayKey) {
     };
   });
   try {
-    const { error } = await db.from('cleaning_log').insert(rows);
+    // Ask for the ids back so a caller that ticks many things at once can still
+    // hold a history reference per row — without them, un-ticking one of them
+    // would clear the checkmark and strand its entry in History.
+    const { data, error } = await db.from('cleaning_log').insert(rows).select('id');
     if (error) throw error;
     refreshHistory();
-    return true;
+    return (data || []).map((r) => r.id);
   } catch (e) {
     showStorageWarn('Could not log ' + rows.length + ' backdated cleaning' + (rows.length === 1 ? '' : 's') + ' (' + (e.message || e) + ').');
-    return false;
+    return null;
   }
 }
 
@@ -1751,6 +1787,103 @@ function toggleAreaDone(id) {
   }
 }
 
+// Everything still open on this morning's roll call, in the order the roll call
+// itself shows it. Airbnb and anything else switched off in Settings stays out —
+// onRollCall already excludes it, and it is a separate job with its own tab.
+function rollCallOutstanding() {
+  const rooms = (state.servicedUnits || []).filter((u) => onRollCall(u) && onTodaysList(u) && !cleanedToday(u));
+  return { rooms, areas: areasOutstanding() };
+}
+
+// Everything still outstanding on tonight's round. Unlike the morning roll call
+// this is the whole night's work — Airbnb and anything else kept off roll call is
+// still cleaned tonight, by its own crew. Built from suggestedJobsFor so tonight's
+// list and the day plan can never disagree, and reused by the view that draws it.
+function tonightOutstanding() {
+  const day = workToday();
+  const unitById = {}; (state.servicedUnits || []).forEach((u) => { unitById[u.id] = u; });
+  const areaById = {}; (state.areas || []).forEach((a) => { areaById[a.id] = a; });
+  // suggestedJobsFor already drops areas ticked off for this day; rooms need the
+  // cleaned-today check because a room can be cleaned without its plan changing.
+  const jobs = suggestedJobsFor(day).filter((j) =>
+    j.kind === 'unit' ? (unitById[j.id] && !cleanedToday(unitById[j.id])) : !!areaById[j.id]);
+  return {
+    day,
+    jobs,
+    rooms: jobs.filter((j) => j.kind === 'unit').map((j) => unitById[j.id]),
+    areas: jobs.filter((j) => j.kind === 'area').map((j) => areaById[j.id]),
+  };
+}
+
+// At hand-over the answer is nearly always "all of it", and ticking each job
+// separately was one tap, one save and one insert per job. This closes a whole
+// list in a single write. Each item keeps its own history reference, so any one of
+// them can still be un-ticked afterwards exactly as if it had been ticked alone.
+// Shared by the roll call and tonight's round — only the starting list differs.
+function confirmBulkMarkDone(rooms, areas, what) {
+  const total = rooms.length + areas.length;
+  if (!total) return;
+  const parts = [];
+  if (rooms.length) parts.push(rooms.length + ' room' + (rooms.length === 1 ? '' : 's'));
+  if (areas.length) parts.push(areas.length + ' communal area' + (areas.length === 1 ? '' : 's'));
+  showConfirm(
+    'Mark all ' + total + ' as cleaned?',
+    'Everything still open on ' + what + ' — ' + parts.join(' and ') + ' — will be recorded as cleaned now, '
+      + 'each credited to the person it is assigned to (anything unassigned goes down as Office). '
+      + 'They all go into History, and you can un-tick any of them one by one.',
+    () => runBulkMarkDone(rooms, areas),
+    'Mark all cleaned',
+    'safe'
+  );
+}
+
+function markRollCallAllDone() {
+  const { rooms, areas } = rollCallOutstanding();
+  confirmBulkMarkDone(rooms, areas, "this morning's roll call");
+}
+
+function markTonightAllDone() {
+  const { rooms, areas } = tonightOutstanding();
+  confirmBulkMarkDone(rooms, areas, "tonight's round");
+}
+
+async function runBulkMarkDone(rooms, areas) {
+  if (!state.logRefs) state.logRefs = {};
+  if (!state.lastCleanUndo) state.lastCleanUndo = {};
+  // Same work day the single tick uses, so a close-out after midnight lands on the
+  // round the crew is still on rather than the morning that has just started.
+  const day = workToday();
+  const entries = [];
+  rooms.forEach((u) => {
+    const k = 'su:' + u.id + '::' + day;
+    state.lastCleanUndo[k] = {
+      date: u.lastCleaned || null,
+      by: u.lastCleanedBy || null,
+      byName: u.lastCleanedByName || null,
+    };
+    const who = resolveCleanerFor(u, null);
+    state.completions[k] = true;
+    u.lastCleaned = day;
+    u.lastCleanedBy = who.id;
+    u.lastCleanedByName = who.name;
+    entries.push({ key: k, u, who: who.id });
+  });
+  areas.forEach((a) => {
+    state.completions[areaDoneKey(a)] = true;
+    entries.push({ key: areaDoneKey(a), u: areaAsUnit(a), who: a.assignedTo || 'office' });
+  });
+  // Show it done straight away — the write follows, and a failure surfaces its own
+  // warning rather than holding the screen while the crew is waiting.
+  save(); render();
+  const ids = await logCleanMany(entries.map(({ u, who }) => ({ u, who })), null);
+  // Ids come back in insert order. Only pair them up when the counts agree —
+  // a mismatch would attach the wrong history row to the wrong tick.
+  if (ids && ids.length === entries.length) {
+    entries.forEach((e, i) => { state.logRefs[e.key] = ids[i]; });
+    save();
+  }
+}
+
 // One card for a communal area wherever it needs doing, so an area can't read as
 // done in one place and open in another. presentOnly limits the names to whoever
 // clocked in — right for Roll Call, wrong for the Buildings tab.
@@ -2317,6 +2450,40 @@ function viewPlan() {
   // there on arrival instead of being an empty screen the office has to type in.
   const seeded = seedPlanOnce(day);
 
+  // THE DAYS AHEAD — the week at a glance before dropping into any one day, so a
+  // heavy Thursday is visible on Monday rather than on Thursday morning.
+  {
+    const ahead = scheduleAhead(7);
+    const peak = Math.max(1, ...ahead.map((d) => d.count));
+    const box = el('<div style="margin-bottom:16px"></div>');
+    box.appendChild(el(`<div class="section-label">The week ahead</div>`));
+    box.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin:-6px 0 10px">`
+      + `Rooms due each day if each day's work gets done on the day. Tap one to plan it.</div>`));
+    ahead.forEach((d, i) => {
+      const dt = new Date(d.day + 'T00:00:00');
+      const lbl = i === 0 ? 'Today' : i === 1 ? 'Tomorrow'
+        : dt.toLocaleDateString('en-US', { weekday: 'long' });
+      const row = el(`<div class="su-card" style="display:flex;align-items:center;gap:10px;padding:9px 12px;margin-bottom:6px;cursor:pointer${d.day === day ? ';border-color:#0284c7' : ''}"></div>`);
+      const left = el('<div style="flex:0 0 92px;min-width:0"></div>');
+      left.appendChild(el(`<div style="font-size:13px;font-weight:800;color:#0f1a27">${esc(lbl)}</div>`));
+      left.appendChild(el(`<div style="font-size:10px;color:#5f7189;font-weight:600">${esc(dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }))}</div>`));
+      row.appendChild(left);
+      // A bar reads faster than a number when the question is "which day is heavy".
+      const barWrap = el('<div style="flex:1;min-width:0"></div>');
+      const bar = el('<div style="height:8px;background:#eef2f7;border-radius:4px;overflow:hidden"></div>');
+      const heavy = d.count >= peak * 0.85 && peak > 1;
+      bar.appendChild(el(`<div style="height:100%;width:${Math.round((d.count / peak) * 100)}%;background:${heavy ? '#b45309' : '#0284c7'}"></div>`));
+      barWrap.appendChild(bar);
+      const parts = Object.keys(d.byType).sort().map((t) => d.byType[t] + ' ' + UNIT_TYPES[t].label.toLowerCase());
+      barWrap.appendChild(el(`<div style="font-size:10px;color:#5f7189;font-weight:600;margin-top:4px">${esc(parts.join(' · ') || 'nothing due')}</div>`));
+      row.appendChild(barWrap);
+      row.appendChild(el(`<div style="flex:0 0 auto;font-size:16px;font-weight:800;color:${heavy ? '#b45309' : '#0f1a27'}">${d.count}</div>`));
+      row.onclick = () => { planDay = d.day; render(); };
+      box.appendChild(row);
+    });
+    wrap.appendChild(box);
+  }
+
   wrap.appendChild(el(`<div class="note">Planned from the schedule — daily rooms, every-other-day rooms that fall due, and anything overdue. Add or remove below, then assign whoever badges in.</div>`));
   if (seeded) wrap.appendChild(el(`<div class="section-label" style="color:#15803d">Filled in ${seeded} job${seeded === 1 ? '' : 's'} due on ${esc(day)}.</div>`));
 
@@ -2554,17 +2721,17 @@ function viewRooms() {
 // tool; the crew works into the night, so "what's left" needs its own screen that
 // uses the work day (rolling over at 3am) rather than the calendar day.
 function viewTonight() {
-  const day = workToday();
   const wrap = el('<div class="body"></div>');
   const unitById = {};
   (state.servicedUnits || []).forEach(u => { unitById[u.id] = u; });
   const areaById = {};
   (state.areas || []).forEach(a => { areaById[a.id] = a; });
 
-  // suggestedJobsFor is the schedule's own answer to "what's due on this day" —
-  // reused here so tonight's list and the day plan can never disagree.
-  const jobs = suggestedJobsFor(day).filter(j =>
-    j.kind === 'unit' ? (unitById[j.id] && !cleanedToday(unitById[j.id])) : !!areaById[j.id]);
+  // The list and the button that clears it read from one place, so the count on
+  // the button can never disagree with the number of cards under it.
+  const outstanding = tonightOutstanding();
+  const day = outstanding.day;
+  const jobs = outstanding.jobs;
 
   const dayLabel = new Date(day + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
   wrap.appendChild(el(`<div class="note">Everything still outstanding for <b>${esc(dayLabel)}</b>. Rooms already cleaned today have dropped off. Tick them here as the round goes.</div>`));
@@ -2572,6 +2739,22 @@ function viewTonight() {
   if (!jobs.length) {
     wrap.appendChild(el(`<div class="empty" style="text-align:center;padding:28px 0;color:#15803d;font-weight:700">✓ Nothing outstanding — the round is done.</div>`));
     return wrap;
+  }
+
+  // CLOSE OUT THE ROUND — the whole night in one tap, at the top where it can't be
+  // missed. Unlike the roll call button this does cover Airbnb: it is off the
+  // morning roll call, but it is still part of tonight's work and shows in this list.
+  {
+    const nRooms = outstanding.rooms.length, nAreas = outstanding.areas.length;
+    const allBox = el('<div style="margin-bottom:16px"></div>');
+    const allBtn = el(`<button class="add-btn" style="background:#15803d;color:#ffffff">✓ Mark all ${jobs.length} as cleaned</button>`);
+    allBtn.onclick = () => markTonightAllDone();
+    allBox.appendChild(allBtn);
+    allBox.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin-top:6px">`
+      + `${nRooms} room${nRooms === 1 ? '' : 's'}`
+      + (nAreas ? ` · ${nAreas} communal area${nAreas === 1 ? '' : 's'}` : '')
+      + ` — goes straight to History, and you can un-tick any of them one by one.</div>`));
+    wrap.appendChild(allBox);
   }
 
   const late = jobs.filter(j => j.late).length;
@@ -2781,6 +2964,26 @@ function viewRollCall() {
   const s = statsBar();
   const wrap = el('<div></div>');
   const body = el('<div class="body"></div>');
+
+  // CLOSE OUT THE MORNING — first thing on the page, because at hand-over the
+  // answer is nearly always "all of it" and it should not need scrolling for.
+  // Today only: on a past day the rooms have long since been ticked or missed, and
+  // a bulk tick there would silently backdate a whole morning.
+  if ((selectedDay || todayKey()) === todayKey()) {
+    const open = rollCallOutstanding();
+    const openTotal = open.rooms.length + open.areas.length;
+    if (openTotal) {
+      const allBox = el('<div style="margin-bottom:18px"></div>');
+      const allBtn = el(`<button class="add-btn" style="background:#15803d;color:#ffffff">✓ Mark all ${openTotal} as cleaned</button>`);
+      allBtn.onclick = () => markRollCallAllDone();
+      allBox.appendChild(allBtn);
+      allBox.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin-top:6px">`
+        + `${open.rooms.length} room${open.rooms.length === 1 ? '' : 's'}`
+        + (open.areas.length ? ` · ${open.areas.length} communal area${open.areas.length === 1 ? '' : 's'}` : '')
+        + ` — goes straight to History, and you can un-tick any of them one by one.</div>`));
+      body.appendChild(allBox);
+    }
+  }
 
   // Sync staff roster · Import attendance file · pick the day
   const syncBox = el('<div style="margin-bottom:16px"></div>');
