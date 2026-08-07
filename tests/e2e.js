@@ -866,6 +866,48 @@ function serve() {
     save(); render();
   });
 
+  console.log('\n\x1b[1mROTATION — nobody is stuck on the same rooms every day\x1b[0m');
+  const rot = await page.evaluate(async () => {
+    if (Array.isArray(state.rollCallTypes)) state.rollCallTypes = null;
+    const crew = cleaningStaff().filter((p) => worksToday(p));
+    crew.forEach((p) => addManualArrival(p.id));
+    await loadHikArrivals();
+    const rooms = (state.servicedUnits || []).filter((u) => onRollCall(u));
+    rooms.forEach((u) => {
+      u.lastCleaned = null; u.assignedTo = null; u.usualTo = null;
+      u.preferEarly = false; u.preferLate = false; u.lastCleanedBy = null;
+    });
+    save();
+    const counts = () => crew.map((p) => rooms.filter((u) => u.assignedTo === p.id).length);
+    autoAssignRooms();
+    const day1 = rooms.map((u) => u.assignedTo);
+    const spread1 = Math.max(...counts()) - Math.min(...counts());
+    rooms.forEach((u) => { u.lastCleanedBy = u.assignedTo; });   // they cleaned what they got
+    rooms.forEach((u) => { u.assignedTo = null; delete state.assignConfirmed[u.id]; });
+    autoAssignRooms();
+    const day2 = rooms.map((u) => u.assignedTo);
+    const spread2 = Math.max(...counts()) - Math.min(...counts());
+    let repeated = 0;
+    rooms.forEach((u) => { if (u.assignedTo && u.assignedTo === u.lastCleanedBy) repeated += 1; });
+    return { rooms: rooms.length, crew: crew.length, repeated, spread1, spread2,
+      changed: day1.filter((v, i) => v !== day2[i]).length };
+  });
+  check('there are rooms and a crew to rotate between', rot.rooms > rot.crew && rot.crew > 1, JSON.stringify(rot));
+  check('the second day is a different hand-out', rot.changed > 0, 'nothing moved between the two days');
+  // Not zero: rotation is a tie-break behind load, so with a small crew there are
+  // mornings where the even split only works if somebody keeps a room. What must
+  // hold is that it is far better than leaving it to chance — with this many
+  // cleaners, handing out blind would repeat about half of them.
+  check('most rooms change hands the next day', rot.repeated * 2 < rot.rooms,
+    rot.repeated + ' of ' + rot.rooms + ' rooms went back to the same cleaner');
+  // Rotation must never buy that variety with an uneven morning.
+  check('and it stays even on both days', rot.spread1 <= 1 && rot.spread2 <= 1,
+    'spreads: ' + rot.spread1 + ' then ' + rot.spread2);
+  await page.evaluate(() => {                       // don't leak a cleaning history into the next section
+    (state.servicedUnits || []).forEach((u) => { u.lastCleanedBy = null; u.assignedTo = null; });
+    save(); render();
+  });
+
   console.log('\n\x1b[1mMORNING AND AFTERNOON — asked-for times, spread across the crew\x1b[0m');
   const mix = await page.evaluate(() => {
     // An earlier section takes Airbnb off the roll call, which leaves a single room

@@ -1460,6 +1460,28 @@ function setUnitAssignee(id, pid) {
   _assignPick = null;
   save(); render();
 }
+// Picking a cleaner by hand also makes them that room's permanent cleaner, so pins
+// pile up without anyone deciding to have them — 22 of 34 rooms, in practice. Pinned
+// rooms go back to the same person every morning, which is exactly what stops the
+// work rotating. This lets the office drop the lot and start again.
+function clearAllUsualCleaners() {
+  const pinned = (state.servicedUnits || []).filter((u) => u.usualTo);
+  if (!pinned.length) return;
+  showConfirm(
+    'Clear ' + pinned.length + ' permanent cleaner' + (pinned.length === 1 ? '' : 's') + '?',
+    'Those rooms stop belonging to one person and go back into the general pool, so auto-assign '
+      + 'can rotate them. Today\'s hand-out is left exactly as it is — this only changes what happens '
+      + 'next time rooms are dealt out. You can always make a room permanent again by picking its cleaner by hand.',
+    () => {
+      (state.servicedUnits || []).forEach((u) => { u.usualTo = null; });
+      hikSyncMsg = { text: pinned.length + ' rooms are no longer tied to one cleaner.' };
+      save(); render();
+    },
+    'Clear them',
+    'safe'
+  );
+}
+
 function setUnitPriority(id, on) {
   const u = state.servicedUnits.find(x => x.id === id);
   if (u) u.priority = !!on;
@@ -1567,7 +1589,17 @@ function runAutoAssign(rooms, people, inIds, load) {
   // Nobody gets handed a kind of room they aren't cleared for — a trainee kept off
   // offices must stay off them however the room reaches them.
   const ableFor = (u) => order.filter((id) => canCleanUnit(staffById[id], u));
-  const lightestFor = (u) => ableFor(u).sort((a, b) => load[a] - load[b])[0] || null;
+  // Rotation: don't hand a room straight back to whoever cleaned it last time, so
+  // nobody spends every morning on the same patch. Kept as a TIE-BREAK, never ahead
+  // of load — an even split is the thing that was actually asked for, and rotation
+  // that unbalances the morning to achieve variety would be a worse deal. With most
+  // days tying on load anyway, this is what decides them.
+  const repeats = (id, u) => (u.lastCleanedBy && id === u.lastCleanedBy) ? 1 : 0;
+  const bestFor = (u, pool) => (pool || ableFor(u)).slice().sort((a, b) =>
+    (load[a] - load[b])
+    || (repeats(a, u) - repeats(b, u))
+    || (order.indexOf(a) - order.indexOf(b)))[0] || null;
+  const lightestFor = (u) => bestFor(u);
 
   // Pass 1: rooms with a time the customer asked for. Handing every morning room to
   // whoever badged in first is how one person ends up with a wall of them and can't
@@ -1583,6 +1615,7 @@ function runAutoAssign(rooms, people, inIds, load) {
       const pick = ableFor(u).sort((a, b) =>
         (slotLoad[slot][a] - slotLoad[slot][b])          // nobody carries them all
         || (load[a] - load[b])                            // then whoever has least overall
+        || (repeats(a, u) - repeats(b, u))                // then not the same person as last time
         || (order.indexOf(a) - order.indexOf(b)))[0];     // then whoever got here first
       if (pick) { u.assignedTo = pick; load[pick]++; slotLoad[slot][pick]++; }
     });
@@ -1616,7 +1649,9 @@ function runAutoAssign(rooms, people, inIds, load) {
     const mates = teamMembers(t.name).filter((p) => inIds.has(p.id) && canCleanUnit(p, u));
     if (!mates.length) return;                    // nobody from that team in today who can take it
     const pick = mates.slice().sort((a, b) =>
-      (load[a.id] || 0) - (load[b.id] || 0) || order.indexOf(a.id) - order.indexOf(b.id))[0];
+      ((load[a.id] || 0) - (load[b.id] || 0))
+      || (repeats(a.id, u) - repeats(b.id, u))
+      || (order.indexOf(a.id) - order.indexOf(b.id)))[0];
     u.assignedTo = pick.id; load[pick.id]++; onTeam++;
   });
   // Pass 5: whatever is left goes to whoever's carrying the fewest (earliest breaks ties).
@@ -1648,7 +1683,9 @@ function runAutoAssign(rooms, people, inIds, load) {
     for (const pass of [freeToMove, pinnedButMovable]) {
       for (const lo of ranked) {
         if (load[hi] - load[lo] <= 1) break;
-        const move = rooms.find((u) => u.assignedTo === hi && pass(u) && canCleanUnit(staffById[lo], u));
+        const cands = rooms.filter((u) => u.assignedTo === hi && pass(u) && canCleanUnit(staffById[lo], u));
+        // Of the rooms that could move, shift one this person didn't clean last time.
+        const move = cands.find((u) => !repeats(lo, u)) || cands[0];
         if (!move) continue;
         move.assignedTo = lo; load[hi] -= 1; load[lo] += 1; moved += 1;
         if (pass === pinnedButMovable) unpinned += 1;
@@ -3379,6 +3416,17 @@ function viewRollCall() {
       const autoBtn = el('<button class="add-btn" style="background:#15803d;color:#ffffff;margin:12px 0 4px">⚡ Auto-assign rooms evenly</button>');
       autoBtn.onclick = () => autoAssignRooms();
       box.appendChild(autoBtn);
+    }
+    // Pinned rooms go back to the same person every morning, so once there are a lot
+    // of them the hand-out stops rotating. Only worth mentioning when it's a real share.
+    const pinnedCount = (state.servicedUnits || []).filter((u) => onRollCall(u) && u.usualTo).length;
+    const rollTotal = (state.servicedUnits || []).filter((u) => onRollCall(u)).length;
+    if (pinnedCount && pinnedCount >= rollTotal / 3) {
+      const pinBtn = el(`<button class="freqmini" style="width:100%;padding:9px;margin-bottom:4px;border-color:#7c3aed;color:#7c3aed">⟲ Free up ${pinnedCount} room${pinnedCount === 1 ? '' : 's'} tied to one cleaner</button>`);
+      pinBtn.onclick = () => clearAllUsualCleaners();
+      box.appendChild(pinBtn);
+      box.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin:-2px 0 8px">`
+        + `${pinnedCount} of ${rollTotal} go to the same person every day, so they can't rotate.</div>`));
     }
     // Clearing the board only makes sense when something is actually on it.
     const heldNow = openR.filter((u) => u.assignedTo && !u.usualTo);
