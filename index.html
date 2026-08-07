@@ -1465,11 +1465,22 @@ function setUnitPriority(id, on) {
   if (u) u.priority = !!on;
   save(); render();
 }
-// Rooms whose customer wants an early clean — sorted to the top and handed to the
-// earliest arrivals by auto-assign, so they're done first (avoids complaints).
+// When the customer wants the room done. Some ask for the morning, some would
+// rather be left alone until the afternoon. A room is one or the other or neither,
+// so setting one clears the other rather than leaving a room asking for both.
+const timeSlot = (u) => (u && u.preferEarly) ? 'early' : (u && u.preferLate) ? 'late' : 'any';
+// Reading order for any list of rooms: asked-for mornings, then anything, then the
+// ones the customer would rather have left until the afternoon.
+const SLOT_RANK = { early: 0, any: 1, late: 2 };
+const slotRank = (u) => SLOT_RANK[timeSlot(u)];
 function setUnitPreferEarly(id, on) {
   const u = state.servicedUnits.find(x => x.id === id);
-  if (u) u.preferEarly = !!on;
+  if (u) { u.preferEarly = !!on; if (on) u.preferLate = false; }
+  save(); render();
+}
+function setUnitPreferLate(id, on) {
+  const u = state.servicedUnits.find(x => x.id === id);
+  if (u) { u.preferLate = !!on; if (on) u.preferEarly = false; }
   save(); render();
 }
 // Manually set when a room was last cleaned (drives its next-due schedule).
@@ -1512,7 +1523,7 @@ function autoAssignRooms() {
   const load = {}; people.forEach((p) => { load[p.id] = 0; });
 
   const rooms = (state.servicedUnits || []).filter((u) => onRollCall(u) && unitDueToday(u)).slice().sort((a, b) =>   // due today, of the kinds roll call covers
-    (b.preferEarly ? 1 : 0) - (a.preferEarly ? 1 : 0)                            // 🌅 early-preference rooms first → earliest arrivals
+    (slotRank(a) - slotRank(b))                            // 🌅 early-preference rooms first → earliest arrivals
     || (b.priority ? 1 : 0) - (a.priority ? 1 : 0)                               // then priority ⭐ rooms
     || String(a.time || '~').localeCompare(String(b.time || '~'))               // then earliest scheduled time
     || String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }));
@@ -1558,11 +1569,26 @@ function runAutoAssign(rooms, people, inIds, load) {
   const ableFor = (u) => order.filter((id) => canCleanUnit(staffById[id], u));
   const lightestFor = (u) => ableFor(u).sort((a, b) => load[a] - load[b])[0] || null;
 
-  // Pass 1: early-preference rooms go to the earliest arrivals so they're done first.
-  rooms.filter((u) => u.preferEarly).forEach((u) => {
-    const pick = lightestFor(u);   // fewest load, earliest breaks ties
-    if (pick) { u.assignedTo = pick; load[pick]++; }
-  });
+  // Pass 1: rooms with a time the customer asked for. Handing every morning room to
+  // whoever badged in first is how one person ends up with a wall of them and can't
+  // physically get them all done before lunch — which is the complaint the early flag
+  // exists to prevent. So they are dealt round the crew: fewest morning rooms so far
+  // wins, and arrival order only breaks the tie. The earliest in still get the first
+  // ones, but once everyone has had one it comes round again, and everybody ends up
+  // with a mixture of asked-for and ordinary rooms rather than one lopsided round.
+  const slotLoad = { early: {}, late: {} };
+  people.forEach((p) => { slotLoad.early[p.id] = 0; slotLoad.late[p.id] = 0; });
+  const spreadSlot = (slot) => {
+    rooms.filter((u) => !u.assignedTo && timeSlot(u) === slot).forEach((u) => {
+      const pick = ableFor(u).sort((a, b) =>
+        (slotLoad[slot][a] - slotLoad[slot][b])          // nobody carries them all
+        || (load[a] - load[b])                            // then whoever has least overall
+        || (order.indexOf(a) - order.indexOf(b)))[0];     // then whoever got here first
+      if (pick) { u.assignedTo = pick; load[pick]++; slotLoad[slot][pick]++; }
+    });
+  };
+  spreadSlot('early');
+  spreadSlot('late');
   // Pass 2: remaining rooms keep their usual cleaner if that person clocked in.
   let kept = 0;
   rooms.forEach((u) => {
@@ -2489,7 +2515,7 @@ function unitGroups(wrap, typeKeys, emptyMsg) {
   typeKeys.forEach(tk => {
     const t = UNIT_TYPES[tk];
     const group = relevant.filter(u => unitType(u) === tk).sort((a, b) =>
-      (b.preferEarly ? 1 : 0) - (a.preferEarly ? 1 : 0)                           // 🌅 early first
+      (slotRank(a) - slotRank(b))                           // 🌅 early first
       || (b.priority ? 1 : 0) - (a.priority ? 1 : 0)                              // then priority ⭐
       || String(a.time || '~').localeCompare(String(b.time || '~'))               // then earliest time
       || String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }));
@@ -3086,7 +3112,9 @@ function servicedCard(u, isDue) {
 
   const top = el(`<div class="su-top"></div>`);
   const info = el(`<div style="flex:1;min-width:0"></div>`);
-  info.appendChild(el(`<div class="su-unit">${u.priority?'⭐ ':''}${u.preferEarly?'🌅 ':''}Unit ${esc(u.unit)}${u.preferEarly?' <span style="font-size:11px;color:#b45309;font-weight:700">Early</span>':''}</div>`));
+  info.appendChild(el(`<div class="su-unit">${u.priority?'⭐ ':''}${u.preferEarly?'🌅 ':u.preferLate?'🌇 ':''}Unit ${esc(u.unit)}`
+    + `${u.preferEarly?' <span style="font-size:11px;color:#b45309;font-weight:700">Morning</span>':''}`
+    + `${u.preferLate?' <span style="font-size:11px;color:#7c3aed;font-weight:700">Afternoon</span>':''}</div>`));
   if (u.guest) info.appendChild(el(`<div class="su-guest">${esc(u.guest)}</div>`));
   if (u.time) info.appendChild(el(`<div class="su-guest" style="color:#dc2626">🕐 Checkout ${esc(u.time)}</div>`));
   if (u.note) info.appendChild(el(`<div class="su-guest" style="color:#7c3aed">📝 ${esc(u.note)}</div>`));
@@ -3164,9 +3192,12 @@ function servicedCard(u, isDue) {
   const pri = el(`<button class="freqmini ${u.priority?'on':''}" title="Priority">${u.priority?'⭐ Priority':'☆ Priority'}</button>`);
   pri.onclick = () => setUnitPriority(u.id, !u.priority);
   ctl.appendChild(pri);
-  const early = el(`<button class="freqmini ${u.preferEarly?'on':''}" title="Prefers early clean">${u.preferEarly?'🌅 Early':'🌅 Prefers early'}</button>`);
+  const early = el(`<button class="freqmini ${u.preferEarly?'on':''}" title="Customer wants this done in the morning">${u.preferEarly?'🌅 Morning':'🌅 Prefers morning'}</button>`);
   early.onclick = () => setUnitPreferEarly(u.id, !u.preferEarly);
   ctl.appendChild(early);
+  const late = el(`<button class="freqmini ${u.preferLate?'on':''}" title="Customer would rather this was left until the afternoon">${u.preferLate?'🌇 Afternoon':'🌇 Prefers afternoon'}</button>`);
+  late.onclick = () => setUnitPreferLate(u.id, !u.preferLate);
+  ctl.appendChild(late);
   const edit = el(`<button class="su-edit">Edit</button>`);
   edit.onclick = () => startEditUnit(u.id);
   ctl.appendChild(edit);
@@ -3264,10 +3295,10 @@ function viewRollCall() {
   // Same order auto-assign uses: 🌅 early first, then ⭐ priority, then room number —
   // so what you see at the top is what gets handed out first.
   const todaysRooms = (state.servicedUnits || []).filter((u) => onRollCall(u) && onTodaysList(u)).slice()
-    .sort((a, b) => (b.preferEarly ? 1 : 0) - (a.preferEarly ? 1 : 0)
+    .sort((a, b) => (slotRank(a) - slotRank(b))
       || (b.priority ? 1 : 0) - (a.priority ? 1 : 0)
       || String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }));
-  const flags = (u) => (u.preferEarly ? '🌅 ' : '') + (u.priority ? '⭐ ' : '');
+  const flags = (u) => (u.preferEarly ? '🌅 ' : u.preferLate ? '🌇 ' : '') + (u.priority ? '⭐ ' : '');
   if (todaysRooms.length) {
     const doneR = todaysRooms.filter(cleanedToday);
     const openR = todaysRooms.filter((u) => !cleanedToday(u));
@@ -3502,7 +3533,7 @@ function viewRollCall() {
         const free = (state.servicedUnits || []).filter((u) => onRollCall(u) && !u.assignedTo && !cleanedToday(u));
         const byUnit = (a, b) => String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true });
         const freeDue = free.filter(unitDueToday).sort((a, b) =>
-          (b.preferEarly ? 1 : 0) - (a.preferEarly ? 1 : 0)
+          (slotRank(a) - slotRank(b))
           || (b.priority ? 1 : 0) - (a.priority ? 1 : 0)
           || byUnit(a, b));
         const freeLater = free.filter((u) => !unitDueToday(u)).sort(byUnit);

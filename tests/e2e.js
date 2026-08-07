@@ -835,6 +835,54 @@ function serve() {
   }, rotaBase.id);
   await page.waitForTimeout(300);
 
+  console.log('\n\x1b[1mMORNING AND AFTERNOON — asked-for times, spread across the crew\x1b[0m');
+  const mix = await page.evaluate(() => {
+    // An earlier section takes Airbnb off the roll call, which leaves a single room
+    // to hand out — nothing to spread. Put every kind back for this one check.
+    if (Array.isArray(state.rollCallTypes)) state.rollCallTypes = null;
+    const crew = cleaningStaff().filter((p) => hikArrivals[p.id]);
+    const rooms = (state.servicedUnits || []).filter((u) => onRollCall(u));
+    rooms.forEach((u, i) => {
+      u.lastCleaned = null;                       // make sure they are all due
+      u.assignedTo = null; u.usualTo = null;      // and up for grabs
+      u.preferEarly = i % 2 === 0;                // half morning, half afternoon
+      u.preferLate = i % 2 === 1;
+    });
+    save();
+    autoAssignRooms();
+    const per = {};
+    crew.forEach((p) => { per[p.id] = { name: p.name, early: 0, late: 0, total: 0 }; });
+    rooms.forEach((u) => {
+      const r = per[u.assignedTo];
+      if (!r) return;
+      r.total += 1;
+      if (u.preferEarly) r.early += 1; else if (u.preferLate) r.late += 1;
+    });
+    const rows = Object.values(per);
+    return {
+      crew: crew.length,
+      earlyTotal: rooms.filter((u) => u.preferEarly).length,
+      lateTotal: rooms.filter((u) => u.preferLate).length,
+      rows,
+      earlySpread: Math.max(...rows.map((r) => r.early)) - Math.min(...rows.map((r) => r.early)),
+      lateSpread: Math.max(...rows.map((r) => r.late)) - Math.min(...rows.map((r) => r.late)),
+      everyoneHasBoth: rows.every((r) => r.early > 0 && r.late > 0),
+      slotOrder: slotRank({ preferEarly: true }) < slotRank({}) && slotRank({}) < slotRank({ preferLate: true }),
+    };
+  });
+  check('there are morning rooms and more than one cleaner', mix.earlyTotal > 1 && mix.crew > 1, JSON.stringify(mix));
+  check('no one is left carrying all the morning rooms', mix.earlySpread <= 1,
+    'morning rooms per cleaner: ' + JSON.stringify(mix.rows.map((r) => r.name.split(' ')[0] + ':' + r.early)));
+  check('the afternoon ones are spread the same way', mix.lateSpread <= 1,
+    'afternoon rooms per cleaner: ' + JSON.stringify(mix.rows.map((r) => r.name.split(' ')[0] + ':' + r.late)));
+  check('everybody ends up with a mixture, not one kind', mix.everyoneHasBoth,
+    'per cleaner: ' + JSON.stringify(mix.rows));
+  check('morning sorts above ordinary, ordinary above afternoon', mix.slotOrder, 'slot ordering is wrong');
+  await page.evaluate(() => {                                  // clear the preferences again
+    (state.servicedUnits || []).forEach((u) => { u.preferEarly = false; u.preferLate = false; });
+    save(); render();
+  });
+
   console.log('\n\x1b[1mEVERY OTHER FRIDAY — the rest day is shared, not skipped\x1b[0m');
   const alt = await page.evaluate(() => {
     const crew = cleaningStaff();
