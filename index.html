@@ -589,7 +589,16 @@ function lastCleanInfo(u) {
 const dueShift = (u) =>
   (u.cycleShiftFrom && lastCleanDate(u) === u.cycleShiftFrom) ? (u.cycleShift || 0) : 0;
 const cycleLen = (u) => (FREQ_DAYS[u.freq] || 1) + dueShift(u);
+// A room held back on purpose, to break up a clump. cycleShift can only delay from
+// the last clean, which does nothing when a room is already overdue — and a set of
+// every-other-day rooms that all come due together are all overdue together, so
+// nothing can prise them apart. This says plainly "not before this date", which works
+// whatever state the room is in. It lapses the moment the room is cleaned, so it can
+// never quietly hold a room back twice.
+const heldBack = (u, day) => !!(u.holdUntil && String(day) < String(u.holdUntil)
+  && (!lastCleanDate(u) || String(lastCleanDate(u)) < String(u.holdUntil)));
 function unitDueToday(u) {
+  if (heldBack(u, workToday())) return false;
   const base = lastCleanDate(u);
   if (!base) return true;                       // never cleaned → due now
   return daysSince(base) >= cycleLen(u);        // enough days have passed
@@ -613,6 +622,7 @@ const FREQ_LABEL = { nightly: 'Nightly', daily: 'Daily', eod: 'Every other day',
 // A room is due on `day` once its next-due date has arrived, and stays due after
 // that: work nobody got to doesn't stop needing doing.
 function dueOnDay(u, day) {
+  if (heldBack(u, day)) return false;
   const base = lastCleanDate(u);
   if (!base) return true;                  // never recorded → due now
   return nextDueDate(u) <= day;
@@ -643,7 +653,8 @@ function projectDueDays(nDays) {
     units.forEach((u) => {
       const base = proj[u.id];
       let isDue;
-      if (!base) isDue = true;                       // never recorded → due straight away
+      if (heldBack(u, day)) isDue = false;           // deliberately held back to break up a clump
+      else if (!base) isDue = true;                  // never recorded → due straight away
       else {
         const dt = new Date(base + 'T00:00:00');
         dt.setDate(dt.getDate() + cycleLen(u));
@@ -2879,6 +2890,58 @@ function seedPlanOnce(day) {
   save();
   return added;
 }
+// Build a day again from scratch. A day is seeded once and then left alone, which is
+// right for a plan somebody has edited — but it also means a day built under an older
+// idea of what was due keeps that list for good. Anything already opened before the
+// every-other-day fix still carries the full room list, and no amount of re-opening
+// will correct it. This re-syncs the rooms to what the schedule now says and hands
+// them out again.
+function rebuildPlanDay(day) {
+  const plan = getPlan(day);
+  const want = planningJobsFor(day);
+  const wantKeys = new Set(want.map((s) => planKey(s.kind, s.id)));
+  let removed = 0;
+  Object.keys(plan).forEach((k) => {
+    // Only rooms are re-synced. A communal area put on a day by hand was somebody's
+    // decision, and the schedule has no opinion to overrule it with.
+    if (plan[k].kind !== 'unit') return;
+    if (!wantKeys.has(k)) { delete plan[k]; removed += 1; }
+  });
+  const added = applySuggestions(day, want);
+  const dealt = (day === todayKey()) ? { assigned: 0 } : autoPlanDay(day);
+  save();
+  return { added, removed, assigned: dealt.assigned || 0 };
+}
+
+// Break a clump of same-frequency rooms into equal groups, one group starting each
+// day of the cycle. Eleven every-other-day rooms that all fall due together give
+// 23 rooms one day and 12 the next; split five and six across two days and every day
+// is about 17. Only ever holds a room back — a clean is never pulled forward — and
+// the hold lapses as soon as the room is done, so the new rhythm carries itself.
+function staggerFrequencyGroup(freqKeyName, dryRun) {
+  const start = workToday();
+  const rooms = (state.servicedUnits || [])
+    .filter((u) => onRollCall(u) && !u.paused && (u.freq || 'daily') === freqKeyName && unitDueToday(u))
+    .slice()
+    .sort((a, b) => String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }));
+  const span = FREQ_DAYS[freqKeyName] || 1;
+  if (rooms.length < 2 || span < 2) return { moved: 0, groups: [] };
+  const groups = [];
+  for (let g = 0; g < span; g += 1) groups.push([]);
+  rooms.forEach((u, i) => groups[i % span].push(u));
+  let moved = 0;
+  groups.forEach((grp, g) => {
+    const day = shiftDay(start, g);
+    grp.forEach((u) => {
+      if (g === 0) { if (!dryRun && u.holdUntil) delete u.holdUntil; return; }   // first group goes today
+      if (!dryRun) u.holdUntil = day;
+      moved += 1;
+    });
+  });
+  if (!dryRun) { save(); render(); }
+  return { moved, groups: groups.map((grp, g) => ({ day: shiftDay(start, g), units: grp.map((u) => u.unit) })) };
+}
+
 function getPlan(day) { if (!state.plans) state.plans = {}; if (!state.plans[day]) state.plans[day] = {}; return state.plans[day]; }
 function planJobs(day) { return Object.entries(getPlan(day)).map(([key, v]) => ({ key, ...v })); }
 const planKey = (kind, id) => kind + ':' + id;
@@ -2995,6 +3058,24 @@ function viewPlan() {
       render();
     };
     box.appendChild(re);
+    // A day built before the schedule changed keeps whatever it was given, so there
+    // has to be a way to say "do this one again from scratch".
+    const rb = el(`<button class="freqmini" style="width:100%;padding:9px;margin-top:6px;border-color:#b45309;color:#b45309">⟳ Rebuild this day from the schedule</button>`);
+    rb.onclick = () => {
+      showConfirm(
+        'Rebuild ' + day + '?',
+        'The rooms on this day are set back to exactly what the schedule says is due, and handed out again. '
+          + 'Rooms you added or removed by hand for this day are lost. Communal areas are left as they are.',
+        () => {
+          const r = rebuildPlanDay(day);
+          hikSyncMsg = { text: 'Rebuilt: ' + r.added + ' added, ' + r.removed + ' dropped, ' + r.assigned + ' handed out.' };
+          render();
+        },
+        'Rebuild it',
+        'safe'
+      );
+    };
+    box.appendChild(rb);
     wrap.appendChild(box);
   }
 
@@ -3086,6 +3167,37 @@ function viewRooms() {
   pastBtn.onclick = () => openBackdate(yesterdayKey());
   wrap.appendChild(pastBtn);
   if (!units.length) { wrap.appendChild(el(`<div class="empty">No rooms yet.</div>`)); return wrap; }
+
+  // A whole frequency group falling due on the same day is what makes the week swing
+  // between a light day and a heavy one. "Even out the days" can't fix it: it delays a
+  // room from its last clean, and rooms that come due together are overdue together,
+  // so there is nothing for the delay to act on. Splitting them needs a hold-back.
+  ['eod', 'weekly'].forEach((fk) => {
+    const span = FREQ_DAYS[fk] || 1;
+    const dueNow = (state.servicedUnits || []).filter((u) =>
+      onRollCall(u) && !u.paused && (u.freq || 'daily') === fk && unitDueToday(u));
+    if (span < 2 || dueNow.length <= span) return;
+    const box = el('<div class="su-card" style="margin-bottom:14px;padding:12px"></div>');
+    box.appendChild(el(`<div style="font-size:12px;font-weight:800;color:#b45309">`
+      + `⚠ all ${dueNow.length} ${esc((FREQ_LABEL[fk] || fk).toLowerCase())} rooms are due the same day</div>`));
+    box.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin-top:4px">`
+      + `Clean them together and they stay together, so the week keeps swinging between a heavy day and a light one.</div>`));
+    const btn = el(`<button class="freqmini" style="width:100%;margin-top:8px;padding:9px;border-color:#7c3aed;color:#7c3aed">⇄ Split them over ${span} days</button>`);
+    btn.onclick = () => {
+      const preview = staggerFrequencyGroup(fk, true);
+      showConfirm(
+        'Split ' + dueNow.length + ' rooms over ' + span + ' days?',
+        preview.groups.map((g, i) => (i === 0 ? 'Still due today' : 'Held to ' + g.day) + ': ' + g.units.join(', ')).join('\n\n')
+          + '\n\nNo clean is ever brought forward — the later group is only held back, and the hold lifts '
+          + 'as soon as the room is cleaned, so the new rhythm carries itself.',
+        () => { staggerFrequencyGroup(fk); },
+        'Split them',
+        'safe'
+      );
+    };
+    box.appendChild(btn);
+    wrap.appendChild(box);
+  });
   const groups = {};
   units.forEach(u => { const t = unitType(u); (groups[t] = groups[t] || []).push(u); });
   ['airbnb', 'office', 'building'].forEach(tk => {

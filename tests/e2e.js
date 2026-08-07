@@ -866,6 +866,44 @@ function serve() {
     save(); render();
   });
 
+  console.log('\n\x1b[1mSPLIT A CLUMP — same-frequency rooms that all fall due together\x1b[0m');
+  const clump = await page.evaluate(() => {
+    if (Array.isArray(state.rollCallTypes)) state.rollCallTypes = null;
+    const rooms = (state.servicedUnits || []).filter((u) => onRollCall(u)).slice(0, 6);
+    // Every one of them every-other-day, every one of them due today: the state that
+    // "even out the days" cannot do anything with.
+    window.__clumpUndo = rooms.map((u) => ({ id: u.id, freq: u.freq, last: u.lastCleaned }));
+    rooms.forEach((u) => { u.freq = 'eod'; u.lastCleaned = shiftDay(todayKey(), -3); delete u.holdUntil; });
+    (state.servicedUnits || []).forEach((u) => { if (!rooms.includes(u)) u.paused = true; });
+    save();
+    const shape = () => projectDueDays(4).map((d) => d.due.length);
+    const before = shape();
+    const preview = staggerFrequencyGroup('eod', true);
+    const heldByPreview = rooms.filter((u) => u.holdUntil).length;
+    const res = staggerFrequencyGroup('eod');
+    const after = shape();
+    const held = rooms.filter((u) => u.holdUntil).length;
+    (state.servicedUnits || []).forEach((u) => { u.paused = false; });
+    return { n: rooms.length, before, after, held, heldByPreview, groups: res.groups.length,
+      swingBefore: Math.max(...before) - Math.min(...before),
+      swingAfter: Math.max(...after) - Math.min(...after) };
+  });
+  check('the rooms really do all fall due together', clump.before[0] === clump.n,
+    'day one carried ' + clump.before[0] + ' of ' + clump.n);
+  eq('previewing it changes nothing', clump.heldByPreview, 0);
+  eq('it splits them over the length of the cycle', clump.groups, 2);
+  check('half of them are held back', clump.held > 0 && clump.held < clump.n, clump.held + ' of ' + clump.n + ' held');
+  check('the week stops swinging', clump.swingAfter < clump.swingBefore,
+    'swing went from ' + clump.swingBefore + ' to ' + clump.swingAfter);
+  await page.evaluate(() => {                     // put the rooms back as they were
+    (state.servicedUnits || []).forEach((u) => { delete u.holdUntil; u.paused = false; });
+    (window.__clumpUndo || []).forEach((o) => {
+      const u = (state.servicedUnits || []).find((x) => x.id === o.id);
+      if (u) { u.freq = o.freq; u.lastCleaned = o.last; }
+    });
+    save(); render();
+  });
+
   console.log('\n\x1b[1mPLAN AHEAD — a future day lays itself out from the rota\x1b[0m');
   const plan = await page.evaluate(() => {
     if (Array.isArray(state.rollCallTypes)) state.rollCallTypes = null;
