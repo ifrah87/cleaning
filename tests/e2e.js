@@ -791,6 +791,50 @@ function serve() {
   check('auto-assign never hands out communal areas', autoAreas.length === 0, 'assigned: ' + JSON.stringify(autoAreas.map((a) => a.label)));
   await ap.close(); await auto.close();
 
+  console.log('\n\x1b[1mWORKS ON — not everyone is in every day\x1b[0m');
+  await page.locator('.nav button', { hasText: 'Roll Call' }).click();
+  await page.waitForTimeout(300);
+  const rotaBase = await page.evaluate(() => {
+    const p = cleaningStaff()[0];
+    return { id: p.id, name: p.name, worksOn: p.worksOn === undefined ? null : p.worksOn,
+      everyDayByDefault: worksToday(p) };
+  });
+  check('a person with no rota set works every day', rotaBase.everyDayByDefault, 'default was not every-day');
+  // Take today off them, whichever weekday today happens to be.
+  const rota = await page.evaluate((pid) => {
+    const dow = new Date(workToday() + 'T00:00:00').getDay();
+    toggleWorksOn(pid, dow);
+    const p = (state.staff || []).find((x) => x.id === pid);
+    return { worksOn: p.worksOn, worksToday: worksToday(p), dow };
+  }, rotaBase.id);
+  check('taking a day off stores a rota', Array.isArray(rota.worksOn), 'worksOn: ' + JSON.stringify(rota.worksOn));
+  eq('and that person is off today', rota.worksToday, false);
+  eq('the other six days are kept', rota.worksOn.length, 6);
+  const rollTxt = await page.locator('.body').first().innerText();
+  contains('the roll call says who is off', rollTxt, 'off today: ' + rotaBase.name.split(' ')[0]);
+  contains('and counts only the people actually expected', rollTxt, 'expected in');
+  // Someone who is off did not "forget to clock in" — offering them there is how a
+  // day off quietly becomes a hand-out.
+  const offeredWhenOff = await page.evaluate((pid) => {
+    const sel = Array.from(document.querySelectorAll('select.area-select'))
+      .find((s) => (s.options[0] || {}).text && s.options[0].text.includes('forgot to clock in'));
+    if (!sel) return null;
+    return Array.from(sel.options).some((o) => o.value === pid);
+  }, rotaBase.id);
+  check('an off-duty person is not offered as a forgotten clock-in', offeredWhenOff === false || offeredWhenOff === null,
+    'they were still in the add-someone list');
+  // Turning up on a day off still counts — presence beats the rota.
+  const present = await page.evaluate((pid) => {
+    addManualArrival(pid);
+    return !!hikArrivals[pid];
+  }, rotaBase.id);
+  check('badging in on a day off still puts them on the roll call', present, 'manual arrival did not take');
+  await page.evaluate((pid) => {                       // hand the day back
+    const dow = new Date(workToday() + 'T00:00:00').getDay();
+    toggleWorksOn(pid, dow); save(); render();
+  }, rotaBase.id);
+  await page.waitForTimeout(300);
+
   console.log('\n\x1b[1mPUT THE BOARD BACK — unassign the whole morning at once\x1b[0m');
   await page.locator('.nav button', { hasText: 'Roll Call' }).click();
   await page.waitForTimeout(400);

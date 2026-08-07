@@ -383,6 +383,28 @@ const daysSince = (iso) => {
 
 // How many days between cleanings, per frequency.
 const FREQ_DAYS = { nightly: 1, daily: 1, eod: 2, weekly: 7, monthly: 30 };
+
+// Not everyone works every day. Presence itself still comes from the door reader —
+// this is only what the office EXPECTS, which the badge-ins cannot say. Without it
+// a quiet roll call reads as "everyone is late" when half the crew is simply off,
+// and Hik's Time Card filling in through the morning makes that worse.
+// worksOn absent or null = every day, so an untouched roster behaves as it always has.
+const WEEKDAYS = [['Mon', 1], ['Tue', 2], ['Wed', 3], ['Thu', 4], ['Fri', 5], ['Sat', 6], ['Sun', 0]];
+const worksOnDay = (p, day) => {
+  if (!p || !Array.isArray(p.worksOn)) return true;
+  return p.worksOn.includes(new Date(day + 'T00:00:00').getDay());
+};
+const worksToday = (p) => worksOnDay(p, workToday());
+function toggleWorksOn(pid, dow) {
+  const p = (state.staff || []).find((x) => x.id === pid);
+  if (!p) return;
+  const cur = Array.isArray(p.worksOn) ? p.worksOn.slice() : [0, 1, 2, 3, 4, 5, 6];
+  const next = cur.includes(dow) ? cur.filter((d) => d !== dow) : cur.concat(dow);
+  // Every day is the default, and storing it as null keeps "never set up" and
+  // "deliberately set to all seven" the same thing rather than two states to reason about.
+  p.worksOn = next.length === 7 ? null : next;
+  save(); render();
+}
 // When was this unit last cleaned? Use the most recent of: the shared history log,
 // or a manual "last cleaned on" date set when adding/editing the room.
 function lastCleanDate(u) {
@@ -3241,9 +3263,28 @@ function viewRollCall() {
   const dayLbl = (selectedDay && selectedDay !== todayKey()) ? ('on ' + selectedDay) : 'today';
   const cleanersTagged = (state.staff || []).some((p) => p.isCleaner);
   whoIn.appendChild(el(`<div class="section-label" style="color:#15803d">✓ ${cleanersTagged ? 'Cleaners' : 'Staff'} clocked in ${dayLbl} (${arrIds.length})</div>`));
+  // EXPECTED vs ACTUALLY IN — the badge-ins alone can't tell "hasn't arrived yet"
+  // from "isn't working today", so a quiet morning reads as everyone being late.
+  // Only shown once somebody actually has a rota; until then it would say nothing.
+  {
+    const shownDay = selectedDay || todayKey();
+    const roster = cleaningStaff();
+    if (roster.some((p) => Array.isArray(p.worksOn))) {
+      const expected = roster.filter((p) => worksOnDay(p, shownDay));
+      const off = roster.filter((p) => !worksOnDay(p, shownDay));
+      const inCount = expected.filter((p) => hikArrivals[p.id]).length;
+      whoIn.appendChild(el(`<div style="font-size:11px;color:#5f7189;font-weight:600;margin:-6px 0 10px">`
+        + `<b style="color:${inCount >= expected.length ? '#15803d' : '#b45309'}">${inCount} of ${expected.length}</b> expected in`
+        + (off.length ? ` · off today: ${esc(off.map((p) => p.name.split(' ')[0]).join(', '))}` : '')
+        + `</div>`));
+    }
+  }
   if (!cleanersTagged) whoIn.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin:-6px 0 10px">Tip: tag people as <b>Cleaner</b> in the Team tab so sync only shows cleaners.</div>`));
-  // Manually add a cleaner who forgot to badge in.
-  const notIn = cleaningStaff().filter((p) => !hikArrivals[p.id]);
+  // Manually add a cleaner who forgot to badge in. Someone who isn't working today
+  // didn't forget, so offering them here is how a day off turns into a hand-out by
+  // mistake. Badging in still wins over the rota everywhere else: if they turn up on
+  // their day off they appear as present and get rooms like anyone else.
+  const notIn = cleaningStaff().filter((p) => !hikArrivals[p.id] && worksOnDay(p, selectedDay || todayKey()));
   if (notIn.length) {
     const addSel = el('<select class="area-select" style="margin-bottom:12px"></select>');
     addSel.appendChild(el('<option value="">＋ Add someone who forgot to clock in…</option>'));
@@ -3864,6 +3905,23 @@ function employeeCard(p) {
   rm.onclick = () => removeEmployee(p.id);
   ctl.appendChild(clean); ctl.appendChild(lead); ctl.appendChild(shift); ctl.appendChild(ctype); ctl.appendChild(ed); ctl.appendChild(rm);
   card.appendChild(ctl);
+
+  // WORKS ON — only worth the room for cleaners; nobody is handing rooms to the
+  // rest, so a rota for them is noise. All seven lit is the default and means
+  // "every day", which is why nothing here needs setting up before it works.
+  if (p.isCleaner) {
+    const wRow = el('<div class="su-ctl" style="border-top:none;padding-top:6px;margin-top:2px;flex-wrap:wrap;align-items:center"></div>');
+    const offCount = Array.isArray(p.worksOn) ? 7 - p.worksOn.length : 0;
+    wRow.appendChild(el(`<div style="flex:0 0 auto;font-size:11px;color:#5f7189;font-weight:700;margin-right:2px" `
+      + `title="Which days this person is expected in">Works on${offCount ? '' : ' · every day'}</div>`));
+    WEEKDAYS.forEach(([lbl, dow]) => {
+      const on = !Array.isArray(p.worksOn) || p.worksOn.includes(dow);
+      const b = el(`<button class="freqmini ${on ? 'on' : ''}" style="flex:0 0 auto;padding:6px 9px;font-size:11px${on ? '' : ';opacity:0.45'}">${lbl}</button>`);
+      b.onclick = () => toggleWorksOn(p.id, dow);
+      wRow.appendChild(b);
+    });
+    card.appendChild(wRow);
+  }
   return card;
 }
 
