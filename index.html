@@ -395,7 +395,10 @@ const WEEKDAYS = [['Mon', 1], ['Tue', 2], ['Wed', 3], ['Thu', 4], ['Fri', 5], ['
 // half the crew is in one week and the other half the next. A weekly on/off can't
 // say that, so a weekday can also be set to week A or week B. Counted from a fixed
 // Monday so every device agrees which week is which, whatever day it is asked.
-const WEEK_EPOCH = '2026-01-05';                 // a Monday; only the position in the cycle matters
+// The working week starts on a SATURDAY here, so weeks are counted from one. That
+// keeps a Friday in the same week as the Saturday that opened it, which is how the
+// office reads the rota — Friday is the end of its week, not the middle of another.
+const WEEK_EPOCH = '2026-08-08';                 // a Saturday; only the position in the cycle matters
 const weekIndex = (day, cycle) => {
   const a = new Date(WEEK_EPOCH + 'T00:00:00'), b = new Date(day + 'T00:00:00');
   const weeks = Math.floor(Math.round((b - a) / 864e5) / 7);
