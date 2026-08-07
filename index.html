@@ -624,7 +624,12 @@ function dueOnDay(u, day) {
 // climb. Here each day's rooms are marked clean as they come round before moving to
 // the next, which is what will really happen, so the numbers show which days are
 // heavy and which are light instead of one ever-growing pile.
-function scheduleAhead(nDays) {
+// Walk the days forward, marking each room clean as it comes round, and report what
+// falls due on each one. The projection is the whole point: dueOnDay reads the room's
+// real last-clean date, which never moves as you look further ahead, so a room due
+// today reads as due on every day after it as well. Left like that an every-other-day
+// room appears on all seven days instead of four, and the counts only ever climb.
+function projectDueDays(nDays) {
   const start = workToday();
   const proj = {};
   // Same scope as the rest of planning: kinds of room run as their own operation
@@ -644,13 +649,31 @@ function scheduleAhead(nDays) {
         dt.setDate(dt.getDate() + cycleLen(u));
         isDue = dt.toLocaleDateString('en-CA') <= day;
       }
-      if (isDue) { due.push(u); proj[u.id] = day; }  // cleaned today → next one is a full cycle away
+      if (isDue) { due.push(u); proj[u.id] = day; }  // cleaned that day → next one a full cycle later
     });
-    const byType = {};
-    due.forEach((u) => { const t = unitType(u); byType[t] = (byType[t] || 0) + 1; });
-    out.push({ day, due, byType, count: due.length });
+    out.push({ day, due });
   }
   return out;
+}
+
+function scheduleAhead(nDays) {
+  return projectDueDays(nDays).map((d) => {
+    const byType = {};
+    d.due.forEach((u) => { const t = unitType(u); byType[t] = (byType[t] || 0) + 1; });
+    return { day: d.day, due: d.due, byType, count: d.due.length };
+  });
+}
+
+// Which rooms a given future day should actually carry, once the days before it are
+// assumed done. Today and the past are left to the real records.
+function projectedDueIdsOn(day) {
+  const start = workToday();
+  if (day <= start) return null;
+  const span = Math.round((new Date(day + 'T00:00:00') - new Date(start + 'T00:00:00')) / 864e5);
+  if (!(span > 0) || span > 400) return null;
+  const walk = projectDueDays(span + 1);
+  const hit = walk.find((d) => d.day === day);
+  return hit ? new Set(hit.due.map((u) => u.id)) : null;
 }
 
 // Infer floor from unit number: 906->9, 1106->11, 506->5
@@ -2755,7 +2778,13 @@ function suggestedJobsFor(day) {
 function planningJobsFor(day) {
   const unitById = {};
   (state.servicedUnits || []).forEach((u) => { unitById[u.id] = u; });
-  return suggestedJobsFor(day).filter((j) => j.kind !== 'unit' || onRollCall(unitById[j.id]));
+  const jobs = suggestedJobsFor(day).filter((j) => j.kind !== 'unit' || onRollCall(unitById[j.id]));
+  // For a day still to come, take the rooms the schedule will actually have reached
+  // by then rather than everything outstanding now — otherwise every-other-day rooms
+  // land on all seven days and each day reads as the same full list.
+  const dueIds = projectedDueIdsOn(day);
+  if (!dueIds) return jobs;
+  return jobs.filter((j) => j.kind !== 'unit' || dueIds.has(j.id));
 }
 // Fill a day's plan from the schedule. Additive: anything already on the plan
 // keeps its assignee, so seeding can never wipe a hand-made list.

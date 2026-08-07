@@ -898,6 +898,32 @@ function serve() {
       spread: counts.length ? Math.max(...counts) - Math.min(...counts) : 0,
     };
   });
+  // An every-other-day room belongs on every OTHER day. Planning a week without
+  // assuming the days before it get done puts it on all seven.
+  const eodPlan = await page.evaluate(() => {
+    const u = (state.servicedUnits || []).find((x) => onRollCall(x));
+    if (!u) return null;
+    u.freq = 'eod';
+    u.lastCleaned = shiftDay(todayKey(), -1);        // due today, then every second day
+    (state.servicedUnits || []).forEach((x) => { if (x !== u) x.paused = true; });
+    save();
+    const days = [];
+    for (let i = 0; i < 6; i += 1) {
+      const d = shiftDay(workToday(), i);
+      days.push(projectDueDays(6)[i].due.some((x) => x.id === u.id));
+    }
+    (state.servicedUnits || []).forEach((x) => { x.paused = false; });
+    save();
+    return { unit: u.unit, days };
+  });
+  check('an every-other-day room is planned every other day', eodPlan && eodPlan.days.filter(Boolean).length === 3,
+    eodPlan ? 'due on: ' + JSON.stringify(eodPlan.days) : 'no roll-call room to test with');
+  // Which day it starts on depends on when it was last done; what matters is that no
+  // two days in a row ever both carry it.
+  check('and it alternates rather than landing on consecutive days',
+    eodPlan && eodPlan.days.every((v, i) => i === 0 || v !== eodPlan.days[i - 1]),
+    eodPlan ? 'pattern: ' + JSON.stringify(eodPlan.days) : '');
+
   check('the day has rooms on it and a crew rostered', plan.rooms > 0 && plan.onDuty > 1, JSON.stringify(plan));
   eq('somebody is genuinely off that day', plan.onDuty, plan.crew - 1);
   eq('every room is handed out without being asked', plan.named, plan.rooms);
