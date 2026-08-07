@@ -879,12 +879,13 @@ function serve() {
     const shape = () => projectDueDays(4).map((d) => d.due.length);
     const before = shape();
     const preview = staggerFrequencyGroup('eod', true);
-    const heldByPreview = rooms.filter((u) => u.holdUntil).length;
+    const heldByPreview = rooms.filter((u) => u.holdUntil || u.alsoCleanOn).length;
     const res = staggerFrequencyGroup('eod');
     const after = shape();
     const held = rooms.filter((u) => u.holdUntil).length;
+    const extra = rooms.filter((u) => u.alsoCleanOn).length;
     (state.servicedUnits || []).forEach((u) => { u.paused = false; });
-    return { n: rooms.length, before, after, held, heldByPreview, groups: res.groups.length,
+    return { n: rooms.length, before, after, held, extra, heldByPreview, groups: res.groups.length,
       swingBefore: Math.max(...before) - Math.min(...before),
       swingAfter: Math.max(...after) - Math.min(...after) };
   });
@@ -892,11 +893,13 @@ function serve() {
     'day one carried ' + clump.before[0] + ' of ' + clump.n);
   eq('previewing it changes nothing', clump.heldByPreview, 0);
   eq('it splits them over the length of the cycle', clump.groups, 2);
-  check('half of them are held back', clump.held > 0 && clump.held < clump.n, clump.held + ' of ' + clump.n + ' held');
+  check('half of them get an extra clean rather than a delay', clump.extra > 0 && clump.extra < clump.n,
+    clump.extra + ' of ' + clump.n + ' doubled up');
+  eq('nothing is held back or skipped to achieve it', clump.held, 0);
   check('the week stops swinging', clump.swingAfter < clump.swingBefore,
     'swing went from ' + clump.swingBefore + ' to ' + clump.swingAfter);
   await page.evaluate(() => {                     // put the rooms back as they were
-    (state.servicedUnits || []).forEach((u) => { delete u.holdUntil; u.paused = false; });
+    (state.servicedUnits || []).forEach((u) => { delete u.holdUntil; delete u.alsoCleanOn; u.paused = false; });
     (window.__clumpUndo || []).forEach((o) => {
       const u = (state.servicedUnits || []).find((x) => x.id === o.id);
       if (u) { u.freq = o.freq; u.lastCleaned = o.last; }

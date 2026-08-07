@@ -597,7 +597,15 @@ const cycleLen = (u) => (FREQ_DAYS[u.freq] || 1) + dueShift(u);
 // never quietly hold a room back twice.
 const heldBack = (u, day) => !!(u.holdUntil && String(day) < String(u.holdUntil)
   && (!lastCleanDate(u) || String(lastCleanDate(u)) < String(u.holdUntil)));
+
+// A one-off extra clean, on a named day. This is the other way to break up a clump,
+// and the better one: holding a room back delays a clean, where cleaning a room again
+// a day early costs one extra clean and shifts it onto the opposite day for good.
+// Nothing is ever skipped to tidy the schedule. It lapses the moment it is done.
+const extraCleanDue = (u, day) => !!(u.alsoCleanOn && String(u.alsoCleanOn) === String(day)
+  && String(lastCleanDate(u) || '') !== String(day));
 function unitDueToday(u) {
+  if (extraCleanDue(u, workToday())) return true;      // an extra clean beats everything
   if (heldBack(u, workToday())) return false;
   const base = lastCleanDate(u);
   if (!base) return true;                       // never cleaned → due now
@@ -622,6 +630,7 @@ const FREQ_LABEL = { nightly: 'Nightly', daily: 'Daily', eod: 'Every other day',
 // A room is due on `day` once its next-due date has arrived, and stays due after
 // that: work nobody got to doesn't stop needing doing.
 function dueOnDay(u, day) {
+  if (extraCleanDue(u, day)) return true;
   if (heldBack(u, day)) return false;
   const base = lastCleanDate(u);
   if (!base) return true;                  // never recorded → due now
@@ -653,7 +662,8 @@ function projectDueDays(nDays) {
     units.forEach((u) => {
       const base = proj[u.id];
       let isDue;
-      if (heldBack(u, day)) isDue = false;           // deliberately held back to break up a clump
+      if (extraCleanDue(u, day)) isDue = true;       // an extra clean put in to break up a clump
+      else if (heldBack(u, day)) isDue = false;      // deliberately held back
       else if (!base) isDue = true;                  // never recorded → due straight away
       else {
         const dt = new Date(base + 'T00:00:00');
@@ -2933,8 +2943,14 @@ function staggerFrequencyGroup(freqKeyName, dryRun) {
   groups.forEach((grp, g) => {
     const day = shiftDay(start, g);
     grp.forEach((u) => {
-      if (g === 0) { if (!dryRun && u.holdUntil) delete u.holdUntil; return; }   // first group goes today
-      if (!dryRun) u.holdUntil = day;
+      if (g === 0) {
+        if (!dryRun) { delete u.holdUntil; delete u.alsoCleanOn; }   // first group is due today as normal
+        return;
+      }
+      // Every group after the first gets an extra clean on its day. They are all due
+      // today too, so those rooms are cleaned twice inside the cycle — once now, once
+      // on their new day — and come out of it landing on the opposite day for good.
+      if (!dryRun) { u.alsoCleanOn = day; delete u.holdUntil; }
       moved += 1;
     });
   });
@@ -3185,11 +3201,13 @@ function viewRooms() {
     const btn = el(`<button class="freqmini" style="width:100%;margin-top:8px;padding:9px;border-color:#7c3aed;color:#7c3aed">⇄ Split them over ${span} days</button>`);
     btn.onclick = () => {
       const preview = staggerFrequencyGroup(fk, true);
+      const extra = preview.groups.slice(1).reduce((n, g) => n + g.units.length, 0);
       showConfirm(
         'Split ' + dueNow.length + ' rooms over ' + span + ' days?',
-        preview.groups.map((g, i) => (i === 0 ? 'Still due today' : 'Held to ' + g.day) + ': ' + g.units.join(', ')).join('\n\n')
-          + '\n\nNo clean is ever brought forward — the later group is only held back, and the hold lifts '
-          + 'as soon as the room is cleaned, so the new rhythm carries itself.',
+        preview.groups.map((g, i) => (i === 0 ? 'Today, as normal' : 'Today AND again on ' + g.day) + ': ' + g.units.join(', ')).join('\n\n')
+          + '\n\nThey are all cleaned today. ' + extra + ' of them are then cleaned again the next day, '
+          + 'which puts them on the opposite day from then on. Nothing is delayed and nothing is skipped — '
+          + 'it costs ' + extra + ' extra cleans once, and the rhythm carries itself afterwards.',
         () => { staggerFrequencyGroup(fk); },
         'Split them',
         'safe'
