@@ -803,7 +803,7 @@ function serve() {
   // Take today off them, whichever weekday today happens to be.
   const rota = await page.evaluate((pid) => {
     const dow = new Date(workToday() + 'T00:00:00').getDay();
-    toggleWorksOn(pid, dow);
+    setWorksState(pid, dow, 'off');
     const p = (state.staff || []).find((x) => x.id === pid);
     return { worksOn: p.worksOn, worksToday: worksToday(p), dow };
   }, rotaBase.id);
@@ -831,9 +831,40 @@ function serve() {
   check('badging in on a day off still puts them on the roll call', present, 'manual arrival did not take');
   await page.evaluate((pid) => {                       // hand the day back
     const dow = new Date(workToday() + 'T00:00:00').getDay();
-    toggleWorksOn(pid, dow); save(); render();
+    setWorksState(pid, dow, 'on'); save(); render();
   }, rotaBase.id);
   await page.waitForTimeout(300);
+
+  console.log('\n\x1b[1mEVERY OTHER FRIDAY — the rest day is shared, not skipped\x1b[0m');
+  const alt = await page.evaluate(() => {
+    const crew = cleaningStaff();
+    const split = evenOutAltDay(5);
+    applyAltSplit(5, split);
+    // Two consecutive Fridays, whenever the next one falls.
+    let f1 = todayKey();
+    for (let i = 0; i < 8 && new Date(f1 + 'T00:00:00').getDay() !== 5; i += 1) f1 = shiftDay(f1, 1);
+    const f2 = shiftDay(f1, 7);
+    const on = (d) => crew.filter((p) => worksOnDay(p, d)).map((p) => p.name);
+    return {
+      crew: crew.length, a: split.a.length, b: split.b.length,
+      f1, f2, onF1: on(f1), onF2: on(f2),
+      monday: crew.filter((p) => worksOnDay(p, shiftDay(f1, 3))).length,   // the Monday after
+      parityDiffers: weekParity(f1) !== weekParity(f2),
+    };
+  });
+  check('the crew splits into two even halves', Math.abs(alt.a - alt.b) <= 1, JSON.stringify(alt));
+  check('consecutive Fridays are different weeks', alt.parityDiffers, 'weekParity did not alternate');
+  eq('only one half is in on the first Friday', alt.onF1.length, alt.a);
+  eq('and the other half on the next', alt.onF2.length, alt.b);
+  check('nobody is in on both Fridays', !alt.onF1.some((n) => alt.onF2.includes(n)),
+    'overlap: ' + JSON.stringify(alt.onF1.filter((n) => alt.onF2.includes(n))));
+  check('everybody works one of the two', alt.onF1.length + alt.onF2.length === alt.crew,
+    alt.onF1.length + '+' + alt.onF2.length + ' of ' + alt.crew);
+  eq('an alternating Friday leaves the other days alone', alt.monday, alt.crew);
+  await page.evaluate(() => {                          // hand every Friday back
+    (state.staff || []).forEach((p) => { if (p.alt) delete p.alt; });
+    save(); render();
+  });
 
   console.log('\n\x1b[1mPUT THE BOARD BACK — unassign the whole morning at once\x1b[0m');
   await page.locator('.nav button', { hasText: 'Roll Call' }).click();

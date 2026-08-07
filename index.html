@@ -390,20 +390,91 @@ const FREQ_DAYS = { nightly: 1, daily: 1, eod: 2, weekly: 7, monthly: 30 };
 // and Hik's Time Card filling in through the morning makes that worse.
 // worksOn absent or null = every day, so an untouched roster behaves as it always has.
 const WEEKDAYS = [['Mon', 1], ['Tue', 2], ['Wed', 3], ['Thu', 4], ['Fri', 5], ['Sat', 6], ['Sun', 0]];
+
+// Some days are worked every OTHER week — the Friday rest day is shared out, so
+// half the crew is in one week and the other half the next. A weekly on/off can't
+// say that, so a weekday can also be set to week A or week B. Counted from a fixed
+// Monday so every device agrees which week is which, whatever day it is asked.
+const WEEK_EPOCH = '2026-01-05';                 // a Monday; only the parity matters
+const weekParity = (day) => {
+  const a = new Date(WEEK_EPOCH + 'T00:00:00'), b = new Date(day + 'T00:00:00');
+  const weeks = Math.floor(Math.round((b - a) / 864e5) / 7);
+  return ((weeks % 2) + 2) % 2;                  // stays 0/1 for dates before the epoch too
+};
+const altSideFor = (p, dow) => (p && p.alt && p.alt[dow]) || null;
 const worksOnDay = (p, day) => {
-  if (!p || !Array.isArray(p.worksOn)) return true;
-  return p.worksOn.includes(new Date(day + 'T00:00:00').getDay());
+  if (!p) return true;
+  const dow = new Date(day + 'T00:00:00').getDay();
+  const alt = altSideFor(p, dow);
+  if (alt) return weekParity(day) === (alt === 'B' ? 1 : 0);
+  if (!Array.isArray(p.worksOn)) return true;
+  return p.worksOn.includes(dow);
 };
 const worksToday = (p) => worksOnDay(p, workToday());
-function toggleWorksOn(pid, dow) {
+// A weekday cycles: every week → off → week A → week B → every week. Four states in
+// one tap-target beats four controls on a row that already has seven of them.
+const WORKS_STATES = ['on', 'off', 'A', 'B'];
+function worksStateOf(p, dow) {
+  const alt = altSideFor(p, dow);
+  if (alt) return alt;
+  if (!Array.isArray(p.worksOn)) return 'on';
+  return p.worksOn.includes(dow) ? 'on' : 'off';
+}
+function setWorksState(pid, dow, next) {
   const p = (state.staff || []).find((x) => x.id === pid);
   if (!p) return;
-  const cur = Array.isArray(p.worksOn) ? p.worksOn.slice() : [0, 1, 2, 3, 4, 5, 6];
-  const next = cur.includes(dow) ? cur.filter((d) => d !== dow) : cur.concat(dow);
+  const days = Array.isArray(p.worksOn) ? p.worksOn.slice() : [0, 1, 2, 3, 4, 5, 6];
+  if (!p.alt) p.alt = {};
+  if (next === 'A' || next === 'B') {
+    p.alt[dow] = next;
+    // An alternating day is worked, just not every week. Keeping it in worksOn means
+    // anything that only reads the weekly list still counts it as a working day.
+    if (!days.includes(dow)) days.push(dow);
+  } else {
+    delete p.alt[dow];
+    const has = days.includes(dow);
+    if (next === 'on' && !has) days.push(dow);
+    if (next === 'off' && has) days.splice(days.indexOf(dow), 1);
+  }
+  if (!Object.keys(p.alt).length) delete p.alt;
   // Every day is the default, and storing it as null keeps "never set up" and
   // "deliberately set to all seven" the same thing rather than two states to reason about.
-  p.worksOn = next.length === 7 ? null : next;
+  p.worksOn = (days.length === 7 && !p.alt) ? null : days.sort();
   save(); render();
+}
+function cycleWorksOn(pid, dow) {
+  const p = (state.staff || []).find((x) => x.id === pid);
+  if (!p) return;
+  const cur = worksStateOf(p, dow);
+  setWorksState(pid, dow, WORKS_STATES[(WORKS_STATES.indexOf(cur) + 1) % WORKS_STATES.length]);
+}
+
+// Share a rest day out evenly. The Friday off rotates, so the fair split is half the
+// crew on week A and half on week B — and it has to be even, or one group carries an
+// extra Friday every fortnight forever. Sorted by name so the same crew always splits
+// the same way: re-running it doesn't reshuffle who works with whom.
+function evenOutAltDay(dow) {
+  const crew = cleaningStaff().slice().sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  if (!crew.length) return { a: [], b: [] };
+  const a = [], b = [];
+  crew.forEach((p, i) => (i % 2 === 0 ? a : b).push(p));
+  return { a, b };
+}
+function applyAltSplit(dow, split) {
+  split.a.forEach((p) => setWorksStateQuiet(p.id, dow, 'A'));
+  split.b.forEach((p) => setWorksStateQuiet(p.id, dow, 'B'));
+  save(); render();
+}
+// Same as setWorksState but without a save+render per person — a whole crew at once
+// would otherwise be one write and one repaint each.
+function setWorksStateQuiet(pid, dow, next) {
+  const p = (state.staff || []).find((x) => x.id === pid);
+  if (!p) return;
+  const days = Array.isArray(p.worksOn) ? p.worksOn.slice() : [0, 1, 2, 3, 4, 5, 6];
+  if (!p.alt) p.alt = {};
+  p.alt[dow] = next;
+  if (!days.includes(dow)) days.push(dow);
+  p.worksOn = days.sort();
 }
 // When was this unit last cleaned? Use the most recent of: the shared history log,
 // or a manual "last cleaned on" date set when adding/editing the room.
@@ -504,7 +575,9 @@ function dueOnDay(u, day) {
 function scheduleAhead(nDays) {
   const start = workToday();
   const proj = {};
-  const units = (state.servicedUnits || []).filter((u) => !u.paused);
+  // Same scope as the rest of planning: kinds of room run as their own operation
+  // (Airbnb) are not what the office is looking ahead at here.
+  const units = (state.servicedUnits || []).filter((u) => !u.paused && onRollCall(u));
   units.forEach((u) => { proj[u.id] = lastCleanDate(u) || null; });
   const out = [];
   for (let i = 0; i < nDays; i += 1) {
@@ -1643,6 +1716,78 @@ async function arrivalsForDay(day) {
     return { arrivals, unknown, other };
   } catch (e) { return null; }
 }
+// Work out each cleaner's rest days from the badge history instead of asking the
+// office to type in eight rotas. Matched on name, the same way the roll call reads
+// the door events, so what this infers and what shows up each morning agree.
+//
+// Judged per weekday, not overall: someone in every day but Friday is 86% present
+// and would look like perfect attendance. A weekday needs enough occurrences in the
+// window to mean anything, and only a clear result counts — anything in between is
+// left alone rather than guessed at, because the office can see its own crew and a
+// wrong rest day is worse than no rest day.
+const ROTA_MIN_SAMPLES = 3;      // fewer than this of a given weekday says nothing
+const ROTA_OFF_AT = 0.2;         // in 20% of them or less → a rest day
+const ROTA_ON_AT = 0.5;          // half or more → a working day
+const ROTA_MIN_OVERALL = 0.35;   // below this they're too irregular to read at all
+async function inferRotasFromAttendance(windowDays) {
+  if (!db) return null;
+  const from = shiftDay(todayKey(), -Math.abs(windowDays || 42));
+  try {
+    const { data, error } = await db.from('hik_events')
+      .select('person_name,event_time')
+      .gte('event_time', from)
+      .order('event_time', { ascending: true });
+    if (error) throw error;
+    const seen = {};                                   // day -> Set of lowercased names
+    for (const e of (data || [])) {
+      const day = String(e.event_time || '').slice(0, 10);
+      const key = (e.person_name || '').trim().toLowerCase();
+      if (!day || !key) continue;
+      (seen[day] = seen[day] || new Set()).add(key);
+    }
+    const days = Object.keys(seen).sort();
+    if (!days.length) return { days: 0, proposals: [], skipped: [] };
+    const dowTotal = {};
+    days.forEach((d) => { const w = new Date(d + 'T00:00:00').getDay(); dowTotal[w] = (dowTotal[w] || 0) + 1; });
+    const proposals = [], skipped = [];
+    cleaningStaff().forEach((p) => {
+      const key = (p.name || '').trim().toLowerCase();
+      const hit = {};
+      let total = 0;
+      days.forEach((d) => {
+        if (!seen[d].has(key)) return;
+        total += 1;
+        const w = new Date(d + 'T00:00:00').getDay();
+        hit[w] = (hit[w] || 0) + 1;
+      });
+      if (total / days.length < ROTA_MIN_OVERALL) {
+        skipped.push({ name: p.name, reason: 'in on only ' + Math.round((total / days.length) * 100) + '% of days' });
+        return;
+      }
+      const worksOn = [], off = [], unclear = [];
+      for (let w = 0; w < 7; w += 1) {
+        const tot = dowTotal[w] || 0;
+        if (tot < ROTA_MIN_SAMPLES) { worksOn.push(w); unclear.push(w); continue; }  // no evidence → leave them on
+        const rate = (hit[w] || 0) / tot;
+        if (rate <= ROTA_OFF_AT) off.push(w);
+        else if (rate >= ROTA_ON_AT) worksOn.push(w);
+        else { worksOn.push(w); unclear.push(w); }
+      }
+      if (!off.length) return;                          // nothing to change
+      proposals.push({ id: p.id, name: p.name, worksOn, off, unclear });
+    });
+    return { days: days.length, proposals, skipped };
+  } catch (e) { return null; }
+}
+
+function applyRotas(proposals) {
+  proposals.forEach((r) => {
+    const p = (state.staff || []).find((x) => x.id === r.id);
+    if (p) p.worksOn = r.worksOn.length === 7 ? null : r.worksOn;
+  });
+  save(); render();
+}
+
 let hikLastPull = null;
 // Roll call is read at 6am while people are still badging in, so re-check on a timer
 // rather than making the office pull-to-refresh. Only redraws when something changed,
@@ -2451,6 +2596,16 @@ function suggestedJobsFor(day) {
   });
   return out;
 }
+// What the office plans and looks ahead at, as opposed to what gets cleaned. Kinds
+// of room switched off in "Roll Call covers" are run as their own operation on their
+// own tab — Airbnb is cleaned by its own pair after the offices — so planning them
+// here is noise. Tonight's round deliberately does NOT use this: the night's work is
+// the night's work, whatever the morning is organised around.
+function planningJobsFor(day) {
+  const unitById = {};
+  (state.servicedUnits || []).forEach((u) => { unitById[u.id] = u; });
+  return suggestedJobsFor(day).filter((j) => j.kind !== 'unit' || onRollCall(unitById[j.id]));
+}
 // Fill a day's plan from the schedule. Additive: anything already on the plan
 // keeps its assignee, so seeding can never wipe a hand-made list.
 function applySuggestions(day, jobs) {
@@ -2470,7 +2625,7 @@ function seedPlanOnce(day) {
   if (!state.planSeeded) state.planSeeded = {};
   if (state.planSeeded[day]) return 0;
   state.planSeeded[day] = true;
-  const added = applySuggestions(day, suggestedJobsFor(day));
+  const added = applySuggestions(day, planningJobsFor(day));
   save();
   return added;
 }
@@ -2567,7 +2722,7 @@ function viewPlan() {
   // Due from the schedule but not on the plan — either removed by hand, or fallen
   // due since the day was seeded. Offered back rather than silently re-added.
   const plan0 = getPlan(day);
-  const missing = suggestedJobsFor(day).filter(s => !plan0[planKey(s.kind, s.id)]);
+  const missing = planningJobsFor(day).filter(s => !plan0[planKey(s.kind, s.id)]);
   if (missing.length) {
     wrap.appendChild(el(`<div class="section-label" style="margin-top:6px;color:#b45309">Due but not planned (${missing.length})</div>`));
     const addAll = el(`<button class="add-btn" style="background:#b45309;margin-bottom:8px">＋ Add all ${missing.length} due job${missing.length === 1 ? '' : 's'}</button>`);
@@ -3915,9 +4070,15 @@ function employeeCard(p) {
     wRow.appendChild(el(`<div style="flex:0 0 auto;font-size:11px;color:#5f7189;font-weight:700;margin-right:2px" `
       + `title="Which days this person is expected in">Works on${offCount ? '' : ' · every day'}</div>`));
     WEEKDAYS.forEach(([lbl, dow]) => {
-      const on = !Array.isArray(p.worksOn) || p.worksOn.includes(dow);
-      const b = el(`<button class="freqmini ${on ? 'on' : ''}" style="flex:0 0 auto;padding:6px 9px;font-size:11px${on ? '' : ';opacity:0.45'}">${lbl}</button>`);
-      b.onclick = () => toggleWorksOn(p.id, dow);
+      const st = worksStateOf(p, dow);
+      const style = st === 'off' ? ';opacity:0.4'
+        : (st === 'A' || st === 'B') ? ';border-color:#7c3aed;color:#7c3aed' : '';
+      const tip = st === 'off' ? 'Off every ' + lbl
+        : st === 'on' ? 'In every ' + lbl
+        : 'In on ' + lbl + ' every other week (week ' + st + ')';
+      const b = el(`<button class="freqmini ${st === 'on' ? 'on' : ''}" title="${esc(tip)}" `
+        + `style="flex:0 0 auto;padding:6px 9px;font-size:11px${style}">${lbl}${st === 'A' || st === 'B' ? ' ' + st : ''}</button>`);
+      b.onclick = () => cycleWorksOn(p.id, dow);
       wRow.appendChild(b);
     });
     card.appendChild(wRow);
@@ -4057,6 +4218,37 @@ function viewTeam() {
     seg.appendChild(mk(`Cleaners (${cleaners})`, !teamShowAll, () => { teamShowAll = false; render(); }));
     seg.appendChild(mk(`All staff (${total})`, teamShowAll, () => { teamShowAll = true; render(); }));
     wrap.appendChild(seg);
+  }
+
+  // SHARE OUT THE REST DAY — the Friday off alternates, so half the crew is in one
+  // week and half the next. Doing that by hand across a whole crew is where it drifts
+  // and somebody quietly ends up working most Fridays.
+  if (cleaners) {
+    const fri = 5;
+    const crew = cleaningStaff();
+    const onA = crew.filter((p) => altSideFor(p, fri) === 'A').length;
+    const onB = crew.filter((p) => altSideFor(p, fri) === 'B').length;
+    const box = el('<div style="margin-bottom:14px"></div>');
+    const btn = el(`<button class="add-btn" style="background:#7c3aed;color:#ffffff">⚖ Share out the Friday rota evenly</button>`);
+    btn.onclick = () => {
+      const split = evenOutAltDay(fri);
+      showConfirm(
+        'Split the Friday rota?',
+        'Week A (' + split.a.length + '): ' + split.a.map((p) => p.name.split(' ')[0]).join(', ')
+          + '\n\nWeek B (' + split.b.length + '): ' + split.b.map((p) => p.name.split(' ')[0]).join(', ')
+          + '\n\nEach of them then works every other Friday. You can still change any one of them by hand afterwards.',
+        () => applyAltSplit(fri, split),
+        'Split evenly',
+        'safe'
+      );
+    };
+    box.appendChild(btn);
+    box.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin-top:6px">`
+      + (onA + onB
+        ? `Currently ${onA} on week A · ${onB} on week B${Math.abs(onA - onB) > 1 ? ' — <b style="color:#b45309">uneven</b>' : ''}`
+        : `Nobody is on an alternating Friday yet — everyone is down as working every one.`)
+      + `</div>`));
+    wrap.appendChild(box);
   }
 
   // Add-employee form only matters when viewing everyone.
