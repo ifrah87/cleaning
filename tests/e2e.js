@@ -866,6 +866,52 @@ function serve() {
     save(); render();
   });
 
+  console.log('\n\x1b[1mPLAN AHEAD — a future day lays itself out from the rota\x1b[0m');
+  const plan = await page.evaluate(() => {
+    if (Array.isArray(state.rollCallTypes)) state.rollCallTypes = null;
+    const crew = cleaningStaff();
+    // Put one person off tomorrow, so "rostered on" has to be doing real work.
+    const day = shiftDay(todayKey(), 1);
+    const dow = new Date(day + 'T00:00:00').getDay();
+    const offPerson = crew[0];
+    setWorksState(offPerson.id, dow, 'off');
+    (state.servicedUnits || []).forEach((u) => {
+      u.lastCleaned = null; u.usualTo = null; u.preferEarly = false; u.preferLate = false;
+    });
+    // A day nobody has opened yet: seeding it must hand the rooms out on its own.
+    delete state.planSeeded[day];
+    state.plans[day] = {};
+    save();
+    seedPlanOnce(day);
+    const jobs = Object.values(getPlan(day));
+    const roomJobs = jobs.filter((j) => j.kind === 'unit');
+    const areaJobs = jobs.filter((j) => j.kind === 'area');
+    const onDuty = crew.filter((p) => worksOnDay(p, day));
+    const counts = onDuty.map((p) => roomJobs.filter((j) => j.assignedTo === p.id).length);
+    return {
+      day, crew: crew.length, onDuty: onDuty.length,
+      offName: offPerson.name,
+      rooms: roomJobs.length,
+      named: roomJobs.filter((j) => j.assignedTo).length,
+      toOffPerson: roomJobs.filter((j) => j.assignedTo === offPerson.id).length,
+      areasNamed: areaJobs.filter((j) => j.assignedTo).length,
+      spread: counts.length ? Math.max(...counts) - Math.min(...counts) : 0,
+    };
+  });
+  check('the day has rooms on it and a crew rostered', plan.rooms > 0 && plan.onDuty > 1, JSON.stringify(plan));
+  eq('somebody is genuinely off that day', plan.onDuty, plan.crew - 1);
+  eq('every room is handed out without being asked', plan.named, plan.rooms);
+  eq('nothing goes to the person who is off', plan.toOffPerson, 0);
+  check('and it is split evenly between the rest', plan.spread <= 1, 'spread: ' + plan.spread);
+  // Who walks the building is a call for the morning, not something to decide in advance.
+  eq('communal areas are left for the day itself', plan.areasNamed, 0);
+  await page.evaluate((d) => {                          // give the day back
+    const dow = new Date(d + 'T00:00:00').getDay();
+    const p = cleaningStaff()[0];
+    setWorksState(p.id, dow, 'on');
+    save(); render();
+  }, plan.day);
+
   console.log('\n\x1b[1mROTATION — nobody is stuck on the same rooms every day\x1b[0m');
   const rot = await page.evaluate(async () => {
     if (Array.isArray(state.rollCallTypes)) state.rollCallTypes = null;

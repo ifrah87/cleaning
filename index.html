@@ -2770,13 +2770,83 @@ function applySuggestions(day, jobs) {
   });
   return added;
 }
+// Lay a future day out by itself: who is rostered on, what is due, and an even split
+// between them. Nobody has badged in for a day that hasn't happened, so this reads
+// the rota where the morning reads the door — otherwise the rules are the same ones:
+// the times customers asked for come first and get spread, then load, then don't give
+// somebody the room they cleaned last time, and finally even out whatever is lopsided.
+//
+// Communal areas are left alone on purpose, as auto-assign leaves them alone: an area
+// is a walk of the building rather than a room on a count, and who does it is a call
+// for the morning.
+function autoPlanDay(day) {
+  const plan = getPlan(day);
+  const crew = cleaningStaff().filter((p) => worksOnDay(p, day))
+    .slice().sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  if (!crew.length) return { assigned: 0, crew: 0, reason: 'nobody is rostered on' };
+  const unitById = {};
+  (state.servicedUnits || []).forEach((u) => { unitById[u.id] = u; });
+  const keys = Object.keys(plan).filter((k) => plan[k].kind === 'unit' && unitById[plan[k].refId]);
+  if (!keys.length) return { assigned: 0, crew: crew.length, reason: 'nothing on the plan' };
+
+  const order = crew.map((p) => p.id);
+  const staffById = {};
+  crew.forEach((p) => { staffById[p.id] = p; });
+  const load = {}, slotLoad = { early: {}, late: {} };
+  order.forEach((id) => { load[id] = 0; slotLoad.early[id] = 0; slotLoad.late[id] = 0; });
+  const roomOf = (k) => unitById[plan[k].refId];
+  const ableFor = (u) => order.filter((id) => canCleanUnit(staffById[id], u));
+  const repeats = (id, u) => (u.lastCleanedBy && id === u.lastCleanedBy) ? 1 : 0;
+
+  keys.forEach((k) => { plan[k].assignedTo = null; });
+  const deal = (slot) => {
+    keys.filter((k) => !plan[k].assignedTo && (slot ? timeSlot(roomOf(k)) === slot : true)).forEach((k) => {
+      const u = roomOf(k);
+      const pick = ableFor(u).slice().sort((a, b) =>
+        (slot ? slotLoad[slot][a] - slotLoad[slot][b] : 0)
+        || (load[a] - load[b])
+        || (repeats(a, u) - repeats(b, u))
+        || (order.indexOf(a) - order.indexOf(b)))[0];
+      if (!pick) return;                               // nobody rostered on is cleared for it
+      plan[k].assignedTo = pick; load[pick] += 1;
+      if (slot) slotLoad[slot][pick] += 1;
+    });
+  };
+  deal('early'); deal('late'); deal(null);
+
+  // Even it out, exactly as the morning does. A room the customer asked a time for
+  // stays where it is; that was their decision, not a balancing one.
+  const movable = (k) => timeSlot(roomOf(k)) === 'any';
+  for (let guard = keys.length * 4; guard > 0; guard -= 1) {
+    const ranked = order.slice().sort((a, b) => load[a] - load[b]);
+    const hi = ranked[ranked.length - 1];
+    if (load[hi] - load[ranked[0]] <= 1) break;
+    let done = false;
+    for (const lo of ranked) {
+      if (load[hi] - load[lo] <= 1) break;
+      const cands = keys.filter((k) => plan[k].assignedTo === hi && movable(k) && canCleanUnit(staffById[lo], roomOf(k)));
+      const move = cands.find((k) => !repeats(lo, roomOf(k))) || cands[0];
+      if (!move) continue;
+      plan[move].assignedTo = lo; load[hi] -= 1; load[lo] += 1; done = true; break;
+    }
+    if (!done) break;
+  }
+  save();
+  return { assigned: keys.filter((k) => plan[k].assignedTo).length, crew: crew.length };
+}
+
 // Seed a day once, the first time it's looked at. Recorded per day so that
 // clearing a plan on purpose stays cleared instead of springing back on re-render.
+// The hand-out goes in at the same time: a plan nobody is named on is half a plan,
+// and the whole point is that tomorrow is already laid out without being asked.
 function seedPlanOnce(day) {
   if (!state.planSeeded) state.planSeeded = {};
   if (state.planSeeded[day]) return 0;
   state.planSeeded[day] = true;
   const added = applySuggestions(day, planningJobsFor(day));
+  // Today is the morning's business — the door reader decides who is actually in,
+  // and overwriting that from a rota would undo real hand-outs.
+  if (day !== todayKey() && added) autoPlanDay(day);
   save();
   return added;
 }
@@ -2869,6 +2939,35 @@ function viewPlan() {
   wrap.appendChild(quick);
 
   if (hikSyncMsg) wrap.appendChild(el(`<div class="section-label" style="color:${hikSyncMsg.err ? '#dc2626' : '#15803d'}">${esc(hikSyncMsg.text)}</div>`));
+
+  // WHO IS ON, AND WHO HAS WHAT — a future day is laid out from the rota the first
+  // time it is opened, so this is normally just reporting what is already done.
+  // Today is left to the morning: the door reader decides who is actually in.
+  if (!isToday) {
+    const onDuty = cleaningStaff().filter((p) => worksOnDay(p, day));
+    const jobs = planJobs(day);
+    const roomJobs = jobs.filter((j) => j.kind === 'unit');
+    const named = roomJobs.filter((j) => j.assignedTo).length;
+    const box = el('<div style="margin-bottom:14px"></div>');
+    box.appendChild(el(`<div style="font-size:12px;color:#5f7189;font-weight:600">`
+      + `<b style="color:${onDuty.length ? '#15803d' : '#b45309'}">${onDuty.length}</b> rostered on`
+      + (onDuty.length ? ` · ${esc(onDuty.map((p) => p.name.split(' ')[0]).join(', '))}` : '')
+      + `</div>`));
+    if (roomJobs.length) {
+      box.appendChild(el(`<div style="font-size:12px;color:#5f7189;font-weight:600;margin-top:4px">`
+        + `${named} of ${roomJobs.length} rooms already handed out</div>`));
+    }
+    const re = el(`<button class="freqmini" style="width:100%;padding:9px;margin-top:8px">⚡ Hand the rooms out again</button>`);
+    re.onclick = () => {
+      const r = autoPlanDay(day);
+      hikSyncMsg = r.assigned
+        ? { text: 'Handed ' + r.assigned + ' rooms to the ' + r.crew + ' on that day.' }
+        : { err: true, text: 'Nothing to hand out — ' + (r.reason || 'no rooms on the plan') + '.' };
+      render();
+    };
+    box.appendChild(re);
+    wrap.appendChild(box);
+  }
 
   // Due from the schedule but not on the plan — either removed by hand, or fallen
   // due since the day was seeded. Offered back rather than silently re-added.
