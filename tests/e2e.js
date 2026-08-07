@@ -959,29 +959,34 @@ function serve() {
   console.log('\n\x1b[1mEVERY OTHER FRIDAY — the rest day is shared, not skipped\x1b[0m');
   const alt = await page.evaluate(() => {
     const crew = cleaningStaff();
-    const split = evenOutAltDay(5);
-    applyAltSplit(5, split);
-    // Two consecutive Fridays, whenever the next one falls.
-    let f1 = todayKey();
+    const per = Math.min(3, crew.length);
+    const rota = buildDayRota(5, per);
+    applyDayRota(5, rota);
+    let f1 = todayKey();                            // the next Friday, whenever it falls
     for (let i = 0; i < 8 && new Date(f1 + 'T00:00:00').getDay() !== 5; i += 1) f1 = shiftDay(f1, 1);
-    const f2 = shiftDay(f1, 7);
-    const on = (d) => crew.filter((p) => worksOnDay(p, d)).map((p) => p.name);
+    // Walk a whole cycle of Fridays and count how often each person is in.
+    const perFriday = [], tally = {};
+    crew.forEach((p) => { tally[p.name] = 0; });
+    for (let w = 0; w < rota.cycle; w += 1) {
+      const d = shiftDay(f1, w * 7);
+      const inThatDay = crew.filter((p) => worksOnDay(p, d));
+      perFriday.push(inThatDay.length);
+      inThatDay.forEach((p) => { tally[p.name] += 1; });
+    }
+    const counts = Object.values(tally);
     return {
-      crew: crew.length, a: split.a.length, b: split.b.length,
-      f1, f2, onF1: on(f1), onF2: on(f2),
-      monday: crew.filter((p) => worksOnDay(p, shiftDay(f1, 3))).length,   // the Monday after
-      parityDiffers: weekParity(f1) !== weekParity(f2),
+      crew: crew.length, per, cycle: rota.cycle, perFriday, tally,
+      sameEveryFriday: perFriday.every((n) => n === perFriday[0]),
+      fairness: Math.max(...counts) - Math.min(...counts),
+      monday: crew.filter((p) => worksOnDay(p, shiftDay(f1, 3))).length,
     };
   });
-  check('the crew splits into two even halves', Math.abs(alt.a - alt.b) <= 1, JSON.stringify(alt));
-  check('consecutive Fridays are different weeks', alt.parityDiffers, 'weekParity did not alternate');
-  eq('only one half is in on the first Friday', alt.onF1.length, alt.a);
-  eq('and the other half on the next', alt.onF2.length, alt.b);
-  check('nobody is in on both Fridays', !alt.onF1.some((n) => alt.onF2.includes(n)),
-    'overlap: ' + JSON.stringify(alt.onF1.filter((n) => alt.onF2.includes(n))));
-  check('everybody works one of the two', alt.onF1.length + alt.onF2.length === alt.crew,
-    alt.onF1.length + '+' + alt.onF2.length + ' of ' + alt.crew);
-  eq('an alternating Friday leaves the other days alone', alt.monday, alt.crew);
+  eq('the same number are in every Friday', alt.sameEveryFriday, true);
+  eq('and that number is the one asked for', alt.perFriday[0], alt.per);
+  check('everybody does the same number of Fridays', alt.fairness === 0,
+    'Fridays each: ' + JSON.stringify(alt.tally));
+  check('a rota needs more than one week to come round', alt.cycle > 1, 'cycle: ' + alt.cycle);
+  eq('a Friday rota leaves the other days alone', alt.monday, alt.crew);
   await page.evaluate(() => {                          // hand every Friday back
     (state.staff || []).forEach((p) => { if (p.alt) delete p.alt; });
     save(); render();

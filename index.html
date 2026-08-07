@@ -395,18 +395,41 @@ const WEEKDAYS = [['Mon', 1], ['Tue', 2], ['Wed', 3], ['Thu', 4], ['Fri', 5], ['
 // half the crew is in one week and the other half the next. A weekly on/off can't
 // say that, so a weekday can also be set to week A or week B. Counted from a fixed
 // Monday so every device agrees which week is which, whatever day it is asked.
-const WEEK_EPOCH = '2026-01-05';                 // a Monday; only the parity matters
-const weekParity = (day) => {
+const WEEK_EPOCH = '2026-01-05';                 // a Monday; only the position in the cycle matters
+const weekIndex = (day, cycle) => {
   const a = new Date(WEEK_EPOCH + 'T00:00:00'), b = new Date(day + 'T00:00:00');
   const weeks = Math.floor(Math.round((b - a) / 864e5) / 7);
-  return ((weeks % 2) + 2) % 2;                  // stays 0/1 for dates before the epoch too
+  const n = Math.max(1, cycle || 2);
+  return ((weeks % n) + n) % n;                  // stays in range for dates before the epoch too
 };
+const weekParity = (day) => weekIndex(day, 2);
+// The next date that falls on this weekday, today included — used to say who is in
+// on the Friday actually coming up rather than an abstract week number.
+const nextDowKey = (dow) => {
+  let d = todayKey();
+  for (let i = 0; i < 7; i += 1) {
+    if (new Date(d + 'T00:00:00').getDay() === dow) return d;
+    d = shiftDay(d, 1);
+  }
+  return d;
+};
+// A weekday can run on a cycle: {cycle:8, weeks:[0,1,2]} is "in on three Fridays out
+// of every eight". Half-and-half is just the two-week case, and the older A/B values
+// are read as exactly that so nothing set before has to be redone.
+function altRotaFor(p, dow) {
+  const v = p && p.alt && p.alt[dow];
+  if (!v) return null;
+  if (v === 'A') return { cycle: 2, weeks: [0] };
+  if (v === 'B') return { cycle: 2, weeks: [1] };
+  if (v && Array.isArray(v.weeks)) return { cycle: Math.max(1, v.cycle || 2), weeks: v.weeks };
+  return null;
+}
 const altSideFor = (p, dow) => (p && p.alt && p.alt[dow]) || null;
 const worksOnDay = (p, day) => {
   if (!p) return true;
   const dow = new Date(day + 'T00:00:00').getDay();
-  const alt = altSideFor(p, dow);
-  if (alt) return weekParity(day) === (alt === 'B' ? 1 : 0);
+  const rota = altRotaFor(p, dow);
+  if (rota) return rota.weeks.includes(weekIndex(day, rota.cycle));
   if (!Array.isArray(p.worksOn)) return true;
   return p.worksOn.includes(dow);
 };
@@ -453,16 +476,45 @@ function cycleWorksOn(pid, dow) {
 // crew on week A and half on week B — and it has to be even, or one group carries an
 // extra Friday every fortnight forever. Sorted by name so the same crew always splits
 // the same way: re-running it doesn't reshuffle who works with whom.
-function evenOutAltDay(dow) {
+// Share a rest day out so the same number are in every week and everybody does the
+// same number of them. A sliding window of `perWeek` walks the crew, one step a week:
+// over as many weeks as there are cleaners it comes round exactly once each, so with
+// eight cleaners and three in each Friday everyone works three Fridays in eight —
+// enough hands to get through the rooms, and identical for everybody.
+//
+// Sorted by name so the same crew always produces the same rota: re-running it never
+// reshuffles who is in alongside whom.
+function buildDayRota(dow, perWeek) {
   const crew = cleaningStaff().slice().sort((a, b) => String(a.name).localeCompare(String(b.name)));
-  if (!crew.length) return { a: [], b: [] };
-  const a = [], b = [];
-  crew.forEach((p, i) => (i % 2 === 0 ? a : b).push(p));
-  return { a, b };
+  const n = crew.length;
+  const per = Math.max(1, Math.min(perWeek || 3, n));
+  if (!n) return { cycle: 0, perWeek: per, weeks: [], byPerson: {} };
+  const cycle = n;                                  // one full turn of the window
+  const weeks = [], byPerson = {};
+  crew.forEach((p) => { byPerson[p.id] = { name: p.name, weeks: [] }; });
+  for (let w = 0; w < cycle; w += 1) {
+    const inThisWeek = [];
+    for (let k = 0; k < per; k += 1) {
+      const p = crew[(w * per + k) % n];
+      if (inThisWeek.some((x) => x.id === p.id)) continue;   // tiny crews can wrap onto themselves
+      inThisWeek.push(p);
+      byPerson[p.id].weeks.push(w);
+    }
+    weeks.push(inThisWeek);
+  }
+  return { cycle, perWeek: per, weeks, byPerson, crew };
 }
-function applyAltSplit(dow, split) {
-  split.a.forEach((p) => setWorksStateQuiet(p.id, dow, 'A'));
-  split.b.forEach((p) => setWorksStateQuiet(p.id, dow, 'B'));
+
+function applyDayRota(dow, rota) {
+  Object.keys(rota.byPerson).forEach((pid) => {
+    const p = (state.staff || []).find((x) => x.id === pid);
+    if (!p) return;
+    if (!p.alt) p.alt = {};
+    p.alt[dow] = { cycle: rota.cycle, weeks: rota.byPerson[pid].weeks.slice() };
+    const days = Array.isArray(p.worksOn) ? p.worksOn.slice() : [0, 1, 2, 3, 4, 5, 6];
+    if (!days.includes(dow)) days.push(dow);
+    p.worksOn = days.sort();
+  });
   save(); render();
 }
 // Same as setWorksState but without a save+render per person — a whole crew at once
@@ -865,6 +917,7 @@ let lastCleanedByUnit = {};      // unit_id -> newest row (drives the "last clea
 let historyFilter = 'all';       // History view room filter (per-device UI state)
 let historyDay = '';             // History view day filter ('' = all days)
 let teamShowAll = false;         // Team tab: false = cleaners only (default once any tagged)
+let teamFridayPer = 3;           // how many are in on each Friday, chosen in Team
 const dayKeyLocal = (ts) => { const d = new Date(ts); return isNaN(d) ? '' : d.toLocaleDateString('en-CA'); }; // local YYYY-MM-DD
 
 // dayKey lets a clean be recorded against the day it happened rather than the
@@ -4184,14 +4237,16 @@ function employeeCard(p) {
     wRow.appendChild(el(`<div style="flex:0 0 auto;font-size:11px;color:#5f7189;font-weight:700;margin-right:2px" `
       + `title="Which days this person is expected in">Works on${offCount ? '' : ' · every day'}</div>`));
     WEEKDAYS.forEach(([lbl, dow]) => {
-      const st = worksStateOf(p, dow);
+      const rota = altRotaFor(p, dow);
+      const st = rota ? 'rota' : worksStateOf(p, dow);
       const style = st === 'off' ? ';opacity:0.4'
-        : (st === 'A' || st === 'B') ? ';border-color:#7c3aed;color:#7c3aed' : '';
+        : st === 'rota' ? ';border-color:#7c3aed;color:#7c3aed' : '';
       const tip = st === 'off' ? 'Off every ' + lbl
         : st === 'on' ? 'In every ' + lbl
-        : 'In on ' + lbl + ' every other week (week ' + st + ')';
+        : 'In on ' + rota.weeks.length + ' ' + lbl + 's out of every ' + rota.cycle;
       const b = el(`<button class="freqmini ${st === 'on' ? 'on' : ''}" title="${esc(tip)}" `
-        + `style="flex:0 0 auto;padding:6px 9px;font-size:11px${style}">${lbl}${st === 'A' || st === 'B' ? ' ' + st : ''}</button>`);
+        + `style="flex:0 0 auto;padding:6px 9px;font-size:11px${style}">`
+        + `${lbl}${rota ? ' ' + rota.weeks.length + '/' + rota.cycle : ''}</button>`);
       b.onclick = () => cycleWorksOn(p.id, dow);
       wRow.appendChild(b);
     });
@@ -4340,27 +4395,42 @@ function viewTeam() {
   if (cleaners) {
     const fri = 5;
     const crew = cleaningStaff();
-    const onA = crew.filter((p) => altSideFor(p, fri) === 'A').length;
-    const onB = crew.filter((p) => altSideFor(p, fri) === 'B').length;
+    const onRota = crew.filter((p) => altRotaFor(p, fri));
     const box = el('<div style="margin-bottom:14px"></div>');
-    const btn = el(`<button class="add-btn" style="background:#7c3aed;color:#ffffff">⚖ Share out the Friday rota evenly</button>`);
+    box.appendChild(el(`<div class="section-label">Friday rota</div>`));
+    box.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin:-6px 0 8px">`
+      + `Pick how many are in each Friday. Everyone then does the same number of them, `
+      + `and the week is easier for having had the hands.</div>`));
+    const pickRow = el('<div style="display:flex;gap:6px;margin-bottom:8px"></div>');
+    [2, 3, 4].forEach((n) => {
+      if (n > crew.length) return;
+      const b = el(`<button class="freqmini ${teamFridayPer === n ? 'on' : ''}" style="flex:1">${n} in</button>`);
+      b.onclick = () => { teamFridayPer = n; render(); };
+      pickRow.appendChild(b);
+    });
+    box.appendChild(pickRow);
+    const btn = el(`<button class="add-btn" style="background:#7c3aed;color:#ffffff">⚖ Share the Friday rota out evenly</button>`);
     btn.onclick = () => {
-      const split = evenOutAltDay(fri);
+      const rota = buildDayRota(fri, teamFridayPer);
+      const each = rota.byPerson[Object.keys(rota.byPerson)[0]];
+      const preview = rota.weeks.slice(0, 4)
+        .map((wk, i) => 'Friday ' + (i + 1) + ': ' + wk.map((p) => p.name.split(' ')[0]).join(', ')).join('\n');
       showConfirm(
-        'Split the Friday rota?',
-        'Week A (' + split.a.length + '): ' + split.a.map((p) => p.name.split(' ')[0]).join(', ')
-          + '\n\nWeek B (' + split.b.length + '): ' + split.b.map((p) => p.name.split(' ')[0]).join(', ')
-          + '\n\nEach of them then works every other Friday. You can still change any one of them by hand afterwards.',
-        () => applyAltSplit(fri, split),
-        'Split evenly',
+        rota.perWeek + ' in every Friday?',
+        preview + (rota.cycle > 4 ? '\n… and so on' : '')
+          + '\n\nIt comes round every ' + rota.cycle + ' weeks, so each of the ' + rota.crew.length
+          + ' works ' + (each ? each.weeks.length : 0) + ' Fridays out of ' + rota.cycle
+          + ' — the same for everybody. You can still change any one person by hand afterwards.',
+        () => applyDayRota(fri, rota),
+        'Set the rota',
         'safe'
       );
     };
     box.appendChild(btn);
     box.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin-top:6px">`
-      + (onA + onB
-        ? `Currently ${onA} on week A · ${onB} on week B${Math.abs(onA - onB) > 1 ? ' — <b style="color:#b45309">uneven</b>' : ''}`
-        : `Nobody is on an alternating Friday yet — everyone is down as working every one.`)
+      + (onRota.length
+        ? `${onRota.length} of ${crew.length} are on a Friday rota — <b>${crew.filter((p) => worksOnDay(p, nextDowKey(fri))).length}</b> in this coming Friday.`
+        : `Nobody is on a Friday rota yet — everyone is down as working every one.`)
       + `</div>`));
     wrap.appendChild(box);
   }
