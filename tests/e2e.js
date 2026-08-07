@@ -835,6 +835,37 @@ function serve() {
   }, rotaBase.id);
   await page.waitForTimeout(300);
 
+  console.log('\n\x1b[1mALLOCATE EVENLY — one tap, and nobody carries the morning\x1b[0m');
+  const even = await page.evaluate(async () => {
+    if (Array.isArray(state.rollCallTypes)) state.rollCallTypes = null;
+    const crew = cleaningStaff().filter((p) => worksToday(p));
+    crew.forEach((p) => addManualArrival(p.id));
+    await loadHikArrivals();                         // manual arrivals only land after this
+    const rooms = (state.servicedUnits || []).filter((u) => onRollCall(u));
+    // Pin every room to one person: the state a board drifts into, because picking a
+    // cleaner by hand also makes them that room's permanent cleaner.
+    const victim = crew[0];
+    rooms.forEach((u) => {
+      u.lastCleaned = null; u.assignedTo = null;
+      u.preferEarly = false; u.preferLate = false;
+      u.usualTo = victim.id;
+    });
+    save();
+    autoAssignRooms();
+    const counts = crew.map((p) => ({ name: p.name, n: rooms.filter((u) => u.assignedTo === p.id).length }));
+    const ns = counts.map((c) => c.n);
+    return { crew: crew.length, rooms: rooms.length, counts,
+      spread: Math.max(...ns) - Math.min(...ns), assigned: ns.reduce((a, b) => a + b, 0) };
+  });
+  check('there is a crew and rooms to divide', even.crew > 1 && even.rooms > even.crew, JSON.stringify(even));
+  eq('every room is handed to somebody', even.assigned, even.rooms);
+  check('the split is as even as the numbers allow', even.spread <= 1,
+    'per cleaner: ' + JSON.stringify(even.counts.map((c) => c.name.split(' ')[0] + ':' + c.n)));
+  await page.evaluate(() => {                        // let the rooms go again
+    (state.servicedUnits || []).forEach((u) => { u.usualTo = null; });
+    save(); render();
+  });
+
   console.log('\n\x1b[1mMORNING AND AFTERNOON — asked-for times, spread across the crew\x1b[0m');
   const mix = await page.evaluate(() => {
     // An earlier section takes Airbnb off the roll call, which leaves a single room

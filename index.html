@@ -1625,7 +1625,42 @@ function runAutoAssign(rooms, people, inIds, load) {
     const pick = lightestFor(u);
     if (pick) { u.assignedTo = pick; load[pick]++; } else unstaffed++;   // nobody in today is cleared for it
   });
+  // Pass 6: even it out. Keeping a cleaner on their own floor or inside their team's
+  // zone saves a lot of walking, but those are preferences, not promises — left to
+  // themselves they hand one person five rooms while four others carry two, because
+  // ownership is decided before anything counts the load. So whatever is still
+  // lopsided gets moved: rooms with a permanent cleaner stay put, and so do rooms the
+  // customer asked a time for, since both were somebody's deliberate decision.
+  // A room the customer asked a time for never moves — that is the customer's call,
+  // not a load-balancing decision. A room with a permanent cleaner moves only as a
+  // last resort, once nothing else can close the gap: most rooms here have picked up
+  // a permanent cleaner simply by being assigned by hand once, and left absolute they
+  // freeze the whole morning into whatever shape it drifted into.
+  const freeToMove = (u) => !u.usualTo && timeSlot(u) === 'any';
+  const pinnedButMovable = (u) => !!u.usualTo && timeSlot(u) === 'any';
+  let moved = 0, unpinned = 0;
+  for (let guard = rooms.length * 4; guard > 0; guard -= 1) {
+    const ranked = order.slice().sort((a, b) => load[a] - load[b]);
+    const hi = ranked[ranked.length - 1];
+    if (load[hi] - load[ranked[0]] <= 1) break;             // as even as it can get
+    let done = false;
+    // Unpinned rooms first, everywhere they can help, before disturbing any pin.
+    for (const pass of [freeToMove, pinnedButMovable]) {
+      for (const lo of ranked) {
+        if (load[hi] - load[lo] <= 1) break;
+        const move = rooms.find((u) => u.assignedTo === hi && pass(u) && canCleanUnit(staffById[lo], u));
+        if (!move) continue;
+        move.assignedTo = lo; load[hi] -= 1; load[lo] += 1; moved += 1;
+        if (pass === pinnedButMovable) unpinned += 1;
+        done = true; break;
+      }
+      if (done) break;
+    }
+    if (!done) break;                                        // nothing left that can legally move
+  }
+
   const notes = [];
+  if (moved) notes.push(`${moved} moved to even it out${unpinned ? ` (${unpinned} off their usual cleaner)` : ''}`);
   if (kept) notes.push(`${kept} kept with their usual crew`);
   if (onFloor) notes.push(`${onFloor} kept on their own floor`);
   if (onTeam) notes.push(`${onTeam} kept in their team's zone`);
