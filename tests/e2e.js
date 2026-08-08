@@ -1433,6 +1433,51 @@ function serve() {
   check('and the schedule does not put it back',
     !(await planState()).rooms.includes(dropKey), 'the re-sync re-added a job that was removed by hand');
 
+  // ------------------------------------------------------------ LEVEL A WEEK
+  // Thirteen rooms one day and twenty-four the next is the same work either way,
+  // but the heavy day can't be finished and the light one wastes a crew.
+  console.log('\n\x1b[1mLEVEL THE WEEK — no day carries the lot\x1b[0m');
+  const lvl = await page.evaluate(() => {
+    state.rollCallTypes = null;
+    const rooms = state.servicedUnits.filter((u) => onRollCall(u));
+    // Build a deliberate pile-up: nearly every room falls due on the same day,
+    // with one lonely room the day before it.
+    rooms.forEach((u, i) => {
+      u.freq = 'weekly'; u.paused = false;
+      delete u.alsoCleanOn; delete u.holdUntil; delete u.cycleShift; delete u.cycleShiftFrom;
+      delete lastCleanedByUnit[u.id];
+      u.lastCleaned = shiftDay(workToday(), i === 0 ? -6 : -5);   // day 1 for one, day 2 for the rest
+    });
+    const plan = levelPlan(14);
+    return {
+      rooms: rooms.length,
+      peakBefore: plan.peakBefore, peakAfter: plan.peakAfter,
+      moves: plan.moves.map((m) => ({ unit: m.u.unit, from: m.from, to: m.to })),
+      days: plan.days,
+    };
+  });
+  check('the fortnight starts out lopsided', lvl.peakBefore >= 3,
+    'peak was only ' + lvl.peakBefore + ' across ' + lvl.rooms + ' rooms — nothing to level');
+  check('levelling brings the heaviest day down', lvl.peakAfter < lvl.peakBefore,
+    'peak ' + lvl.peakBefore + ' → ' + lvl.peakAfter);
+  check('it actually moves rooms to do it', lvl.moves.length > 0, 'no moves proposed');
+  check('and never makes a room wait longer than it already is',
+    lvl.moves.every((m) => m.to < m.from),
+    'these were pushed later: ' + JSON.stringify(lvl.moves.filter((m) => m.to >= m.from)));
+  check('nothing is moved onto today, with the round already under way',
+    lvl.moves.every((m) => m.to > lvl.days[0]),
+    'moved onto today: ' + JSON.stringify(lvl.moves.filter((m) => m.to <= lvl.days[0])));
+
+  // Applying it must produce the shape it promised, not merely intend to.
+  const lvlAfter = await page.evaluate(() => {
+    const plan = levelPlan(14);
+    const promised = plan.peakAfter;
+    applyLevelPlan(plan);
+    const counts = projectedCounts(14);
+    return { promised, realised: Math.max(...Object.values(counts)) };
+  });
+  eq('the schedule really ends up as level as it promised', lvlAfter.realised, lvlAfter.promised);
+
   // ------------------------------------------------------------- DURABILITY
   // A save is not finished until the server has it. These cover the way changes
   // used to vanish: made on a phone, still shown on that phone, never seen by

@@ -1321,6 +1321,130 @@ function balancePlan(ids) {
   });
   return plan;
 }
+// ============================================================
+// LEVEL THE WEEK
+// Thirteen rooms tomorrow and twenty-four the day after is the same fortnight's
+// work either way, but the heavy day cannot actually be finished and the light one
+// wastes a crew. balancePlan below splits each frequency group into equal blocks by
+// room number, which evens out that group in isolation and says nothing about what
+// the day as a whole ends up carrying — the every-other-day split can land squarely
+// on the day the weeklies already fall.
+//
+// This works from the projection the week-ahead view shows, so what gets levelled is
+// the number the office is actually looking at, and it picks each room's place in
+// its own cycle to flatten the daily totals.
+//
+// It only ever moves a clean EARLIER, never later — the same rule the rest of the
+// scheduling keeps. Nothing waits longer than its frequency to be cleaned; a room
+// simply takes its next turn a day or two sooner, and carries on from there.
+// ============================================================
+const LEVEL_HORIZON = 14;
+
+// The projected count for each of the next n days as the schedule stands.
+function projectedCounts(horizon) {
+  const counts = {};
+  projectDueDays(horizon).forEach((d) => { counts[d.day] = d.due.length; });
+  return counts;
+}
+
+// Work out where each room would sit to make the days come out even. Returns the
+// moves and the before/after shape, without touching anything.
+function levelPlan(horizon) {
+  const span = horizon || LEVEL_HORIZON;
+  const start = workToday();
+  const days = [];
+  for (let i = 0; i < span; i += 1) days.push(shiftDay(start, i));
+  const idx = {};
+  days.forEach((d, i) => { idx[d] = i; });
+
+  const before = projectedCounts(span);
+  const walk = projectDueDays(span);
+  const firstDueIdx = {};      // room -> the day it is next due, as an offset
+  walk.forEach((d, i) => d.due.forEach((u) => { if (firstDueIdx[u.id] === undefined) firstDueIdx[u.id] = i; }));
+
+  const units = (state.servicedUnits || []).filter((u) => !u.paused && onRollCall(u));
+  const load = new Array(span).fill(0);
+  const movable = [];
+  units.forEach((u) => {
+    const n = FREQ_DAYS[u.freq] || 1;
+    const from = firstDueIdx[u.id];
+    // A daily room is on every day whatever we do, and a room not due inside the
+    // horizon has nothing to place. Both are fixed load to work around.
+    if (n <= 1 || from === undefined) {
+      if (from !== undefined) for (let i = from; i < span; i += n) load[i] += 1;
+      return;
+    }
+    movable.push({ u, n, from });
+  });
+
+  // Fewest choices first: an every-other-day room can only sit on one of two days,
+  // so it must pick before a weekly that can go anywhere fits itself around it.
+  movable.sort((a, b) => (a.n - b.n)
+    || String(a.u.unit).localeCompare(String(b.u.unit), undefined, { numeric: true }));
+
+  const moves = [];
+  movable.forEach((m) => {
+    // Never later than the room is already due, and never today — the crew is on
+    // today's round already. Earliest candidate is tomorrow.
+    const lo = Math.min(1, m.from), hi = m.from;
+    let bestAt = m.from, bestCost = Infinity;
+    for (let at = lo; at <= hi; at += 1) {
+      let peak = 0, sq = 0;
+      for (let i = 0; i < span; i += 1) {
+        const extra = (i >= at && (i - at) % m.n === 0) ? 1 : 0;
+        const v = load[i] + extra;
+        if (v > peak) peak = v;
+        sq += v * v;
+      }
+      // Flatten the worst day first, then the shape as a whole; a tie stays put.
+      const cost = peak * 10000 + sq;
+      if (cost < bestCost - 1e-9) { bestCost = cost; bestAt = at; }
+    }
+    for (let i = bestAt; i < span; i += m.n) load[i] += 1;
+    if (bestAt !== m.from) moves.push({ u: m.u, from: days[m.from], to: days[bestAt], freq: m.u.freq });
+  });
+
+  const after = {};
+  days.forEach((d, i) => { after[d] = load[i]; });
+  const nums = days.map((d) => after[d]);
+  return {
+    days, moves, before, after,
+    peakBefore: Math.max(...days.map((d) => before[d] || 0)),
+    peakAfter: Math.max(...nums),
+    lowBefore: Math.min(...days.map((d) => before[d] || 0)),
+    lowAfter: Math.min(...nums),
+  };
+}
+
+// Apply a levelling. A room takes its next turn earlier by being given that day
+// outright — the same one-off extra clean the clump-splitter uses, which lapses the
+// moment it is done and leaves the room running on its new day for good.
+function applyLevelPlan(plan) {
+  plan.moves.forEach((m) => { m.u.alsoCleanOn = m.to; delete m.u.holdUntil; });
+  save();
+}
+
+function levelWeek() {
+  const plan = levelPlan(LEVEL_HORIZON);
+  if (!plan.moves.length) {
+    hikSyncMsg = { err: false, text: 'The next ' + LEVEL_HORIZON + ' days are already as level as the schedule allows.' };
+    render(); return;
+  }
+  const fmt = (d) => new Date(d + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const sample = plan.moves.slice(0, 4)
+    .map((m) => 'Room ' + m.u.unit + ' ' + fmt(m.from) + ' → ' + fmt(m.to)).join(', ');
+  showConfirm(
+    'Level the next ' + LEVEL_HORIZON + ' days?',
+    'The heaviest day goes from ' + plan.peakBefore + ' rooms to ' + plan.peakAfter + ', the lightest from '
+      + plan.lowBefore + ' to ' + plan.lowAfter + '. Moves ' + plan.moves.length + ' room'
+      + (plan.moves.length === 1 ? '' : 's') + ' — ' + sample + (plan.moves.length > 4 ? ', and more' : '')
+      + '. Every one is cleaned EARLIER than it is due now, never later, and carries on from its new day.',
+    () => { applyLevelPlan(plan); render(); },
+    'Level it out',
+    'safe'
+  );
+}
+
 function balanceUnitsAcrossDays(ids, groupLabel) {
   const plan = balancePlan(ids);
   if (!plan.length) return;
@@ -3260,6 +3384,20 @@ function viewPlan() {
       row.onclick = () => { planDay = d.day; render(); };
       box.appendChild(row);
     });
+    // Offer to flatten it when the days are genuinely lopsided. A day or two of
+    // difference is just how the rooms fall and isn't worth an extra clean.
+    {
+      const lp = levelPlan(LEVEL_HORIZON);
+      if (lp.moves.length && lp.peakBefore - lp.peakAfter >= 2) {
+        const btn = el(`<button class="add-btn" style="background:#b45309;margin-top:8px">`
+          + `⇄ Level the fortnight — heaviest day ${lp.peakBefore} → ${lp.peakAfter} rooms</button>`);
+        btn.onclick = levelWeek;
+        box.appendChild(btn);
+        box.appendChild(el(`<div style="font-size:10px;color:#5f7189;margin-top:4px">`
+          + `Moves ${lp.moves.length} room${lp.moves.length === 1 ? '' : 's'} onto a lighter day. `
+          + `Every one is cleaned earlier than it is due now, never later.</div>`));
+      }
+    }
     wrap.appendChild(box);
   }
 
