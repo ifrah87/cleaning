@@ -1274,6 +1274,66 @@ function serve() {
   check('the off-roll-call jobs are in there', offRollCall.every((u) => nightRows.includes(u)),
     'expected ' + JSON.stringify(offRollCall) + ' in ' + JSON.stringify(nightRows));
 
+  // ------------------------------------------------- LAST NIGHT'S PLAN TODAY
+  // Planning tomorrow and then watching the morning deal it all out again from
+  // scratch made the planning pointless. The roll call now honours it.
+  console.log('\n\x1b[1mLAST NIGHT’S PLAN — carried into the morning\x1b[0m');
+  const carry = await page.evaluate(() => {
+    // One cleaner stays home this morning, whoever badged in earlier in the run.
+    // Earlier sections switch room kinds off the roll call; put them all back so
+    // there is a full morning to deal with.
+    state.rollCallTypes = null;
+    const cleaners = (state.staff || []).filter((p) => p.isCleaner).map((p) => p.id);
+    const stayHome = cleaners[cleaners.length - 1];
+    delete hikArrivals[stayHome];
+    const inIds = Object.keys(hikArrivals).filter((id) => (state.staff || []).some((s) => s.id === id));
+    const absent = cleaners.filter((id) => !inIds.includes(id));
+    // Put the morning back to un-cleaned so there is work to hand out at all. The
+    // room's own stamp AND the shared history both have to go, or the log still
+    // reads as cleaned today and nothing is due.
+    const rooms = state.servicedUnits.filter((u) => onRollCall(u)).slice(0, 4);
+    rooms.forEach((u) => {
+      delete state.completions['su:' + u.id + '::' + workToday()];
+      // Earlier sections stagger the schedule, which holds rooms back off today.
+      u.lastCleaned = null; u.assignedTo = null; u.usualTo = null;
+      delete u.holdUntil; delete u.alsoCleanOn;
+      delete lastCleanedByUnit[u.id];
+      delete state.assignConfirmed[u.id];
+    });
+    const due = state.servicedUnits.filter((u) => onRollCall(u) && unitDueToday(u));
+    due.forEach((u) => { u.assignedTo = null; delete state.assignConfirmed[u.id]; });
+    if (due.length < 2 || !absent.length) return { tooFew: true, due: due.length, absentId: absent[0], inIds };
+
+    // Last night somebody planned these two: one for a person who turned up, one
+    // for a person who did not.
+    const day = todayKey();
+    state.plans[day] = {};
+    const a = due[0], b = due[1];
+    state.plans[day][planKey('unit', a.id)] = { kind: 'unit', refId: a.id, label: 'a', assignedTo: inIds[0], auto: true };
+    state.plans[day][planKey('unit', b.id)] = { kind: 'unit', refId: b.id, label: 'b', assignedTo: absent[0], auto: true };
+
+    delete state.autoAssignedOn;
+    maybeAutoAssign();
+    const now = (id) => state.servicedUnits.find((u) => u.id === id);
+    return {
+      inIds, absentId: absent[0], plannedFor: inIds[0],
+      a: { id: a.id, got: (now(a.id) || {}).assignedTo, confirmed: state.assignConfirmed[a.id] === day },
+      b: { id: b.id, got: (now(b.id) || {}).assignedTo },
+      due: due.length,
+      unassigned: state.servicedUnits.filter((u) => onRollCall(u) && unitDueToday(u) && !u.assignedTo).length,
+    };
+  });
+  check('there is a morning to hand out and somebody who stayed home', !carry.tooFew,
+    'fixture gave ' + carry.due + ' due rooms, absent=' + carry.absentId);
+  if (!carry.tooFew) {
+    eq('a room planned for somebody who turned up stays with them', carry.a.got, carry.plannedFor);
+    check('and it counts as settled rather than a fresh suggestion', carry.a.confirmed, 'not marked as checked');
+    check('a room planned for somebody who never came in goes to somebody who did',
+      !!carry.b.got && carry.b.got !== carry.absentId && carry.inIds.includes(carry.b.got),
+      'room went to ' + carry.b.got + ' (planned for the absent ' + carry.absentId + ')');
+    eq('nothing due is left without a cleaner', carry.unassigned, 0);
+  }
+
   // --------------------------------------------------------- TOMORROW, AUTO
   // Tomorrow used to exist only once somebody opened the Plan tab for it.
   console.log('\n\x1b[1mTOMORROW — laid out without being asked\x1b[0m');
@@ -1315,6 +1375,34 @@ function serve() {
   await page.evaluate(() => ensureTomorrowPlanned());
   eq('reopening the app changes nothing that is already planned',
     await page.evaluate(() => JSON.stringify(state.plans[tomorrowKey()])), beforeAgain);
+
+  // Rooms the customer asked for first thing must be shared out, not stacked on
+  // whoever happens to be lightest overall. The re-sync used to weigh total load
+  // only, so one person could end up holding the entire early round.
+  const early = await page.evaluate(() => {
+    const d = tomorrowKey();
+    // Three rooms wanted early tomorrow, whatever their cycle says.
+    const picked = state.servicedUnits.filter((u) => onRollCall(u)).slice(0, 3);
+    picked.forEach((u) => { u.preferEarly = true; u.alsoCleanOn = d; u.lastCleanedBy = null; });
+    // Take them off the plan so the re-sync is what puts them back.
+    picked.forEach((u) => { delete state.plans[d][planKey('unit', u.id)]; });
+    if (state.planDropped) delete state.planDropped[d];
+    resyncPlanDay(d);
+    const plan = state.plans[d];
+    const holders = picked.map((u) => (plan[planKey('unit', u.id)] || {}).assignedTo);
+    return {
+      picked: picked.length,
+      holders,
+      placed: holders.filter(Boolean).length,
+      distinct: [...new Set(holders.filter(Boolean))].length,
+      rostered: cleaningStaff().filter((p) => worksOnDay(p, d)).length,
+    };
+  });
+  eq('all three early rooms are put on tomorrow', early.placed, early.picked);
+  check('and they are shared out rather than stacked on one person',
+    early.distinct >= Math.min(early.picked, early.rostered),
+    early.picked + ' early rooms went to ' + early.distinct + ' of ' + early.rostered + ' rostered cleaners: '
+      + JSON.stringify(early.holders));
 
   // A re-sync must not disturb work already handed to somebody. Checked before the
   // removal test below, which takes that same room off the plan.

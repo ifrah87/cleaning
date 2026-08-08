@@ -1590,6 +1590,39 @@ function maybeBalanceSchedule() {
   plan.forEach((p) => { p.u.cycleShift = p.shift; p.u.cycleShiftFrom = p.base; });
   save();
 }
+// Carry a plan made for today into this morning. Planning tomorrow last night and
+// then watching the roll call deal the rooms out again from scratch makes the
+// planning pointless, so a planned hand-out is honoured rather than recomputed.
+// Only for people who actually turned up: somebody who isn't in can't clean, so
+// their rooms fall through to be dealt with the rest.
+function applyPlannedAssignments() {
+  const day = todayKey();
+  const plan = (state.plans || {})[day];
+  const out = { carried: 0, absent: 0, load: {}, slotLoad: { early: {}, late: {} } };
+  if (!plan) return out;
+  const unitById = {};
+  (state.servicedUnits || []).forEach((u) => { unitById[u.id] = u; });
+  const staffById = {};
+  (state.staff || []).forEach((s) => { staffById[s.id] = s; });
+
+  Object.keys(plan).forEach((k) => {
+    const j = plan[k];
+    if (j.kind !== 'unit' || !j.assignedTo) return;
+    const u = unitById[j.refId];
+    if (!u || !onRollCall(u) || !unitDueToday(u) || u.assignedTo) return;
+    if (!hikArrivals[j.assignedTo]) { out.absent += 1; return; }   // planned for, not in
+    if (!canCleanUnit(staffById[j.assignedTo], u)) return;
+    u.assignedTo = j.assignedTo;
+    // Planned the night before is a decision, not a suggestion awaiting a yes/no.
+    state.assignConfirmed[u.id] = day;
+    out.carried += 1;
+    out.load[j.assignedTo] = (out.load[j.assignedTo] || 0) + 1;
+    const slot = timeSlot(u);
+    if (slot !== 'any') out.slotLoad[slot][j.assignedTo] = (out.slotLoad[slot][j.assignedTo] || 0) + 1;
+  });
+  return out;
+}
+
 function maybeAutoAssign() {
   if (state.autoAssign === false) return;                      // switched off in Settings
   if (state.autoAssignedOn === todayKey()) return;             // already done today
@@ -1597,12 +1630,18 @@ function maybeAutoAssign() {
   if (!people.length) return;                                  // nobody in yet — wait
   const due = (state.servicedUnits || []).filter((u) => onRollCall(u) && unitDueToday(u));
   if (!due.length) return;
-  if (due.some((u) => u.assignedTo)) {                         // office got there first; don't touch it
+  const officeGotThereFirst = due.some((u) => u.assignedTo);
+  const carried = applyPlannedAssignments();                   // last night's plan wins over a fresh deal
+  if (officeGotThereFirst) {                                   // office got there first; don't touch the rest
     state.autoAssignedOn = todayKey(); save(); return;
   }
   state.autoAssignedOn = todayKey();
   maybeBalanceSchedule();   // level the week before handing today's rooms out
-  autoAssignRooms();
+  const rest = due.filter((u) => !u.assignedTo);
+  if (!rest.length) { save(); render(); return; }              // the plan covered the whole morning
+  // Deal only what the plan didn't cover, counting the carried rooms against their
+  // cleaners so the split stays even across the morning as a whole.
+  autoAssignRooms(rest, carried.load, carried.slotLoad);
 }
 function openAssignPicker(id) { _assignPick = { unitId: id }; render(); }
 function dismissAssignPicker() { _assignPick = null; render(); }
@@ -1694,16 +1733,20 @@ function setUnitUsual(id, pid) {
 //   1. Rooms with a "usual" cleaner who clocked in → keep that same person (Airbnb stays with its crew).
 //   2. Remaining rooms, priority ⭐ first, go to the earliest-arriving cleaners.
 //   3. Everything balances so no one is overloaded.
-function autoAssignRooms() {
+// onlyRooms limits the deal to part of the morning — used when last night's plan has
+// already covered the rest. loadSeed/slotSeed carry what those cleaners are holding
+// from the plan, so a partial deal still balances against the whole morning.
+function autoAssignRooms(onlyRooms, loadSeed, slotSeed) {
   const people = Object.keys(hikArrivals)
     .filter((id) => (state.staff || []).some((s) => s.id === id))
     .map((id) => ({ id, raw: hikArrivals[id].raw }))
     .sort((a, b) => String(a.raw || '').localeCompare(String(b.raw || '')));   // earliest badge-in first
   if (!people.length) { hikSyncMsg = { err: true, text: 'No one clocked in to assign rooms to.' }; render(); return; }
   const inIds = new Set(people.map((p) => p.id));
-  const load = {}; people.forEach((p) => { load[p.id] = 0; });
+  const load = {}; people.forEach((p) => { load[p.id] = (loadSeed && loadSeed[p.id]) || 0; });
 
-  const rooms = (state.servicedUnits || []).filter((u) => onRollCall(u) && unitDueToday(u)).slice().sort((a, b) =>   // due today, of the kinds roll call covers
+  const pool = onlyRooms || (state.servicedUnits || []).filter((u) => onRollCall(u) && unitDueToday(u));
+  const rooms = pool.slice().sort((a, b) =>   // due today, of the kinds roll call covers
     (slotRank(a) - slotRank(b))                            // 🌅 early-preference rooms first → earliest arrivals
     || (b.priority ? 1 : 0) - (a.priority ? 1 : 0)                               // then priority ⭐ rooms
     || String(a.time || '~').localeCompare(String(b.time || '~'))               // then earliest scheduled time
@@ -1720,16 +1763,16 @@ function autoAssignRooms() {
       `${held.length} ${held.length === 1 ? 'is' : 'are'} already handed out`
         + (signed ? `, ${signed} of them checked` : '')
         + `. This shuffles them all again — rooms with a permanent cleaner stay with that person. You can undo it afterwards.`,
-      () => runAutoAssign(rooms, people, inIds, load),
+      () => runAutoAssign(rooms, people, inIds, load, slotSeed),
       'Reassign',
       'safe'
     );
     return;
   }
-  runAutoAssign(rooms, people, inIds, load);
+  runAutoAssign(rooms, people, inIds, load, slotSeed);
 }
 
-function runAutoAssign(rooms, people, inIds, load) {
+function runAutoAssign(rooms, people, inIds, load, slotSeed) {
   // Snapshot before reshuffling. Auto-assign silently discards a morning of manual
   // assignments, and it sits one mis-tap away from the room list, so it needs to be
   // reversible rather than merely careful.
@@ -1768,7 +1811,12 @@ function runAutoAssign(rooms, people, inIds, load) {
   // ones, but once everyone has had one it comes round again, and everybody ends up
   // with a mixture of asked-for and ordinary rooms rather than one lopsided round.
   const slotLoad = { early: {}, late: {} };
-  people.forEach((p) => { slotLoad.early[p.id] = 0; slotLoad.late[p.id] = 0; });
+  people.forEach((p) => {
+    // Seeded with any asked-for rooms already carried in from the plan, so a partial
+    // deal doesn't hand somebody a second helping of the early round.
+    slotLoad.early[p.id] = (slotSeed && slotSeed.early && slotSeed.early[p.id]) || 0;
+    slotLoad.late[p.id] = (slotSeed && slotSeed.late && slotSeed.late[p.id]) || 0;
+  });
   const spreadSlot = (slot) => {
     rooms.filter((u) => !u.assignedTo && timeSlot(u) === slot).forEach((u) => {
       const pick = ableFor(u).sort((a, b) =>
@@ -3084,25 +3132,43 @@ function assignNewPlanJobs(day, keys) {
   const unitById = {};
   (state.servicedUnits || []).forEach((u) => { unitById[u.id] = u; });
   const staffById = {}, load = {};
-  crew.forEach((p) => { staffById[p.id] = p; load[p.id] = 0; });
+  const slotLoad = { early: {}, late: {} };
+  crew.forEach((p) => { staffById[p.id] = p; load[p.id] = 0; slotLoad.early[p.id] = 0; slotLoad.late[p.id] = 0; });
   // Count what each of them is already carrying, so the new work lands on whoever
-  // has the least rather than on top of the person who is already fullest.
+  // has the least rather than on top of the person who is already fullest. Counted
+  // per time slot as well as overall: an even total is no use if one person is
+  // holding every room the customer asked for first thing.
   Object.keys(plan).forEach((k) => {
     const who = plan[k].assignedTo;
-    if (who && load[who] !== undefined) load[who] += 1;
+    if (!who || load[who] === undefined) return;
+    load[who] += 1;
+    const u = plan[k].kind === 'unit' ? unitById[plan[k].refId] : null;
+    const slot = u ? timeSlot(u) : 'any';
+    if (slot !== 'any') slotLoad[slot][who] += 1;
   });
 
-  let n = 0;
-  roomKeys.forEach((k) => {
+  // Asked-for times go out first and are spread on their own count, exactly as the
+  // morning deals them — otherwise the early rooms stack on whoever happens to be
+  // lightest overall and one person carries the whole first hour.
+  const order = crew.map((p) => p.id);
+  const give = (k) => {
     const u = unitById[plan[k].refId];
-    if (!u) return;
-    const pick = crew.map((p) => p.id)
+    if (!u) return false;
+    const slot = timeSlot(u);
+    const pick = order
       .filter((id) => canCleanUnit(staffById[id], u))
-      .sort((a, b) => (load[a] - load[b])
-        || ((u.lastCleanedBy === a ? 1 : 0) - (u.lastCleanedBy === b ? 1 : 0)))[0];
-    if (!pick) return;                          // nobody rostered on is cleared for it
-    plan[k].assignedTo = pick; load[pick] += 1; n += 1;
-  });
+      .sort((a, b) => (slot !== 'any' ? slotLoad[slot][a] - slotLoad[slot][b] : 0)
+        || (load[a] - load[b])
+        || ((u.lastCleanedBy === a ? 1 : 0) - (u.lastCleanedBy === b ? 1 : 0))
+        || (order.indexOf(a) - order.indexOf(b)))[0];
+    if (!pick) return false;                    // nobody rostered on is cleared for it
+    plan[k].assignedTo = pick; load[pick] += 1;
+    if (slot !== 'any') slotLoad[slot][pick] += 1;
+    return true;
+  };
+  let n = 0;
+  const inSlot = (s) => roomKeys.filter((k) => unitById[plan[k].refId] && timeSlot(unitById[plan[k].refId]) === s);
+  [...inSlot('early'), ...inSlot('late'), ...inSlot('any')].forEach((k) => { if (give(k)) n += 1; });
   return n;
 }
 
