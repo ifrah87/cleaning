@@ -1274,6 +1274,77 @@ function serve() {
   check('the off-roll-call jobs are in there', offRollCall.every((u) => nightRows.includes(u)),
     'expected ' + JSON.stringify(offRollCall) + ' in ' + JSON.stringify(nightRows));
 
+  // --------------------------------------------------------- TOMORROW, AUTO
+  // Tomorrow used to exist only once somebody opened the Plan tab for it.
+  console.log('\n\x1b[1mTOMORROW — laid out without being asked\x1b[0m');
+
+  const planState = () => page.evaluate(() => {
+    const d = tomorrowKey();
+    const plan = state.plans[d] || {};
+    const rooms = Object.entries(plan).filter(([, v]) => v.kind === 'unit');
+    return {
+      day: d,
+      jobs: Object.keys(plan).length,
+      rooms: rooms.map(([k]) => k),
+      assigned: rooms.filter(([, v]) => v.assignedTo).length,
+      assignees: [...new Set(rooms.map(([, v]) => v.assignedTo).filter(Boolean))],
+      rostered: cleaningStaff().filter((p) => worksOnDay(p, d)).map((p) => p.id),
+    };
+  });
+
+  // Start from nothing planned, then do what opening the app does — not what
+  // opening the Plan tab does.
+  await page.evaluate(() => {
+    const d = tomorrowKey();
+    delete state.plans[d];
+    delete state.planSeeded[d];
+    if (state.planDropped) delete state.planDropped[d];
+    ensureTomorrowPlanned();
+  });
+  const t1 = await planState();
+  check('opening the app lays tomorrow out, without visiting the Plan tab', t1.jobs > 0, 'tomorrow is still empty');
+  check('and it puts rooms on it, not just areas', t1.rooms.length > 0, 'no rooms planned');
+  check('the rooms are handed round', t1.assigned > 0, 'nobody was given anything');
+  check('and only to people rostered on that day',
+    t1.assignees.every((id) => t1.rostered.includes(id)),
+    'assigned to ' + JSON.stringify(t1.assignees) + ' but rostered: ' + JSON.stringify(t1.rostered));
+
+  // Re-running must be idempotent — an app reopened twice must not double up
+  // or re-deal work somebody has already been given.
+  const beforeAgain = await page.evaluate(() => JSON.stringify(state.plans[tomorrowKey()]));
+  await page.evaluate(() => ensureTomorrowPlanned());
+  eq('reopening the app changes nothing that is already planned',
+    await page.evaluate(() => JSON.stringify(state.plans[tomorrowKey()])), beforeAgain);
+
+  // A re-sync must not disturb work already handed to somebody. Checked before the
+  // removal test below, which takes that same room off the plan.
+  const held = await page.evaluate(() => {
+    const plan = state.plans[tomorrowKey()];
+    const k = Object.keys(plan).find((x) => plan[x].kind === 'unit' && plan[x].assignedTo);
+    return k ? { k, who: plan[k].assignedTo } : null;
+  });
+  check('somebody is holding a room for tomorrow', !!held, 'nothing was assigned to test against');
+  if (held) {
+    await page.evaluate(() => resyncPlanDay(tomorrowKey()));
+    eq('a re-sync leaves an existing hand-out alone',
+      await page.evaluate((k) => (state.plans[tomorrowKey()][k] || {}).assignedTo, held.k), held.who);
+  }
+
+  // A job taken off by hand must stay off. This is what makes the re-sync safe:
+  // without it the schedule silently puts the room back and the tap looks broken.
+  const dropKey = t1.rooms[0];
+  await page.evaluate((k) => {
+    const [kind, id] = [k.split(':')[0], k.split(':').slice(1).join(':')];
+    togglePlanJob(tomorrowKey(), kind, id, 'x');
+  }, dropKey);
+  check('a job can be taken off tomorrow', !(await planState()).rooms.includes(dropKey), 'it is still on the plan');
+  check('the schedule still says that room is due', await page.evaluate((k) =>
+    planningJobsFor(tomorrowKey()).some((j) => j.kind + ':' + j.id === k), dropKey),
+    'the room stopped being due, so the re-sync below proves nothing');
+  await page.evaluate(() => resyncPlanDay(tomorrowKey()));
+  check('and the schedule does not put it back',
+    !(await planState()).rooms.includes(dropKey), 'the re-sync re-added a job that was removed by hand');
+
   // ------------------------------------------------------------- DURABILITY
   // A save is not finished until the server has it. These cover the way changes
   // used to vanish: made on a phone, still shown on that phone, never seen by

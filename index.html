@@ -776,6 +776,7 @@ function finalizeState() {
   if (typeof state.floors !== 'number' || state.floors < 1) state.floors = DEFAULT_FLOORS;
   if (!state.plans || typeof state.plans !== 'object') state.plans = {};
   if (!state.planSeeded || typeof state.planSeeded !== 'object') state.planSeeded = {};
+  if (!state.planDropped || typeof state.planDropped !== 'object') state.planDropped = {};
   if (!state.manualArrivals || typeof state.manualArrivals !== 'object') state.manualArrivals = {};
   if (!state.assignConfirmed || typeof state.assignConfirmed !== 'object') state.assignConfirmed = {};
   dedupeServicedUnits();
@@ -2876,7 +2877,9 @@ function applySuggestions(day, jobs) {
   jobs.forEach(s => {
     const k = planKey(s.kind, s.id);
     if (plan[k]) return;
-    plan[k] = { kind: s.kind, refId: s.id, label: s.label, assignedTo: null };
+    // `auto` records that the schedule put this here, not a person. Only an
+    // auto-placed job may be taken away again without asking.
+    plan[k] = { kind: s.kind, refId: s.id, label: s.label, assignedTo: null, auto: true };
     added++;
   });
   return added;
@@ -3019,6 +3022,90 @@ function staggerFrequencyGroup(freqKeyName, dryRun) {
   return { moved, groups: groups.map((grp, g) => ({ day: shiftDay(start, g), units: grp.map((u) => u.unit) })) };
 }
 
+// ============================================================
+// TOMORROW, WITHOUT BEING ASKED
+// The Plan tab lays a day out the moment somebody opens it. That is too late to
+// be useful: if nobody opens it, tomorrow does not exist until tomorrow. This
+// builds it on app open instead, and — because a day was only ever laid out once,
+// then left alone for good — brings it back in line every time it is looked at,
+// so a plan drawn up this morning still matches what the schedule says tonight.
+// ============================================================
+function ensureTomorrowPlanned() {
+  const day = tomorrowKey();
+  if (!state.planSeeded) state.planSeeded = {};
+  if (!state.planSeeded[day]) return { day, seeded: seedPlanOnce(day), added: 0, removed: 0, assigned: 0 };
+  return { day, seeded: 0, ...resyncPlanDay(day) };
+}
+
+// Bring a already-laid-out day back in line with what the schedule now says, without
+// undoing anybody's decisions. A room that has become due is added and handed to
+// whoever is carrying least; a room that is no longer due is dropped only if the
+// schedule was what put it there and nobody has been given it. Assignments already
+// made are never shuffled — that is the difference between this and a rebuild.
+function resyncPlanDay(day) {
+  const plan = getPlan(day);
+  // Emptied on purpose ("Clear this day's plan") — an automatic refill would
+  // override a deliberate act, so a cleared day stays cleared.
+  if (!Object.keys(plan).length) return { added: 0, removed: 0, assigned: 0 };
+
+  const want = planningJobsFor(day);
+  const wantKeys = new Set(want.map((j) => planKey(j.kind, j.id)));
+  let removed = 0;
+  Object.keys(plan).forEach((k) => {
+    if (plan[k].kind !== 'unit') return;        // an area on a day was somebody's call
+    if (wantKeys.has(k) || plan[k].assignedTo || !plan[k].auto) return;
+    delete plan[k]; removed += 1;
+  });
+
+  const dropped = droppedFor(day);
+  const added = [];
+  want.forEach((j) => {
+    const k = planKey(j.kind, j.id);
+    if (plan[k] || (dropped && dropped[k])) return;   // already there, or taken off by hand
+    plan[k] = { kind: j.kind, refId: j.id, label: j.label, assignedTo: null, auto: true };
+    added.push(k);
+  });
+
+  const assigned = assignNewPlanJobs(day, added);
+  if (removed || added.length) save();
+  return { added: added.length, removed, assigned };
+}
+
+// Hand out only the jobs just added, fitting them around what is already dealt.
+// autoPlanDay deals the whole day from scratch and would wipe existing hand-outs.
+function assignNewPlanJobs(day, keys) {
+  const plan = getPlan(day);
+  const roomKeys = keys.filter((k) => plan[k] && plan[k].kind === 'unit');
+  if (!roomKeys.length) return 0;
+  const crew = cleaningStaff().filter((p) => worksOnDay(p, day))
+    .slice().sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  if (!crew.length) return 0;
+
+  const unitById = {};
+  (state.servicedUnits || []).forEach((u) => { unitById[u.id] = u; });
+  const staffById = {}, load = {};
+  crew.forEach((p) => { staffById[p.id] = p; load[p.id] = 0; });
+  // Count what each of them is already carrying, so the new work lands on whoever
+  // has the least rather than on top of the person who is already fullest.
+  Object.keys(plan).forEach((k) => {
+    const who = plan[k].assignedTo;
+    if (who && load[who] !== undefined) load[who] += 1;
+  });
+
+  let n = 0;
+  roomKeys.forEach((k) => {
+    const u = unitById[plan[k].refId];
+    if (!u) return;
+    const pick = crew.map((p) => p.id)
+      .filter((id) => canCleanUnit(staffById[id], u))
+      .sort((a, b) => (load[a] - load[b])
+        || ((u.lastCleanedBy === a ? 1 : 0) - (u.lastCleanedBy === b ? 1 : 0)))[0];
+    if (!pick) return;                          // nobody rostered on is cleared for it
+    plan[k].assignedTo = pick; load[pick] += 1; n += 1;
+  });
+  return n;
+}
+
 function getPlan(day) { if (!state.plans) state.plans = {}; if (!state.plans[day]) state.plans[day] = {}; return state.plans[day]; }
 function planJobs(day) { return Object.entries(getPlan(day)).map(([key, v]) => ({ key, ...v })); }
 const planKey = (kind, id) => kind + ':' + id;
@@ -3030,8 +3117,23 @@ function planPool() {
 }
 function togglePlanJob(day, kind, id, label) {
   const plan = getPlan(day); const k = planKey(kind, id);
-  if (plan[k]) delete plan[k]; else plan[k] = { kind, refId: id, label, assignedTo: null };
+  // Taking a job off a day is a decision, and it has to outlast the next re-sync —
+  // otherwise the schedule quietly puts it back and it looks like the tap did nothing.
+  if (plan[k]) { delete plan[k]; markPlanDropped(day, k); }
+  else { plan[k] = { kind, refId: id, label, assignedTo: null }; unmarkPlanDropped(day, k); }
   save(); render();
+}
+function droppedFor(day) { if (!state.planDropped) state.planDropped = {}; return state.planDropped[day] || null; }
+function markPlanDropped(day, k) {
+  if (!state.planDropped) state.planDropped = {};
+  if (!state.planDropped[day]) state.planDropped[day] = {};
+  state.planDropped[day][k] = true;
+}
+function unmarkPlanDropped(day, k) {
+  const d = droppedFor(day);
+  if (!d) return;
+  delete d[k];
+  if (!Object.keys(d).length) delete state.planDropped[day];
 }
 function setPlanAssignee(day, k, pid) { const plan = getPlan(day); if (plan[k]) plan[k].assignedTo = pid || null; save(); render(); }
 function clearPlanDay(day) { showConfirm('Clear this day’s plan?', 'Removes every planned job for ' + day + '.', () => { if (state.plans) delete state.plans[day]; save(); render(); }); }
@@ -3056,7 +3158,10 @@ function viewPlan() {
 
   // Fill the day from the schedule before drawing it, so the list is already
   // there on arrival instead of being an empty screen the office has to type in.
+  // A day already laid out is re-checked rather than left as drawn, so what is on
+  // screen is what the schedule says now — not what it said when it was first opened.
   const seeded = seedPlanOnce(day);
+  const resynced = (!seeded && day > todayKey()) ? resyncPlanDay(day) : { added: 0, removed: 0, assigned: 0 };
 
   // THE DAYS AHEAD — the week at a glance before dropping into any one day, so a
   // heavy Thursday is visible on Monday rather than on Thursday morning.
@@ -5119,6 +5224,7 @@ async function boot() {
   load();
   route();              // login → app
   await remotePull();   // wait for the staff roster before matching arrivals
+  ensureTomorrowPlanned();   // tomorrow is laid out and handed round without anyone asking
   loadHikArrivals().then(() => { maybeAutoAssign(); route(); });
   startArrivalPolling();
   subscribeRealtime();
