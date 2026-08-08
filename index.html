@@ -815,9 +815,12 @@ function load() {
 }
 
 // Save = write the local cache instantly, then push to the shared server.
+// The device is marked dirty until the server confirms the write, so a change
+// can never be left stranded on one phone (see DIRTY FLAG below).
 function save() {
   dedupeServicedUnits();   // never persist a duplicate room, no matter how it got created
   try { localStorage.setItem(STORE, JSON.stringify(state)); } catch (e) {}
+  markDirty();
   remotePush();
 }
 
@@ -829,36 +832,89 @@ function save() {
 // people save within the same ~second, one change can be overwritten.
 // Fine for a small crew; if that becomes a problem the high-write pieces
 // (attendance, completions) should move to their own rows — see SETUP.md.
+//
+// DURABILITY: a save is not finished until the server confirms it. Until then
+// the device is "dirty": it retries, it flushes before the page is hidden or
+// closed, it re-pushes on the next open, and it refuses to let a server copy
+// overwrite the change it has not managed to send yet. Without this, a tap
+// followed by locking the phone lost the change silently — it stayed in
+// localStorage, so that phone kept showing it while no other device ever saw it.
 // ============================================================
+const DIRTY_KEY = STORE + '_dirty';   // survives a reload, so an unsent change is replayed
 let _lastRemoteJSON = null;   // dedupe realtime echoes of our own writes
 let _pushTimer = null;
+let _retryTimer = null;
+let _retryDelay = 0;
+let _pushing = false;
 
+function isDirty() { try { return localStorage.getItem(DIRTY_KEY) === '1'; } catch (e) { return false; } }
+function markDirty() { try { localStorage.setItem(DIRTY_KEY, '1'); } catch (e) {} }
+function clearDirty() { try { localStorage.removeItem(DIRTY_KEY); } catch (e) {} }
+
+// Debounced push: collapses a burst of saves into one network write.
 function remotePush() {
   if (!db) return;             // not configured yet → local-only (unchanged behavior)
-  clearTimeout(_pushTimer);    // debounce bursts of saves into one network write
-  _pushTimer = setTimeout(async () => {
-    try {
-      const snapshot = JSON.stringify(state);
-      _lastRemoteJSON = snapshot;
-      const { error } = await db.from('app_state')
-        .upsert({ building: BUILDING, data: JSON.parse(snapshot), updated_at: new Date().toISOString() });
-      if (error) throw error;
-      hideStorageWarn();
-    } catch (e) {
-      showStorageWarn('Changes are NOT saving to the server (' + (e.message || e) + '). They are kept on this device only.');
-    }
-  }, 250);
+  clearTimeout(_pushTimer);
+  _pushTimer = setTimeout(() => { pushNow(); }, 250);
 }
+
+// Send the current state to the server. Resolves true only when the row is written.
+async function pushNow() {
+  if (!db || _pushing) return false;
+  clearTimeout(_pushTimer);    // a pending debounce is now redundant
+  clearTimeout(_retryTimer);
+  _pushing = true;
+  const snapshot = JSON.stringify(state);
+  try {
+    const { error } = await db.from('app_state')
+      .upsert({ building: BUILDING, data: JSON.parse(snapshot), updated_at: new Date().toISOString() });
+    if (error) throw error;
+    _lastRemoteJSON = snapshot;   // only now is it genuinely our own write echoing back
+    clearDirty();
+    _retryDelay = 0;
+    hideStorageWarn();
+    return true;
+  } catch (e) {
+    markDirty();                  // still ours to deliver
+    showStorageWarn('Not saved to the server yet (' + (e.message || e) + '). Retrying — keep this page open.');
+    scheduleRetry();
+    return false;
+  } finally {
+    _pushing = false;
+  }
+}
+
+// Keep trying, backing off 1s → 2s → 4s … up to 30s, until the write lands.
+function scheduleRetry() {
+  clearTimeout(_retryTimer);
+  _retryDelay = Math.min(_retryDelay ? _retryDelay * 2 : 1000, 30000);
+  _retryTimer = setTimeout(() => { if (isDirty()) pushNow(); }, _retryDelay);
+}
+
+// Flush before the page goes away. Locking a phone or switching apps fires
+// visibilitychange/pagehide; without this the debounce timer was killed first
+// and the change was never sent.
+function flushBeforeHide() {
+  if (!db || !isDirty()) return;
+  clearTimeout(_pushTimer);
+  pushNow();
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushBeforeHide(); });
+window.addEventListener('pagehide', flushBeforeHide);
+window.addEventListener('online', () => { if (isDirty()) { _retryDelay = 0; pushNow(); } });
 
 async function remotePull() {
   if (!db) return;
+  // An unsent local change outranks whatever the server holds — deliver it first,
+  // otherwise adopting the server copy below would wipe it.
+  if (isDirty()) { await pushNow(); if (isDirty()) return; }
   try {
     const { data, error } = await db.from('app_state').select('data').eq('building', BUILDING).maybeSingle();
     if (error) throw error;
     if (data && data.data && Object.keys(data.data).length) {
       applyRemote(data.data);
     } else {
-      remotePush();            // server empty → seed it with what this device has
+      await pushNow();         // server empty → seed it with what this device has
     }
     hideStorageWarn();
   } catch (e) {
@@ -870,6 +926,8 @@ async function remotePull() {
 function applyRemote(saved) {
   const serialized = JSON.stringify(saved);
   if (serialized === _lastRemoteJSON) return;   // this is our own write echoing back
+  // Never discard a change this device has not delivered yet; send ours instead.
+  if (isDirty()) { pushNow(); return; }
   _lastRemoteJSON = serialized;
   const keepTab = state.tab;
   state = { ...state, ...saved, tab: keepTab, pendingCover: null, editingUnit: null, editingArea: null, editingEmp: null };

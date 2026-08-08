@@ -129,6 +129,7 @@ function serve() {
   const ctx = await browser.newContext({ viewport: { width: 420, height: 900 } });
 
   const writes = [];        // every app_state upsert the app attempted
+  let failWrites = false;   // flip on to simulate the server being unreachable
   const unexpected = [];    // any Supabase path we didn't plan for
   const logged = [];        // every cleaning_log row the app tried to write
   let logPosts = 0;         // how many separate inserts those rows arrived in
@@ -156,6 +157,7 @@ function serve() {
         const row = { data: APP_STATE };
         return json(single ? row : [row]);
       }
+      if (failWrites) return json({ message: 'network is down' }, 503);
       writes.push(JSON.parse(req.postData() || '{}'));
       return json([{}], 201);
     }
@@ -1271,6 +1273,74 @@ function serve() {
   const nightRows = logged.slice(nightLogged).map((r) => r.unit_label);
   check('the off-roll-call jobs are in there', offRollCall.every((u) => nightRows.includes(u)),
     'expected ' + JSON.stringify(offRollCall) + ' in ' + JSON.stringify(nightRows));
+
+  // ------------------------------------------------------------- DURABILITY
+  // A save is not finished until the server has it. These cover the way changes
+  // used to vanish: made on a phone, still shown on that phone, never seen by
+  // any other device because the write never left the handset.
+  console.log('\n\x1b[1mDURABILITY — a change must reach the server, or keep trying\x1b[0m');
+
+  const markUnitPriority = (on) => page.evaluate((flag) => {
+    const u = state.servicedUnits.find((x) => x.id === 'u101');
+    u.priority = flag;
+    save();
+  }, on);
+  const dirtyFlag = () => page.evaluate(() => localStorage.getItem(STORE + '_dirty'));
+
+  // 1. Locking the phone right after a tap must not eat the change. The push is
+  //    debounced 250ms; hiding the page has to flush it rather than kill it.
+  writes.length = 0;
+  await markUnitPriority(true);
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await page.waitForTimeout(400);
+  check('a change survives the screen being locked before the debounce fires',
+    writes.length > 0, 'nothing was sent to the server');
+  check('and it is the change that was actually made',
+    writes.length > 0 && writes[writes.length - 1].data.servicedUnits.find((u) => u.id === 'u101').priority === true,
+    'the write did not carry the edit');
+  eq('the device is clean once the server has it', await dirtyFlag(), null);
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+
+  // 2. A write the server refuses must be remembered, not silently dropped.
+  const outageStart = consoleErrors.length;   // the 503s below are on purpose
+  failWrites = true;
+  writes.length = 0;
+  await markUnitPriority(false);
+  await page.waitForTimeout(600);
+  eq('a rejected write leaves the device marked dirty', await dirtyFlag(), '1');
+  eq('nothing was recorded as written', writes.length, 0);
+  contains('the crew is told it has not saved yet',
+    await page.locator('#storageWarn').textContent(), 'Not saved to the server yet');
+
+  // 3. While dirty, a live update from another device must not overwrite the
+  //    change this one is still holding.
+  await page.evaluate(() => applyRemote({ ...state, servicedUnits: state.servicedUnits.map((u) => ({ ...u, priority: true })) }));
+  await page.waitForTimeout(300);
+  eq('an unsent change is not clobbered by another device',
+    await page.evaluate(() => state.servicedUnits.find((u) => u.id === 'u101').priority), false);
+
+  // 4. When the connection comes back, the held change goes up by itself.
+  failWrites = false;
+  writes.length = 0;
+  await page.evaluate(() => window.dispatchEvent(new Event('online')));
+  await page.waitForTimeout(600);
+  check('the held change is sent as soon as the connection returns',
+    writes.length > 0, 'came back online and still sent nothing');
+  check('the server gets the edit, not a stale copy',
+    writes.length > 0 && writes[writes.length - 1].data.servicedUnits.find((u) => u.id === 'u101').priority === false,
+    'the recovered write carried the wrong value');
+  eq('the device is clean again', await dirtyFlag(), null);
+  check('the warning is taken down once it saves',
+    await page.locator('#storageWarn').evaluate((e) => e.style.display) === 'none', 'warning still showing');
+
+  // Drop only the 503s this section caused; anything else it logged still counts.
+  consoleErrors.push(...consoleErrors.splice(outageStart).filter((e) => !/503/.test(e)));
 
   // ----------------------------------------------------------------- SAFETY
   console.log('\n\x1b[1mSAFETY + HEALTH\x1b[0m');
