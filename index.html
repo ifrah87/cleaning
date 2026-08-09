@@ -4598,6 +4598,57 @@ function viewRollCall() {
   }
 
   body.appendChild(whoIn);
+
+  // TOMORROW, ON THE ROLL CALL. The roll call is the screen the office actually
+  // lives on; tomorrow was a tab away, so "is tomorrow sorted?" meant going to look.
+  // It lays itself out when the app opens, so this is normally just showing it —
+  // and the one button is there for when it is not.
+  {
+    const day = tomorrowKey();
+    // Read it without creating it: getPlan() would leave an empty day behind, and an
+    // empty day that has been seeded is how "cleared on purpose" is recorded.
+    const plan = (state.plans || {})[day] || {};
+    const rooms = Object.values(plan).filter((v) => v.kind === 'unit');
+    const named = rooms.filter((v) => v.assignedTo).length;
+    const staffById = {};
+    (state.staff || []).forEach((s) => { staffById[s.id] = s; });
+    const box = el('<div style="margin-top:18px"></div>');
+    box.appendChild(el(`<div class="section-label">Tomorrow (${rooms.length} room${rooms.length === 1 ? '' : 's'})</div>`));
+
+    if (rooms.length) {
+      box.appendChild(el(`<div style="font-size:12px;color:${named === rooms.length ? '#15803d' : '#b45309'};font-weight:600;margin:-4px 0 8px">`
+        + (named === rooms.length ? 'All handed out' : `${named} of ${rooms.length} handed out`)
+        + ` · ${cleaningStaff().filter((p) => worksOnDay(p, day)).length} rostered on</div>`));
+      // Who has what, at a glance. Grouped by cleaner rather than listed by room —
+      // the question in the evening is "has everyone got a fair morning", not
+      // "what is happening to 305".
+      const byWho = {};
+      rooms.forEach((v) => {
+        const key = v.assignedTo || '';
+        (byWho[key] = byWho[key] || []).push(String(v.label || '').replace(/^Unit\s+/, ''));
+      });
+      const chips = el('<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px"></div>');
+      Object.keys(byWho).sort((a, b) => (a === '' ? 1 : b === '' ? -1 : 0)).forEach((id) => {
+        const who = id ? (staffById[id] || {}).name : null;
+        const label = who ? who.split(' ')[0] : 'Nobody yet';
+        chips.appendChild(el(`<div class="freqmini" style="flex:0 0 auto;padding:7px 11px;cursor:default`
+          + (id ? '' : ';border-color:#b45309;color:#b45309') + `">`
+          + `<b>${esc(label)}</b> · ${esc(byWho[id].sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true })).join(', '))}</div>`));
+      });
+      box.appendChild(chips);
+    } else {
+      box.appendChild(el(`<div style="font-size:12px;color:#5f7189;margin:-4px 0 8px">Nothing laid out yet.</div>`));
+    }
+
+    const btn = el(`<button class="add-btn" style="background:#15803d">⚡ Plan tomorrow's rooms</button>`);
+    // Switch tab first so planTomorrow's single render lands on the day it planned.
+    btn.onclick = () => { state.tab = 'plan'; _assignPick = null; planTomorrow(); };
+    box.appendChild(btn);
+    box.appendChild(el(`<div style="font-size:10px;color:#5f7189;margin-top:4px">`
+      + `Lays it out and hands it round, then opens it so you can change anything.</div>`));
+    body.appendChild(box);
+  }
+
   wrap.appendChild(body);
 
   // "No" on an assignment → pick who should take it instead. Everyone clocked in is

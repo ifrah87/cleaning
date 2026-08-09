@@ -1433,6 +1433,42 @@ function serve() {
   check('and the schedule does not put it back',
     !(await planState()).rooms.includes(dropKey), 'the re-sync re-added a job that was removed by hand');
 
+  // ------------------------------------------- TOMORROW ON THE ROLL CALL
+  // The roll call is the screen the office lives on. "Is tomorrow sorted?" meant
+  // going to another tab to find out.
+  console.log('\n\x1b[1mROLL CALL — tomorrow is on it\x1b[0m');
+  await page.evaluate(() => {
+    const d = tomorrowKey();
+    delete state.plans[d]; delete state.planSeeded[d];
+    if (state.planDropped) delete state.planDropped[d];
+    planDay = null; state.tab = 'rollcall'; render();
+  });
+  await page.waitForTimeout(400);
+  const rcEmpty = await page.locator('.section-label', { hasText: 'Tomorrow (' }).count();
+  check('the roll call has a Tomorrow panel', rcEmpty > 0, 'no Tomorrow section on the roll call');
+  check('it says when nothing is laid out yet',
+    (await page.locator('text=Nothing laid out yet').count()) > 0, 'no empty-state line');
+
+  const rcBtn = page.locator('button', { hasText: "Plan tomorrow's rooms" }).first();
+  check('and offers the one button right there', await rcBtn.count() > 0, 'no plan button on the roll call');
+  await rcBtn.click();
+  await page.waitForTimeout(500);
+  const afterRc = await page.evaluate(() => {
+    const d = tomorrowKey();
+    const rooms = Object.values(state.plans[d] || {}).filter((v) => v.kind === 'unit');
+    return { tab: state.tab, planDay, rooms: rooms.length, assigned: rooms.filter((v) => v.assignedTo).length };
+  });
+  check('pressing it plans tomorrow', afterRc.rooms > 0, 'tomorrow is still empty');
+  eq('and takes you to it to edit', afterRc.tab, 'plan');
+
+  // Back on the roll call it must now report the hand-out rather than the empty state.
+  await page.evaluate(() => { state.tab = 'rollcall'; render(); });
+  await page.waitForTimeout(400);
+  const rcLabel = await page.locator('.section-label', { hasText: 'Tomorrow (' }).first().textContent();
+  contains('the panel counts the rooms it planned', rcLabel, String(afterRc.rooms));
+  check('and no longer says nothing is laid out',
+    (await page.locator('text=Nothing laid out yet').count()) === 0, 'still showing the empty state');
+
   // ------------------------------------------------- LEVELS WITHOUT ASKING
   // Waiting to be asked meant the every-other-day rooms went on stacking until
   // somebody noticed the chart and went looking for the button.
