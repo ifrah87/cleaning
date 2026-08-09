@@ -932,6 +932,7 @@ function serve() {
       rooms: roomJobs.length,
       named: roomJobs.filter((j) => j.assignedTo).length,
       toOffPerson: roomJobs.filter((j) => j.assignedTo === offPerson.id).length,
+      areas: areaJobs.length,
       areasNamed: areaJobs.filter((j) => j.assignedTo).length,
       spread: counts.length ? Math.max(...counts) - Math.min(...counts) : 0,
     };
@@ -967,8 +968,10 @@ function serve() {
   eq('every room is handed out without being asked', plan.named, plan.rooms);
   eq('nothing goes to the person who is off', plan.toOffPerson, 0);
   check('and it is split evenly between the rest', plan.spread <= 1, 'spread: ' + plan.spread);
-  // Who walks the building is a call for the morning, not something to decide in advance.
-  eq('communal areas are left for the day itself', plan.areasNamed, 0);
+  // Communal areas used to be left for the morning to decide, which in practice
+  // meant nobody was named on them and they were missed. They go out with the rooms.
+  check('the communal areas are handed out too', plan.areas === 0 || plan.areasNamed === plan.areas,
+    plan.areasNamed + ' of ' + plan.areas + ' areas named');
   await page.evaluate((d) => {                          // give the day back
     const dow = new Date(d + 'T00:00:00').getDay();
     const p = cleaningStaff()[0];
@@ -1599,29 +1602,69 @@ function serve() {
   check('the day is grouped under each cleaner by name',
     shape.who.every((n) => shape.body.includes(String(n).toLowerCase())),
     'missing from the page: ' + JSON.stringify(shape.who));
-  eq('with no per-room dropdown left to make it long', shape.selects, 0);
+  check('with no dropdown per room left to make it long — at most one per person',
+    shape.selects <= shape.who.length + 1, shape.selects + ' selects for ' + shape.who.length + ' cleaners');
   check('the week chart is folded away by default',
     !shape.body.includes('the week ahead'), 'the week chart is still on the screen');
   check('and the pool of jobs to add is too',
     !shape.body.includes('add jobs to this day'), 'the add-jobs pool is still on the screen');
 
-  // Tapping a room asks who takes it, rather than every room carrying a dropdown.
-  const roomChip = page.locator('.freqmini', { hasText: /^\d+$/ }).first();
-  check('rooms are listed as chips', await roomChip.count() > 0, 'no room chips found');
-  await roomChip.click();
-  await page.waitForTimeout(300);
-  check('tapping one opens a picker', (await page.locator('.modal-title').count()) > 0, 'no picker opened');
-  const pickTo = await page.evaluate(() => {
-    const k = _planPick.key;
-    const before = state.plans[_planPick.day][k].assignedTo;
-    const other = cleaningStaff().find((p) => p.id !== before);
-    return { k, before, other: other ? other.id : null, name: other ? other.name : null };
+  // Editing is the roll call's: tap a chip to take the room off somebody, and use
+  // the per-person dropdown to give them one.
+  const roomChip = page.locator('.freqmini', { hasText: /^\d+ ✕$/ }).first();
+  check('rooms are chips with an ✕, as on the roll call', await roomChip.count() > 0, 'no room chips found');
+  const chipInfo = await page.evaluate(() => {
+    const d = tomorrowKey(); const plan = state.plans[d];
+    const k = Object.keys(plan).find((x) => plan[x].kind === 'unit' && plan[x].assignedTo);
+    return { k, who: plan[k].assignedTo, label: String(plan[k].label).replace(/^Unit\s+/, '') };
   });
-  if (pickTo.other) {
-    await page.locator('.cover-pick', { hasText: pickTo.name }).first().click();
-    await page.waitForTimeout(300);
-    eq('and choosing somebody moves the room to them',
-      await page.evaluate((k) => state.plans[tomorrowKey()][k].assignedTo, pickTo.k), pickTo.other);
+  await page.locator('.freqmini', { hasText: new RegExp('^' + chipInfo.label + ' ✕$') }).first().click();
+  await page.waitForTimeout(350);
+  eq('tapping one takes the room off them',
+    await page.evaluate((k) => state.plans[tomorrowKey()][k].assignedTo || '', chipInfo.k), '');
+  check('and it turns up under "not handed out"',
+    (await page.evaluate(() => document.body.innerText.toLowerCase())).includes('still to hand out'),
+    'no unhanded group appeared');
+
+  const giveBack = page.locator(`[data-plan-target="${chipInfo.who}"] select`).first();
+  check('each person has an assign dropdown', await giveBack.count() > 0, 'no per-person select');
+  await giveBack.selectOption(chipInfo.k);
+  await page.waitForTimeout(350);
+  eq('and it gives the room back to them',
+    await page.evaluate((k) => state.plans[tomorrowKey()][k].assignedTo, chipInfo.k), chipInfo.who);
+
+  // HOLD AND DRAG. Tapping is fine for one room; shuffling a morning around is
+  // faster with a thumb. The hold is what tells a drag from a tap.
+  const dragSetup = await page.evaluate(() => {
+    const d = tomorrowKey();
+    const plan = state.plans[d];
+    const k = Object.keys(plan).find((x) => plan[x].kind === 'unit' && plan[x].assignedTo);
+    const from = plan[k].assignedTo;
+    const to = cleaningStaff().find((p) => p.id !== from && worksOnDay(p, d));
+    return k && to ? { k, from, to: to.id, toName: to.name, label: plan[k].label } : null;
+  });
+  check('there are two cleaners to drag a room between', !!dragSetup, 'not enough crew on that day');
+  if (dragSetup) {
+    const short = String(dragSetup.label).replace(/^Unit\s+/, '');
+    const chip = page.locator('.freqmini', { hasText: new RegExp('^' + short + ' ✕$') }).first();
+    const target = page.locator(`[data-plan-target="${dragSetup.to}"]`).first();
+    const cb = await chip.boundingBox(), tb = await target.boundingBox();
+    check('the room and the person it moves to are both on screen', !!cb && !!tb, 'could not locate both');
+    if (cb && tb) {
+      await page.mouse.move(cb.x + cb.width / 2, cb.y + cb.height / 2);
+      await page.mouse.down();
+      await page.waitForTimeout(450);                    // hold past the threshold
+      check('holding lifts the room off the page', (await page.locator('.drag-ghost').count()) > 0,
+        'no drag ghost appeared');
+      await page.mouse.move(tb.x + tb.width / 2, tb.y + 20, { steps: 8 });
+      check('the person under it lights up as the drop', (await page.locator('.drop-live').count()) > 0,
+        'no drop target highlighted');
+      await page.mouse.up();
+      await page.waitForTimeout(400);
+      eq('letting go moves the room to them',
+        await page.evaluate((k) => state.plans[tomorrowKey()][k].assignedTo, dragSetup.k), dragSetup.to);
+      eq('and the ghost is gone', await page.locator('.drag-ghost').count(), 0);
+    }
   }
 
   // Show more brings the rest back without it living on the main screen.

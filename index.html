@@ -236,6 +236,16 @@
   .storage-warn { background: #fbe3e3; color: #dc2626; border-bottom: 1px solid #f6d5d5; padding: 11px 14px; font-size: 12px; font-weight: 600; text-align: center; line-height: 1.4; }
 
   /* Make the native date-picker calendar icon visible on our dark fields */
+  /* A room in the air, following the thumb. Pointer-events off so the element
+     under it can still be found with elementFromPoint. */
+  .drag-ghost {
+    position: fixed; z-index: 90; pointer-events: none;
+    transform: translate(-50%, -140%);
+    background: #0284c7; color: #ffffff; border-radius: 8px;
+    padding: 8px 13px; font-size: 14px; font-weight: 700;
+    box-shadow: 0 6px 18px rgba(15,58,95,0.3);
+  }
+  .drop-live { border-color: #0284c7 !important; background: #f0f9ff !important; }
   input[type="date"]::-webkit-calendar-picker-indicator { opacity: 0.55; cursor: pointer; }
   input[type="date"] { -webkit-appearance: none; appearance: none; }
 </style>
@@ -307,9 +317,10 @@ const STATUS = {
   off:     { label: 'OFF', color: '#5b6a7f' },
 };
 const STATUS_ORDER = ['present', 'late', 'noshow', 'sick', 'off'];
-// Not in for work, whatever the reason. Cover, planning and hand-outs all care
-// about this rather than about which kind of absence it is.
-const AWAY = ['noshow', 'sick', 'off'];
+// Didn't turn up for a shift they were expected on. OFF is deliberately not here:
+// that is the roster's business, and folding it in changes who the cover logic
+// thinks is missing on days they were never due in.
+const AWAY = ['noshow', 'sick'];
 const isAway = (pid) => AWAY.includes(state.attendance[pid] || 'present');
 
 // Areas live in state (editable). Helpers to read them:
@@ -3022,7 +3033,6 @@ let planDay = null;   // selected day in the Plan view (null => tomorrow)
 // so it can be screenshotted and sent to the crew. Everything else — the week chart,
 // the pool of jobs to add, rebuilding — sits behind this.
 let planMore = false;
-let _planPick = null;   // {day, key} while "who takes this one?" is open
 // Anchored to the work day, not the clock day: at 00:20 the crew is still on the
 // round that started last night, so "tomorrow" must not skip a day under them.
 const tomorrowKey = () => shiftDay(workToday(), 1);
@@ -3126,6 +3136,16 @@ function autoPlanDay(day) {
     });
   };
   deal('early'); deal('late'); deal(null);
+  // Communal areas go out too. They were left for the morning to decide, which in
+  // practice meant nobody was named on them and they got missed. No clearance test:
+  // an area is a walk of the building, not a kind of room somebody is signed off on.
+  const areaKeys = Object.keys(plan).filter((k) => plan[k].kind !== 'unit');
+  areaKeys.forEach((k) => { plan[k].assignedTo = null; });
+  areaKeys.forEach((k) => {
+    const pick = order.slice().sort((a, b) => (load[a] - load[b]) || (order.indexOf(a) - order.indexOf(b)))[0];
+    if (!pick) return;
+    plan[k].assignedTo = pick; load[pick] += 1;
+  });
 
   // Even it out, exactly as the morning does. A room the customer asked a time for
   // stays where it is; that was their decision, not a balancing one.
@@ -3409,7 +3429,7 @@ function resyncPlanDay(day) {
 function assignNewPlanJobs(day, keys, skip) {
   const plan = getPlan(day);
   const roomKeys = keys.filter((k) => plan[k] && plan[k].kind === 'unit');
-  if (!roomKeys.length) return 0;
+  if (!keys.some((k) => plan[k])) return 0;
   // skip = whoever cannot take work today, so somebody off sick does not get handed
   // their own rooms straight back.
   const out = skip instanceof Set ? skip : new Set(skip ? [skip] : []);
@@ -3458,7 +3478,96 @@ function assignNewPlanJobs(day, keys, skip) {
   let n = 0;
   const inSlot = (s) => roomKeys.filter((k) => unitById[plan[k].refId] && timeSlot(unitById[plan[k].refId]) === s);
   [...inSlot('early'), ...inSlot('late'), ...inSlot('any')].forEach((k) => { if (give(k)) n += 1; });
+  // Communal areas as well — see autoPlanDay. Balanced on the same count, so a walk
+  // of the building counts against the person doing it.
+  keys.filter((k) => plan[k] && plan[k].kind !== 'unit' && !plan[k].assignedTo).forEach((k) => {
+    const pick = order.slice().sort((a, b) => (load[a] - load[b]) || (order.indexOf(a) - order.indexOf(b)))[0];
+    if (!pick) return;
+    plan[k].assignedTo = pick; load[pick] += 1; n += 1;
+  });
   return n;
+}
+
+// ============================================================
+// DRAG A ROOM ONTO SOMEBODY ELSE
+// Tapping a room and picking from a list is fine for one room. Shuffling a
+// morning around — which is what happens when somebody is late or ill — is faster
+// with your thumb: hold a room, drag it onto whoever should have it, let go.
+// Pointer events rather than HTML5 drag-and-drop, which does not exist on touch.
+// The hold is what separates a drag from a tap, so both still work.
+// ============================================================
+const DRAG_HOLD_MS = 300;
+let _drag = null;   // {key, ghost, over} while a room is in the air
+
+function makeRoomDraggable(chipEl, day, key, label, isSpare) {
+  let timer = null, startX = 0, startY = 0, moved = false;
+
+  const cleanup = () => {
+    clearTimeout(timer); timer = null;
+    if (_drag && _drag.ghost) _drag.ghost.remove();
+    document.querySelectorAll('.drop-live').forEach((n) => n.classList.remove('drop-live'));
+    _drag = null;
+  };
+
+  const begin = (x, y) => {
+    const ghost = el(`<div class="drag-ghost">${esc(String(label).replace(/^Unit\s+/, ''))}</div>`);
+    document.body.appendChild(ghost);
+    ghost.style.left = x + 'px'; ghost.style.top = y + 'px';
+    _drag = { key, day, ghost, over: null };
+    chipEl.style.opacity = '0.35';
+    if (navigator.vibrate) { try { navigator.vibrate(15); } catch (e) {} }
+  };
+
+  const targetAt = (x, y) => {
+    const n = document.elementFromPoint(x, y);
+    return n ? n.closest('[data-plan-target]') : null;
+  };
+
+  chipEl.addEventListener('pointerdown', (e) => {
+    if (e.button != null && e.button !== 0) return;
+    startX = e.clientX; startY = e.clientY; moved = false;
+    chipEl.setPointerCapture(e.pointerId);
+    timer = setTimeout(() => begin(e.clientX, e.clientY), DRAG_HOLD_MS);
+  });
+
+  chipEl.addEventListener('pointermove', (e) => {
+    if (!_drag) {
+      // Moving before the hold has elapsed is a scroll, not a drag.
+      if (Math.abs(e.clientX - startX) > 8 || Math.abs(e.clientY - startY) > 8) {
+        moved = true; clearTimeout(timer); timer = null;
+      }
+      return;
+    }
+    e.preventDefault();
+    _drag.ghost.style.left = e.clientX + 'px';
+    _drag.ghost.style.top = e.clientY + 'px';
+    const t = targetAt(e.clientX, e.clientY);
+    if (t !== _drag.over) {
+      if (_drag.over) _drag.over.classList.remove('drop-live');
+      if (t) t.classList.add('drop-live');
+      _drag.over = t;
+    }
+  });
+
+  const finish = (e) => {
+    if (!_drag) { clearTimeout(timer); timer = null; return; }
+    const t = targetAt(e.clientX, e.clientY);
+    const to = t ? t.getAttribute('data-plan-target') : null;
+    const k = _drag.key, d = _drag.day;
+    cleanup();
+    chipEl.style.opacity = '';
+    if (to === null) { render(); return; }              // dropped on nothing — put it back
+    setPlanAssignee(d, k, to === '' ? '' : to);         // '' is the not-handed-out group
+  };
+  chipEl.addEventListener('pointerup', finish);
+  chipEl.addEventListener('pointercancel', () => { cleanup(); chipEl.style.opacity = ''; render(); });
+  // A tap that never became a drag takes the room off that person, exactly as the
+  // roll call's chips do. A room already spare has nobody to take it off.
+  chipEl.addEventListener('click', (e) => {
+    if (moved) { e.preventDefault(); e.stopPropagation(); return; }
+    if (isSpare) return;
+    setPlanAssignee(day, key, '');
+  });
 }
 
 // Somebody is off. Take their rooms back and deal them round whoever is left,
@@ -3580,8 +3689,10 @@ function viewPlan() {
   if (!jobs.length) {
     wrap.appendChild(el(`<div class="empty" style="padding:14px 0">Nothing on this day yet. Press the button above.</div>`));
   } else {
+    // Areas sit with whoever is doing them, not in a bucket of their own — the
+    // question is what one person's morning looks like, rooms and walks together.
     const byWho = {};
-    rooms.forEach((j) => { (byWho[j.assignedTo || ''] = byWho[j.assignedTo || ''] || []).push(j); });
+    [...rooms, ...areas].forEach((j) => { (byWho[j.assignedTo || ''] = byWho[j.assignedTo || ''] || []).push(j); });
     const order = Object.keys(byWho).sort((a, b) => {
       if (a === '') return 1; if (b === '') return -1;   // unhanded last, where it is noticed
       return String((staffById[a] || {}).name || a).localeCompare(String((staffById[b] || {}).name || b));
@@ -3589,13 +3700,16 @@ function viewPlan() {
     const box = el('<div style="margin-top:6px"></div>');
     order.forEach((id) => {
       const list = byWho[id].slice().sort((x, y) =>
-        String(x.label).localeCompare(String(y.label), undefined, { numeric: true }));
+        ((x.kind === 'unit' ? 0 : 1) - (y.kind === 'unit' ? 0 : 1))     // rooms first, then walks
+        || String(x.label).localeCompare(String(y.label), undefined, { numeric: true }));
+      const nRooms = list.filter((j) => j.kind === 'unit').length;
+      const nAreas = list.length - nRooms;
       const none = !id;
       const p = staffById[id];
       const name = none ? 'Not handed out' : ((p || {}).name || id);
       // Same card as the roll call's clocked-in cleaners: name, a line under it,
       // then the rooms as chips. That block is the one the office reads fastest.
-      const card = el('<div class="person" style="flex-direction:column;align-items:stretch;gap:8px"></div>');
+      const card = el(`<div class="person" data-plan-target="${esc(id)}" style="flex-direction:column;align-items:stretch;gap:8px"></div>`);
       const info = el('<div class="person-info"></div>');
       const lead = (p && p.isLeader) ? ` <span style="color:#d97706;font-size:12px;font-weight:700">★</span>` : '';
       const nameRow = el(`<div style="display:flex;align-items:center;gap:8px"></div>`);
@@ -3620,35 +3734,47 @@ function viewPlan() {
       }
       info.appendChild(nameRow);
       info.appendChild(el(`<div class="person-floors" style="color:${none ? '#b45309' : '#15803d'};font-weight:600">`
-        + (none ? `${list.length} still to hand out` : `${list.length} room${list.length === 1 ? '' : 's'}`)
+        + (none ? `${list.length} still to hand out`
+          : `${nRooms} room${nRooms === 1 ? '' : 's'}${nAreas ? ` · ${nAreas} area${nAreas === 1 ? '' : 's'}` : ''}`)
         + `</div>`));
       card.appendChild(info);
       const chips = el('<div style="display:flex;flex-wrap:wrap;gap:6px"></div>');
       list.forEach((j) => {
         const short = String(j.label).replace(/^Unit\s+/, '');
-        const c = el(`<button class="freqmini${none ? '' : ' on'}" style="flex:0 0 auto;padding:6px 11px`
-          + (none ? ';border-color:#b45309;color:#b45309' : '') + `">${esc(short)}</button>`);
-        c.onclick = () => { _planPick = { day, key: j.key }; render(); };
+        const isArea = j.kind !== 'unit';
+        // Exactly the roll call's chip: the room, and an ✕ that takes it off them.
+        // A walk of the building is green so it reads differently from a number.
+        const style = none ? ';border-color:#b45309;color:#b45309'
+          : isArea ? ';background:#15803d;border-color:#15803d;color:#ffffff' : '';
+        const c = el(`<button class="freqmini${none || isArea ? '' : ' on'}" style="flex:0 0 auto;padding:6px 11px;touch-action:none${style}">${esc(short)}${none ? '' : ' ✕'}</button>`);
+        makeRoomDraggable(c, day, j.key, j.label, none);
         chips.appendChild(c);
       });
       card.appendChild(chips);
+
+      // ...and the roll call's "+ Assign a room or area…", so a person can be given
+      // something without going and finding it first.
+      const spare = jobs.filter((x) => !x.assignedTo);
+      if (!none && spare.length) {
+        const sel = el('<select class="area-select"></select>');
+        sel.appendChild(el(`<option value="">+ Assign a room or area… (${spare.length} spare)</option>`));
+        const rms = spare.filter((x) => x.kind === 'unit');
+        const ars = spare.filter((x) => x.kind !== 'unit');
+        if (rms.length) {
+          const g = el(`<optgroup label="Rooms (${rms.length})"></optgroup>`);
+          rms.forEach((x) => g.appendChild(el(`<option value="${esc(x.key)}">${esc(x.label)}</option>`)));
+          sel.appendChild(g);
+        }
+        if (ars.length) {
+          const g = el(`<optgroup label="Communal areas (${ars.length})"></optgroup>`);
+          ars.forEach((x) => g.appendChild(el(`<option value="${esc(x.key)}">${esc(x.label)}</option>`)));
+          sel.appendChild(g);
+        }
+        sel.onchange = (e) => { if (e.target.value) setPlanAssignee(day, e.target.value, id); };
+        card.appendChild(sel);
+      }
       box.appendChild(card);
     });
-    if (areas.length) {
-      const card = el('<div class="person" style="flex-direction:column;align-items:stretch;gap:8px"></div>');
-      const info = el('<div class="person-info"></div>');
-      info.appendChild(el(`<div class="person-name">Communal areas</div>`));
-      info.appendChild(el(`<div class="person-floors">${areas.length} on this day</div>`));
-      card.appendChild(info);
-      const chips = el('<div style="display:flex;flex-wrap:wrap;gap:6px"></div>');
-      areas.forEach((j) => {
-        const c = el(`<button class="freqmini" style="flex:0 0 auto;padding:6px 11px;background:#15803d;border-color:#15803d;color:#ffffff">${esc(j.label)}</button>`);
-        c.onclick = () => { _planPick = { day, key: j.key }; render(); };
-        chips.appendChild(c);
-      });
-      card.appendChild(chips);
-      box.appendChild(card);
-    }
     wrap.appendChild(box);
 
     // One auto-assign, which reads the right thing for the day it is on. Today the
@@ -3764,46 +3890,6 @@ function viewPlan() {
         wrap.appendChild(box2);
       });
     }
-  }
-
-  // Tapping a job asks who takes it. A dropdown per room is what made the list
-  // unreadable, so the choice is a sheet, opened only for the one being changed.
-  if (_planPick && _planPick.day === day) {
-    const plan = getPlan(day);
-    const j = plan[_planPick.key];
-    if (j) {
-      const arrived = new Set(Object.keys(hikArrivals));
-      const overlay = el('<div class="modal-overlay"></div>');
-      const modal = el('<div class="modal"></div>');
-      modal.appendChild(el(`<div class="modal-title">${esc(j.label)}</div>`));
-      modal.appendChild(el(`<div class="modal-sub">Who takes it${isToday ? '' : ' on ' + esc(dt.toLocaleDateString('en-US', { weekday: 'long' }))}?</div>`));
-      const picker = el('<div class="cover-picker"></div>');
-      const load = {};
-      Object.values(plan).forEach((v) => { if (v.assignedTo) load[v.assignedTo] = (load[v.assignedTo] || 0) + 1; });
-      cleaningStaff().slice()
-        .sort((a, b) => (isToday ? (arrived.has(b.id) ? 1 : 0) - (arrived.has(a.id) ? 1 : 0) : 0)
-          || ((load[a.id] || 0) - (load[b.id] || 0))
-          || String(a.name).localeCompare(String(b.name)))
-        .forEach((p) => {
-          const on = j.assignedTo === p.id;
-          const n = load[p.id] || 0;
-          const b = el(`<button class="cover-pick${on ? ' on' : ''}"><span>${isToday && arrived.has(p.id) ? '✓ ' : ''}${esc(p.name)}</span>`
-            + `<span class="cover-load">${n} room${n === 1 ? '' : 's'}</span></button>`);
-          b.onclick = () => { const k = _planPick.key; _planPick = null; setPlanAssignee(day, k, p.id); };
-          picker.appendChild(b);
-        });
-      modal.appendChild(picker);
-      const btnRow = el('<div class="modal-btns"></div>');
-      const off = el('<button class="modal-confirm" style="background:#b45309">Take it off this day</button>');
-      off.onclick = () => { _planPick = null; togglePlanJob(day, j.kind, j.refId, j.label); };
-      const pool2 = el('<button class="modal-skip">Nobody yet</button>');
-      pool2.onclick = () => { const k = _planPick.key; _planPick = null; setPlanAssignee(day, k, ''); };
-      btnRow.appendChild(pool2); btnRow.appendChild(off);
-      modal.appendChild(btnRow);
-      overlay.appendChild(modal);
-      overlay.onclick = (e) => { if (e.target === overlay) { _planPick = null; render(); } };
-      wrap.appendChild(overlay);
-    } else { _planPick = null; }
   }
 
   return wrap;
