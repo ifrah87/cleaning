@@ -1372,43 +1372,16 @@ function setUnitsFreqBulk(ids, freq, groupLabel) {
     'safe'
   );
 }
-// Rooms on the same multi-day cadence that were all cleaned together stay locked
-// together forever — 13 every-other-day rooms all land on the same morning, giving
-// a 38-room day followed by a 25-room day. Spread them across the cycle instead.
-// Only ever DELAYS a room (one longer gap, once); never pulls a clean forward.
-function balancePlan(ids) {
-  const byFreq = {};
-  (state.servicedUnits || []).forEach(u => {
-    if (!ids.includes(u.id)) return;
-    const n = FREQ_DAYS[u.freq] || 1;
-    if (n > 1) (byFreq[u.freq] = byFreq[u.freq] || []).push(u);
-  });
-  const plan = [];
-  Object.keys(byFreq).forEach(f => {
-    const n = FREQ_DAYS[f];
-    // Sorted by room number, so the split falls on floor boundaries — "lower floors
-    // one day, upper floors the next" is something the crew can actually remember.
-    const list = byFreq[f].slice().sort((a, b) =>
-      String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }));
-    list.forEach((u, i) => {
-      const bucket = Math.floor(i * n / list.length);   // contiguous blocks, 0..n-1
-      if (!bucket) return;                              // first block keeps its date
-      const base = lastCleanDate(u);
-      if (!base) return;                                // never cleaned → already due, nothing to spread
-      if (dueShift(u) === bucket) return;             // already spread this way
-      plan.push({ u, base, shift: bucket });
-    });
-  });
-  return plan;
-}
 // ============================================================
 // LEVEL THE WEEK
 // Thirteen rooms tomorrow and twenty-four the day after is the same fortnight's
 // work either way, but the heavy day cannot actually be finished and the light one
-// wastes a crew. balancePlan below splits each frequency group into equal blocks by
-// room number, which evens out that group in isolation and says nothing about what
-// the day as a whole ends up carrying — the every-other-day split can land squarely
-// on the day the weeklies already fall.
+// wastes a crew. This replaced an earlier balancer that split each frequency group
+// into equal blocks by room number: that evened out a group in isolation and said
+// nothing about what the day as a whole ended up carrying, so the every-other-day
+// split could land squarely on the day the weeklies already fell. It also delayed
+// rooms, where this brings them forward, and the two pulled against each other
+// depending on which had run last.
 //
 // This works from the projection the week-ahead view shows, so what gets levelled is
 // the number the office is actually looking at, and it picks each room's place in
@@ -1528,30 +1501,6 @@ function levelPlan(horizon) {
 function applyLevelPlan(plan) {
   plan.moves.forEach((m) => { m.u.alsoCleanOn = m.to; delete m.u.holdUntil; });
   save();
-}
-
-function balanceUnitsAcrossDays(ids, groupLabel) {
-  const plan = balancePlan(ids);
-  if (!plan.length) return;
-  // Preview the resulting spread so the trade is visible before committing.
-  const moved = {};
-  plan.forEach(p => {
-    const d = shiftDay(p.base, (FREQ_DAYS[p.u.freq] || 1) + p.shift);
-    moved[d] = (moved[d] || 0) + 1;
-  });
-  const spread = Object.keys(moved).sort()
-    .map(d => `${moved[d]} to ${new Date(d + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`)
-    .join(', ');
-  showConfirm(
-    `Spread ${plan.length} room${plan.length === 1 ? '' : 's'} onto later days?`,
-    `Applies to ${groupLabel}. Moves ${spread}, so the same work lands evenly instead of all on one morning. No room is cleaned sooner than its schedule — each moved room just waits one extra day, once.`,
-    () => {
-      plan.forEach(p => { p.u.cycleShift = p.shift; p.u.cycleShiftFrom = p.base; });
-      save(); render();
-    },
-    'Spread them out',
-    'safe'
-  );
 }
 
 // Record a whole group as cleaned (or not) in one go — at the end of a day where
@@ -1780,25 +1729,6 @@ const lastBoardChangeLabel = () => (state.lastAutoAssign && state.lastAutoAssign
 // left alone the every-other-day rooms re-stack onto a single morning — 38 rooms
 // one day, 25 the next. This spreads them the moment that starts happening.
 // Only ever delays a room; a clean is never pulled forward.
-function maybeBalanceSchedule() {
-  if (state.autoBalance === false) return;
-  const ids = (state.servicedUnits || []).map((u) => u.id);
-  const upcoming = {};
-  (state.servicedUnits || []).forEach((u) => {
-    const d = nextDueDate(u); if (d) upcoming[d] = (upcoming[d] || 0) + 1;
-  });
-  const days = Object.keys(upcoming).sort().slice(0, 4);
-  if (!days.length) return;
-  const peak = Math.max(...days.map((d) => upcoming[d]));
-  const low = Math.min(...days.map((d) => upcoming[d]));
-  // One day carrying several more than another is the pile-up worth fixing; a
-  // difference of one or two is just how the rooms fall.
-  if (days.length > 1 && peak - low <= 2) return;
-  const plan = balancePlan(ids);
-  if (!plan.length) return;
-  plan.forEach((p) => { p.u.cycleShift = p.shift; p.u.cycleShiftFrom = p.base; });
-  save();
-}
 // Carry a plan made for today into this morning. Planning tomorrow last night and
 // then watching the roll call deal the rooms out again from scratch makes the
 // planning pointless, so a planned hand-out is honoured rather than recomputed.
@@ -1845,7 +1775,7 @@ function maybeAutoAssign() {
     state.autoAssignedOn = todayKey(); save(); return;
   }
   state.autoAssignedOn = todayKey();
-  maybeBalanceSchedule();   // level the week before handing today's rooms out
+  autoLevelIfLopsided();    // level the week before handing today's rooms out
   const rest = due.filter((u) => !u.assignedTo);
   if (!rest.length) { save(); render(); return; }              // the plan covered the whole morning
   // Deal only what the plan didn't cover, counting the carried rooms against their
@@ -3875,14 +3805,27 @@ function viewRooms() {
       loadRow.appendChild(el(`<div style="font-size:11px;color:#5b6a7f;font-weight:600;flex:0 0 auto">Next days: `
         + days.map(d => `<b>${upcoming[d]}</b> ${dayLabel(d)}`).join(' · ')
         + `</div>`));
-      if (lopsided && balancePlan(ids).length) {
+      // Evening the days out is one job with one rule, done by the leveller — which
+      // splits rooms across the cycle and never leaves one longer than its frequency.
+      // This used to have its own balancer that delayed rooms instead, so the two
+      // pulled against each other depending on which had run last.
+      if (lopsided) {
+        const lp = levelPlan(LEVEL_HORIZON);
         loadRow.appendChild(el(`<div style="flex-basis:100%;height:0"></div>`));
         loadRow.appendChild(el(`<div style="font-size:11px;color:#b45309;font-weight:700;flex:0 0 auto">`
           + (allOnOneDay ? `⚠ all ${upcoming[days[0]]} land on ${dayLabel(days[0])}` : `⚠ ${peak} on one day vs ${lightest} on another`)
           + `</div>`));
-        const balBtn = el(`<button class="freqmini" style="flex:0 0 auto;padding:6px 10px">⚖ Even out the days</button>`);
-        balBtn.onclick = () => balanceUnitsAcrossDays(ids, t.label.toLowerCase());
-        loadRow.appendChild(balBtn);
+        if (lp.moves.length) {
+          const balBtn = el(`<button class="freqmini" style="flex:0 0 auto;padding:6px 10px">⚖ Even out the days</button>`);
+          balBtn.onclick = () => {
+            const r = levelPlan(LEVEL_HORIZON);
+            applyLevelPlan(r);
+            hikSyncMsg = { text: 'Spread ' + r.moves.length + ' room' + (r.moves.length === 1 ? '' : 's')
+              + ' across the cycle — heaviest day ' + r.settledBefore + ' → ' + r.settledAfter + '.' };
+            render();
+          };
+          loadRow.appendChild(balBtn);
+        }
       }
       bulk.appendChild(loadRow);
     }
@@ -4231,7 +4174,11 @@ function viewRollCall() {
   const cur = selectedDay || todayKey();
   const pickDay = (d) => { selectedDay = d || todayKey(); loadHikArrivals().then(() => render()); };
   const dayRow = el('<div style="display:flex;align-items:center;gap:8px;margin-top:10px"></div>');
-  dayRow.appendChild(el('<div style="font-size:12px;color:#5f7189;font-weight:600;white-space:nowrap">Showing day</div>'));
+  // "Showing day" read as if it drove the whole screen, so picking a date and then
+  // finding auto-assign still dealt today's rooms looked broken. It only ever chose
+  // whose badge-ins to show, and it cannot go forward at all — nobody has clocked in
+  // for a day that has not happened. Planning a day ahead is the Plan tab's job.
+  dayRow.appendChild(el('<div style="font-size:12px;color:#5f7189;font-weight:600;white-space:nowrap">Attendance for</div>'));
   const dayIn = el(`<input type="date" value="${esc(cur)}" max="${esc(todayKey())}" style="flex:1;min-width:0;background:#f4f7fb;color:#15202e;border:1px solid #d8e0ea;border-radius:8px;padding:8px 10px;font-size:14px">`);
   dayIn.onchange = (e) => pickDay(e.target.value);
   const calBtn = el('<button class="freqmini" title="Pick a date" style="flex:0 0 auto">📅</button>');
@@ -4324,7 +4271,7 @@ function viewRollCall() {
 
     // The button that hands rooms out belongs above the list it produces.
     if (arrIds.length) {
-      const autoBtn = el('<button class="add-btn" style="background:#15803d;color:#ffffff;margin:12px 0 4px">⚡ Auto-assign rooms evenly</button>');
+      const autoBtn = el('<button class="add-btn" style="background:#15803d;color:#ffffff;margin:12px 0 4px">⚡ Auto-assign today\'s rooms evenly</button>');
       autoBtn.onclick = () => autoAssignRooms();
       box.appendChild(autoBtn);
     }

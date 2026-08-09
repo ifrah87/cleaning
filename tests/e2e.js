@@ -200,7 +200,7 @@ function serve() {
   // Auto-assign asks before discarding assignments that already exist. Accept it
   // when it appears; a fresh morning with nothing handed out won't show one.
   const autoAssign = async () => {
-    await page.locator('button', { hasText: 'Auto-assign rooms evenly' }).click();
+    await page.locator('button', { hasText: "Auto-assign today's rooms evenly" }).click();
     if (await page.locator('#confirmModal').count()) {
       await page.locator('#confirmModal .modal-btns button').last().click();
     }
@@ -340,7 +340,7 @@ function serve() {
   // Auto-assign is one mis-tap from the room list, so it asks first — but only
   // when there is something to lose.
   console.log('\n\x1b[1mAUTO-ASSIGN — asks before discarding existing work\x1b[0m');
-  await page.locator('button', { hasText: 'Auto-assign rooms evenly' }).click();
+  await page.locator('button', { hasText: "Auto-assign today's rooms evenly" }).click();
   await page.waitForSelector('#confirmModal');
   contains('confirm counts every room it will reshuffle', await page.locator('#confirmModal .modal-title').textContent(), 'Reassign all 3 rooms?');
   const reSub = await page.locator('#confirmModal .modal-sub').textContent();
@@ -529,29 +529,21 @@ function serve() {
   await page.waitForTimeout(700);
   const warn = await page.locator('text=/land on|on one day vs/').first().textContent();
   contains('a whole group landing on one day is flagged', warn, 'all 5 land on');
+  // "Even out the days" is the leveller now — it applies straight away and reports
+  // what it did, rather than proposing a set of one-day delays.
   await page.locator('button', { hasText: 'Even out the days' }).first().click();
-  await page.waitForSelector('#confirmModal');
-  const balTitle = await page.locator('#confirmModal .modal-title').textContent();
-  contains('confirm says how many rooms move', balTitle, 'Spread 2 rooms onto later days?');
-  const balSub = await page.locator('#confirmModal .modal-sub').textContent();
-  contains('confirm promises no room is cleaned early', balSub, 'No room is cleaned sooner');
-  await page.locator('#confirmModal .modal-btns button').last().click();
   await page.waitForTimeout(700);
   const wBal = writes[writes.length - 1];
   const eod = wBal ? (wBal.data.servicedUnits || []).filter((u) => u.type === 'airbnb') : [];
-  const dueDates = {};
-  eod.forEach((u) => {
-    // The spread is a one-off shift tied to the clean it came from, not a faked
-    // lastCleaned — so next-due is lastCleaned + cadence + shift.
-    const shift = (u.cycleShiftFrom && u.cycleShiftFrom === u.lastCleaned) ? (u.cycleShift || 0) : 0;
-    const d = new Date(u.lastCleaned + 'T00:00:00'); d.setDate(d.getDate() + 2 + shift);
-    const k = d.toLocaleDateString('en-CA'); dueDates[k] = (dueDates[k] || 0) + 1;
-  });
-  check('no room has a lastCleaned date in the future', eod.every((u) => u.lastCleaned <= TODAY), 'dates: ' + JSON.stringify(eod.map((u) => [u.unit, u.lastCleaned])));
-  const spread = Object.keys(dueDates).sort();
-  check('rooms now fall on more than one day', spread.length > 1, 'due dates: ' + JSON.stringify(dueDates));
-  const counts = spread.map((d) => dueDates[d]);
-  check('the split is even, not lopsided', Math.max(...counts) - Math.min(...counts) <= 1, 'counts: ' + JSON.stringify(dueDates));
+  check('no room has a lastCleaned date in the future', eod.every((u) => !u.lastCleaned || u.lastCleaned <= TODAY),
+    'dates: ' + JSON.stringify(eod.map((u) => [u.unit, u.lastCleaned])));
+  check('the rooms are split across the cycle, not left on one day',
+    eod.some((u) => u.alsoCleanOn), 'nothing was spread: ' + JSON.stringify(eod.map((u) => [u.unit, u.alsoCleanOn])));
+  check('and none of them is made to wait longer than its frequency',
+    eod.every((u) => !u.holdUntil), 'a room was held back: ' + JSON.stringify(eod.filter((u) => u.holdUntil).map((u) => u.unit)));
+  const spreadDays = [...new Set(eod.map((u) => u.alsoCleanOn).filter(Boolean))];
+  check('the extra cleans land on a day ahead, never today or the past',
+    spreadDays.every((d) => d > TODAY), 'landed on: ' + JSON.stringify(spreadDays));
 
   // Put the group back on daily for the assertions that follow.
   await airbnbBulk.locator('button', { hasText: 'Daily' }).first().click();
@@ -875,7 +867,10 @@ function serve() {
     // Every one of them every-other-day, every one of them due today: the state that
     // "even out the days" cannot do anything with.
     window.__clumpUndo = rooms.map((u) => ({ id: u.id, freq: u.freq, last: u.lastCleaned }));
-    rooms.forEach((u) => { u.freq = 'eod'; u.lastCleaned = shiftDay(todayKey(), -3); delete u.holdUntil; });
+    // Clear any split left behind by the levelling section above, or these rooms do
+    // not start as the clump this is about.
+    rooms.forEach((u) => { u.freq = 'eod'; u.lastCleaned = shiftDay(todayKey(), -3);
+      delete u.holdUntil; delete u.alsoCleanOn; });
     (state.servicedUnits || []).forEach((u) => { if (!rooms.includes(u)) u.paused = true; });
     save();
     const shape = () => projectDueDays(4).map((d) => d.due.length);
