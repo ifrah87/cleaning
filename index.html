@@ -1105,7 +1105,7 @@ async function refreshHistory() {
   if (!db) return;
   try {
     const { data, error } = await db.from('cleaning_log')
-      .select('id,unit_id,unit_label,cleaner_name,cleaned_at')
+      .select('id,unit_id,unit_label,cleaner_id,cleaner_name,cleaned_at')
       .eq('building', BUILDING)
       .order('cleaned_at', { ascending: false })
       .limit(1000);
@@ -1116,6 +1116,86 @@ async function refreshHistory() {
     lastCleanedByUnit = map;
     if (getMe()) render();
   } catch (e) {}
+}
+
+// ============================================================
+// LEARN WHO USUALLY DOES WHAT
+// A room can be tied to a cleaner (★ Usual), and once it is, the hand-out gives it
+// back to that person every morning they are in. Setting them one room at a time is
+// the reason almost nothing is tied: nobody taps forty rooms. The log already knows
+// who has been doing what, so this reads it rather than asking.
+//
+// Only a clear pattern counts. Somebody who has done a room once, or half the time,
+// is not "who does that room" — those stay in the pool and keep rotating.
+// ============================================================
+const LEARN_DAYS = 30;          // how far back to look
+const LEARN_MIN_CLEANS = 3;     // fewer than this is not a pattern, it is a coincidence
+const LEARN_SHARE = 0.6;        // and they must have done most of them
+
+function learnUsualPlan(days) {
+  const since = shiftDay(todayKey(), -(days || LEARN_DAYS));
+  const staffById = {};
+  (state.staff || []).forEach((s) => { staffById[s.id] = s; });
+  const byName = {};
+  (state.staff || []).forEach((s) => { byName[String(s.name).trim().toLowerCase()] = s; });
+
+  // unit -> cleaner -> how many times
+  const tally = {};
+  (cleaningHistory || []).forEach((r) => {
+    if (!r.unit_id || dayKeyLocal(r.cleaned_at) < since) return;
+    // Older rows were written before cleaner_id was recorded; fall back to the name.
+    const who = (r.cleaner_id && staffById[r.cleaner_id]) ? r.cleaner_id
+      : (byName[String(r.cleaner_name || '').trim().toLowerCase()] || {}).id;
+    if (!who) return;
+    (tally[r.unit_id] = tally[r.unit_id] || {})[who] = (tally[r.unit_id][who] || 0) + 1;
+  });
+
+  const proposals = [], skipped = [];
+  (state.servicedUnits || []).forEach((u) => {
+    if (!onRollCall(u) || u.paused) return;
+    const counts = tally[u.id];
+    if (!counts) return;
+    const total = Object.values(counts).reduce((a, b) => a + b, 0);
+    const [top] = Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
+    const n = counts[top];
+    if (n < LEARN_MIN_CLEANS || n / total < LEARN_SHARE) { skipped.push({ u, reason: 'no clear pattern' }); return; }
+    if (u.usualTo === top) return;                              // already theirs
+    // A room nobody is cleared for is not a room to tie to them.
+    if (!canCleanUnit(staffById[top], u)) { skipped.push({ u, reason: 'not cleared for it' }); return; }
+    proposals.push({ u, who: top, name: (staffById[top] || {}).name || top, n, total, was: u.usualTo || null });
+  });
+  proposals.sort((a, b) => String(a.u.unit).localeCompare(String(b.u.unit), undefined, { numeric: true }));
+  return { proposals, skipped, days: days || LEARN_DAYS };
+}
+
+function applyLearnedUsuals(plan) {
+  plan.proposals.forEach((p) => { p.u.usualTo = p.who; });
+  save();
+}
+
+function learnUsualCleaners() {
+  const plan = learnUsualPlan(LEARN_DAYS);
+  if (!plan.proposals.length) {
+    hikSyncMsg = { err: false, text: 'Nothing clear enough in the last ' + plan.days
+      + ' days — no room has one person doing most of it.' };
+    render(); return;
+  }
+  const byWho = {};
+  plan.proposals.forEach((p) => { (byWho[p.name] = byWho[p.name] || []).push(p.u.unit); });
+  const summary = Object.keys(byWho).sort()
+    .map((nm) => nm.split(' ')[0] + ': ' + byWho[nm].join(', ')).join(' · ');
+  const changing = plan.proposals.filter((p) => p.was).length;
+  showConfirm(
+    'Tie ' + plan.proposals.length + ' room' + (plan.proposals.length === 1 ? '' : 's') + ' to who does them?',
+    summary + '. Taken from the last ' + plan.days + ' days of the log — each of these has one person doing '
+      + 'most of the cleans. They will go back to that person every morning they are in, instead of being '
+      + 'dealt out again.'
+      + (changing ? ' ' + changing + ' of them are tied to somebody else at the moment and will change hands.' : '')
+      + ' Rooms with no clear pattern are left in the pool to rotate as they do now.',
+    () => { applyLearnedUsuals(plan); render(); },
+    'Tie them',
+    'safe'
+  );
 }
 
 function subscribeHistory() {
@@ -4134,6 +4214,19 @@ function viewRollCall() {
       const autoBtn = el('<button class="add-btn" style="background:#15803d;color:#ffffff;margin:12px 0 4px">⚡ Auto-assign rooms evenly</button>');
       autoBtn.onclick = () => autoAssignRooms();
       box.appendChild(autoBtn);
+    }
+    // Tying rooms one at a time is why hardly any are tied. The log already knows who
+    // has been doing what, so offer to read it — but only when it has something to say.
+    {
+      const lu = learnUsualPlan(LEARN_DAYS);
+      if (lu.proposals.length) {
+        const learnBtn = el(`<button class="freqmini" style="width:100%;padding:9px;margin-bottom:4px;border-color:#7c3aed;color:#7c3aed">`
+          + `★ Keep ${lu.proposals.length} room${lu.proposals.length === 1 ? '' : 's'} with whoever has been doing them</button>`);
+        learnBtn.onclick = () => learnUsualCleaners();
+        box.appendChild(learnBtn);
+        box.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin:-2px 0 8px">`
+          + `From the last ${LEARN_DAYS} days of the log. Rooms without a clear regular keep rotating.</div>`));
+      }
     }
     // Pinned rooms go back to the same person every morning, so once there are a lot
     // of them the hand-out stops rotating. Only worth mentioning when it's a real share.

@@ -1433,6 +1433,52 @@ function serve() {
   check('and the schedule does not put it back',
     !(await planState()).rooms.includes(dropKey), 'the re-sync re-added a job that was removed by hand');
 
+  // -------------------------------------------------------- LEARN THE USUALS
+  // Rooms go back to their regular cleaner only if somebody tied them by hand, one
+  // at a time, which is why hardly any are tied. The log already knows.
+  console.log('\n\x1b[1mWHO USUALLY DOES WHAT — read from the log\x1b[0m');
+  const learn = await page.evaluate(() => {
+    state.rollCallTypes = null;
+    const saved = JSON.parse(JSON.stringify(state.servicedUnits));
+    const cleaners = (state.staff || []).filter((p) => p.isCleaner);
+    const [a, b] = cleaners;
+    state.servicedUnits = [
+      { id: 'r1', unit: '301' },   // a does it nearly every time  → tie to a
+      { id: 'r2', unit: '302' },   // shared half and half         → leave in the pool
+      { id: 'r3', unit: '303' },   // a did it once                → not a pattern
+      { id: 'r4', unit: '304' },   // b's, but currently tied to a → change hands
+    ];
+    state.servicedUnits[3].usualTo = a.id;
+    const at = (n) => new Date(Date.now() - n * 864e5).toISOString();
+    cleaningHistory = [
+      ...[1, 3, 5, 7].map((d) => ({ unit_id: 'r1', cleaner_id: a.id, cleaner_name: a.name, cleaned_at: at(d) })),
+      { unit_id: 'r1', cleaner_id: b.id, cleaner_name: b.name, cleaned_at: at(9) },
+      ...[1, 3, 5].map((d) => ({ unit_id: 'r2', cleaner_id: a.id, cleaner_name: a.name, cleaned_at: at(d) })),
+      ...[2, 4, 6].map((d) => ({ unit_id: 'r2', cleaner_id: b.id, cleaner_name: b.name, cleaned_at: at(d) })),
+      { unit_id: 'r3', cleaner_id: a.id, cleaner_name: a.name, cleaned_at: at(2) },
+      // r4 is recorded by NAME only, as the older rows in the log are.
+      ...[1, 3, 5].map((d) => ({ unit_id: 'r4', cleaner_id: null, cleaner_name: b.name, cleaned_at: at(d) })),
+      // Long past the window — must not count for anything.
+      ...[100, 101, 102, 103].map((d) => ({ unit_id: 'r3', cleaner_id: b.id, cleaner_name: b.name, cleaned_at: at(d) })),
+    ];
+    const plan = learnUsualPlan(30);
+    const got = (id) => (plan.proposals.find((p) => p.u.id === id) || {}).who || null;
+    const out = { a: a.id, b: b.id, r1: got('r1'), r2: got('r2'), r3: got('r3'), r4: got('r4'),
+                  count: plan.proposals.length };
+    applyLearnedUsuals(plan);
+    out.r1Tied = state.servicedUnits.find((u) => u.id === 'r1').usualTo;
+    out.r4Tied = state.servicedUnits.find((u) => u.id === 'r4').usualTo;
+    state.servicedUnits = saved;
+    return out;
+  });
+  eq('a room one person nearly always does is tied to them', learn.r1, learn.a);
+  eq('a room shared evenly is left in the pool to rotate', learn.r2, null);
+  eq('one clean is a coincidence, not a pattern', learn.r3, null);
+  eq('older rows recorded by name only still count', learn.r4, learn.b);
+  eq('a room tied to the wrong person changes hands', learn.r4Tied, learn.b);
+  eq('and the tie is actually written to the room', learn.r1Tied, learn.a);
+  eq('nothing else is touched', learn.count, 2);
+
   // ------------------------------------------------------------ LEVEL A WEEK
   // Thirteen rooms one day and twenty-four the next is the same work either way,
   // but the heavy day can't be finished and the light one wastes a crew.
