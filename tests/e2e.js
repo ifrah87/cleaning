@@ -1449,6 +1449,40 @@ function serve() {
   check('it says when nothing is laid out yet',
     (await page.locator('text=Nothing laid out yet').count()) > 0, 'no empty-state line');
 
+  // Today and tomorrow are built by different routes — today from the rooms' real
+  // last-clean dates, tomorrow from the projection — so the panel puts them side by
+  // side, and flags a room sitting on both days for no good reason.
+  const cmp = await page.evaluate(() => {
+    state.rollCallTypes = null;
+    const rooms = state.servicedUnits.filter((u) => onRollCall(u)).slice(0, 3);
+    const d = tomorrowKey();
+    state.plans[d] = {}; state.planSeeded[d] = true;
+    rooms.forEach((u, i) => {
+      delete lastCleanedByUnit[u.id];
+      delete u.holdUntil; delete u.alsoCleanOn;
+      u.lastCleaned = null;                    // never cleaned → due today
+      u.freq = i === 0 ? 'daily' : 'eod';
+      state.plans[d][planKey('unit', u.id)] = { kind: 'unit', refId: u.id, label: 'Unit ' + u.unit, auto: true };
+    });
+    // rooms[1] is every-other-day and on both days with nothing to justify it.
+    rooms[2].alsoCleanOn = d;                  // this one was split on purpose
+    state.tab = 'rollcall'; render();
+    return { flagged: rooms[1].unit, daily: rooms[0].unit, split: rooms[2].unit };
+  });
+  await page.waitForTimeout(400);
+  const cmpText = await page.locator('.section-label', { hasText: 'Tomorrow (' }).first()
+    .evaluate((e) => e.parentElement.textContent);
+  contains('the panel puts today and tomorrow side by side', cmpText, 'Today ');
+  contains('and counts what is on both days', cmpText, 'on both days');
+  contains('an every-other-day room on both days is flagged', cmpText, cmp.flagged);
+  // Only the rooms named in the warning sentence itself count as flagged — the
+  // cleaner chips below it list every room and would match anything.
+  const warned = (cmpText.match(/⚠ ([^⚠]*?) (?:is|are) on both days/) || [])[1] || '';
+  check('a daily room on both days is not flagged', !warned.includes(cmp.daily),
+    'the daily room ' + cmp.daily + ' was flagged: "' + warned + '"');
+  check('nor is one the leveller split on purpose', !warned.includes(cmp.split),
+    'the deliberately split room ' + cmp.split + ' was flagged: "' + warned + '"');
+
   const rcBtn = page.locator('button', { hasText: "Plan tomorrow's rooms" }).first();
   check('and offers the one button right there', await rcBtn.count() > 0, 'no plan button on the roll call');
   await rcBtn.click();

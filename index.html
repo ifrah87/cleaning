@@ -4619,6 +4619,43 @@ function viewRollCall() {
       box.appendChild(el(`<div style="font-size:12px;color:${named === rooms.length ? '#15803d' : '#b45309'};font-weight:600;margin:-4px 0 8px">`
         + (named === rooms.length ? 'All handed out' : `${named} of ${rooms.length} handed out`)
         + ` · ${cleaningStaff().filter((p) => worksOnDay(p, day)).length} rostered on</div>`));
+
+      // TOMORROW AGAINST TODAY. The two lists are built by different routes — today
+      // from the rooms' real last-clean dates, tomorrow from the projection — so
+      // seeing them side by side is how you tell the plan is sane before the crew
+      // arrives to it. A room on both days is normally a daily room, or one given an
+      // extra clean to break up a clump; anything else on both is worth a look.
+      {
+        const todayRooms = (state.servicedUnits || []).filter((u) => onRollCall(u) && unitDueToday(u));
+        const todayIds = new Set(todayRooms.map((u) => u.id));
+        const tomIds = new Set(rooms.map((v) => v.refId));
+        const unitById = {};
+        (state.servicedUnits || []).forEach((u) => { unitById[u.id] = u; });
+        const both = [...tomIds].filter((id) => todayIds.has(id));
+        const finishing = todayRooms.filter((u) => !tomIds.has(u.id)).length;
+        const fresh = [...tomIds].filter((id) => !todayIds.has(id)).length;
+        // On both days for no good reason: not a daily room, and not one the leveller
+        // gave a second clean to.
+        const odd = both.filter((id) => {
+          const u = unitById[id];
+          if (!u) return false;
+          const n = FREQ_DAYS[u.freq] || 1;
+          return n > 1 && String(u.alsoCleanOn || '') !== day;
+        }).map((id) => (unitById[id] || {}).unit);
+
+        const cmp = el('<div style="font-size:11px;color:#5f7189;line-height:1.6;margin:-2px 0 8px"></div>');
+        cmp.appendChild(el(`<div><b style="color:#0f1a27">Today ${todayRooms.length}</b> `
+          + `→ <b style="color:#0f1a27">tomorrow ${rooms.length}</b>`
+          + `${rooms.length > todayRooms.length ? ' · heavier' : rooms.length < todayRooms.length ? ' · lighter' : ' · the same'}</div>`));
+        cmp.appendChild(el(`<div>${finishing} finish today and are not due again · ${fresh} come due tomorrow`
+          + (both.length ? ` · ${both.length} on both days` : '') + `</div>`));
+        if (odd.length) {
+          cmp.appendChild(el(`<div style="color:#b45309;font-weight:600">`
+            + `⚠ ${esc(odd.join(', '))} ${odd.length === 1 ? 'is' : 'are'} on both days without being daily `
+            + `or split on purpose — worth checking.</div>`));
+        }
+        box.appendChild(cmp);
+      }
       // Who has what, at a glance. Grouped by cleaner rather than listed by room —
       // the question in the evening is "has everyone got a fair morning", not
       // "what is happening to 305".
