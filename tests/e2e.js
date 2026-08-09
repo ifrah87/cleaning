@@ -1539,6 +1539,57 @@ function serve() {
   check('it records what it did, so the change is not invisible',
     !!autoLvl.note && autoLvl.note.moves > 0, 'nothing recorded: ' + JSON.stringify(autoLvl.note));
 
+  // ------------------------------------------------- PLAN A DAY, AS A ROTA
+  // The day's list is sent to the crew as a screenshot, so it has to fit on a screen
+  // and read as a rota. It used to be two rows and a full-width dropdown per room.
+  console.log('\n\x1b[1mPLAN A DAY — the day fits on a screen\x1b[0m');
+  await page.evaluate(() => { planDay = tomorrowKey(); planMore = false; state.tab = 'plan'; render(); });
+  await page.waitForTimeout(400);
+  const shape = await page.evaluate(() => {
+    const d = tomorrowKey();
+    const rooms = Object.values(state.plans[d] || {}).filter((v) => v.kind === 'unit');
+    const who = [...new Set(rooms.map((v) => v.assignedTo).filter(Boolean))]
+      .map((id) => (state.staff.find((p) => p.id === id) || {}).name);
+    // .section-label is uppercased by CSS, so innerText comes back shouting.
+    return { rooms: rooms.length, who, body: document.body.innerText.toLowerCase(),
+             selects: document.querySelectorAll('select').length };
+  });
+  check('the day is grouped under each cleaner by name',
+    shape.who.every((n) => shape.body.includes(String(n).toLowerCase())),
+    'missing from the page: ' + JSON.stringify(shape.who));
+  eq('with no per-room dropdown left to make it long', shape.selects, 0);
+  check('the week chart is folded away by default',
+    !shape.body.includes('the week ahead'), 'the week chart is still on the screen');
+  check('and the pool of jobs to add is too',
+    !shape.body.includes('add jobs to this day'), 'the add-jobs pool is still on the screen');
+
+  // Tapping a room asks who takes it, rather than every room carrying a dropdown.
+  const roomChip = page.locator('.freqmini', { hasText: /^\d+$/ }).first();
+  check('rooms are listed as chips', await roomChip.count() > 0, 'no room chips found');
+  await roomChip.click();
+  await page.waitForTimeout(300);
+  check('tapping one opens a picker', (await page.locator('.modal-title').count()) > 0, 'no picker opened');
+  const pickTo = await page.evaluate(() => {
+    const k = _planPick.key;
+    const before = state.plans[_planPick.day][k].assignedTo;
+    const other = cleaningStaff().find((p) => p.id !== before);
+    return { k, before, other: other ? other.id : null, name: other ? other.name : null };
+  });
+  if (pickTo.other) {
+    await page.locator('.cover-pick', { hasText: pickTo.name }).first().click();
+    await page.waitForTimeout(300);
+    eq('and choosing somebody moves the room to them',
+      await page.evaluate((k) => state.plans[tomorrowKey()][k].assignedTo, pickTo.k), pickTo.other);
+  }
+
+  // Show more brings the rest back without it living on the main screen.
+  await page.locator('button', { hasText: 'Show more' }).first().click();
+  await page.waitForTimeout(500);
+  const expanded = await page.evaluate(() => document.body.innerText.toLowerCase());
+  contains('Show more reveals the week chart', expanded, 'the week ahead');
+  contains('and the jobs you can add', expanded, 'add jobs to this day');
+  await page.evaluate(() => { planMore = false; render(); });
+
   // ------------------------------------------------ ONE BUTTON FOR TOMORROW
   // The thing the Plan tab is opened to do: plan tomorrow, then edit it.
   console.log('\n\x1b[1mPLAN TOMORROW — one press, then edit\x1b[0m');

@@ -3013,6 +3013,11 @@ function viewBuildings() {
 // PLAN A DAY — build tomorrow's job list, then fill it with whoever badges in.
 // ============================================================
 let planDay = null;   // selected day in the Plan view (null => tomorrow)
+// The day's jobs are what this tab is for, and the whole list has to fit on a screen
+// so it can be screenshotted and sent to the crew. Everything else — the week chart,
+// the pool of jobs to add, rebuilding — sits behind this.
+let planMore = false;
+let _planPick = null;   // {day, key} while "who takes this one?" is open
 // Anchored to the work day, not the clock day: at 00:20 the crew is still on the
 // round that started last night, so "tomorrow" must not skip a day under them.
 const tomorrowKey = () => shiftDay(workToday(), 1);
@@ -3223,6 +3228,23 @@ function ensureDayPlanned(day) {
   return { day, seeded: 0, ...resyncPlanDay(day) };
 }
 function ensureTomorrowPlanned() { return ensureDayPlanned(tomorrowKey()); }
+
+// The whole week, not just tomorrow. Tomorrow laid itself out and the rest of the
+// week waited to be asked, so Thursday only existed once somebody went to Thursday.
+// Every day ahead is laid out and handed round when the app opens, and kept in line
+// after that — the same rules as tomorrow, so an edit is never undone: an existing
+// hand-out stays, an area put on a day by hand stays, a job taken off stays off.
+function ensureWeekPlanned(nDays) {
+  const span = nDays || PLAN_AHEAD_DAYS;
+  let jobs = 0, assigned = 0, days = 0;
+  for (let i = 1; i <= span; i += 1) {
+    const r = ensureDayPlanned(shiftDay(workToday(), i));
+    const n = (r.seeded || 0) + (r.added || 0);
+    if (n || r.assigned) days += 1;
+    jobs += n; assigned += (r.assigned || 0);
+  }
+  return { jobs, assigned, days, span };
+}
 
 // ============================================================
 // PLAN THE WEEK AHEAD — one button
@@ -3477,170 +3499,108 @@ function viewPlan() {
   const day = curPlanDay();
   const isTomorrow = day === tomorrowKey();
   const isToday = day === todayKey();
+  const dt = new Date(day + 'T00:00:00');
 
   // Fill the day from the schedule before drawing it, so the list is already
   // there on arrival instead of being an empty screen the office has to type in.
   // A day already laid out is re-checked rather than left as drawn, so what is on
   // screen is what the schedule says now — not what it said when it was first opened.
   const seeded = seedPlanOnce(day);
-  const resynced = (!seeded && day > todayKey()) ? resyncPlanDay(day) : { added: 0, removed: 0, assigned: 0 };
+  if (!seeded && day > todayKey()) resyncPlanDay(day);
 
-  // The one thing this tab is opened to do. First, and on its own, so it is not
-  // something to find among the week's controls.
-  {
-    const btn = el(`<button class="add-btn" style="background:#15803d;margin-bottom:4px;font-size:15px;padding:13px">`
-      + `⚡ Plan tomorrow's rooms</button>`);
-    btn.onclick = planTomorrow;
-    wrap.appendChild(btn);
-    wrap.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin-bottom:14px">`
-      + `Lays tomorrow out from the schedule and hands it to whoever is rostered on — then edit it below. `
-      + `Nothing you have already changed is touched.</div>`));
-  }
-
-  // THE DAYS AHEAD — the week at a glance before dropping into any one day, so a
-  // heavy Thursday is visible on Monday rather than on Thursday morning.
-  {
-    const ahead = scheduleAhead(7);
-    const peak = Math.max(1, ...ahead.map((d) => d.count));
-    const box = el('<div style="margin-bottom:16px"></div>');
-    box.appendChild(el(`<div class="section-label">The week ahead</div>`));
-    box.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin:-6px 0 10px">`
-      + `Rooms due each day if each day's work gets done on the day. Tap one to plan it.</div>`));
-    ahead.forEach((d, i) => {
-      const dt = new Date(d.day + 'T00:00:00');
-      const lbl = i === 0 ? 'Today' : i === 1 ? 'Tomorrow'
-        : dt.toLocaleDateString('en-US', { weekday: 'long' });
-      const row = el(`<div class="su-card" style="display:flex;align-items:center;gap:10px;padding:9px 12px;margin-bottom:6px;cursor:pointer${d.day === day ? ';border-color:#0284c7' : ''}"></div>`);
-      const left = el('<div style="flex:0 0 92px;min-width:0"></div>');
-      left.appendChild(el(`<div style="font-size:13px;font-weight:800;color:#0f1a27">${esc(lbl)}</div>`));
-      left.appendChild(el(`<div style="font-size:10px;color:#5f7189;font-weight:600">${esc(dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }))}</div>`));
-      row.appendChild(left);
-      // A bar reads faster than a number when the question is "which day is heavy".
-      const barWrap = el('<div style="flex:1;min-width:0"></div>');
-      const bar = el('<div style="height:8px;background:#eef2f7;border-radius:4px;overflow:hidden"></div>');
-      const heavy = d.count >= peak * 0.85 && peak > 1;
-      bar.appendChild(el(`<div style="height:100%;width:${Math.round((d.count / peak) * 100)}%;background:${heavy ? '#b45309' : '#0284c7'}"></div>`));
-      barWrap.appendChild(bar);
-      const parts = Object.keys(d.byType).sort().map((t) => d.byType[t] + ' ' + UNIT_TYPES[t].label.toLowerCase());
-      barWrap.appendChild(el(`<div style="font-size:10px;color:#5f7189;font-weight:600;margin-top:4px">${esc(parts.join(' · ') || 'nothing due')}</div>`));
-      row.appendChild(barWrap);
-      row.appendChild(el(`<div style="flex:0 0 auto;font-size:16px;font-weight:800;color:${heavy ? '#b45309' : '#0f1a27'}">${d.count}</div>`));
-      row.onclick = () => { planDay = d.day; render(); };
-      box.appendChild(row);
-    });
-    // Say so when the app levelled the days by itself. It reshapes the fortnight
-    // without being asked, and a change nobody can see is one nobody trusts.
-    if (state.lastAutoLevel && state.lastAutoLevel.day === todayKey() && state.lastAutoLevel.moves) {
-      const al = state.lastAutoLevel;
-      box.appendChild(el(`<div style="font-size:11px;color:#15803d;font-weight:600;margin-top:8px">`
-        + `✓ Levelled today — ${al.moves} room${al.moves === 1 ? '' : 's'} spread across the cycle, `
-        + `heaviest day ${al.from} → ${al.to}`
-        + (al.extras ? `. ${al.extras} got one extra clean to break up the clump` : '')
-        + `.</div>`));
-    }
-    // One button for the whole week: level the days, lay them out, hand them round.
-    // Doing it in three separate taps meant knowing which order they went in.
-    {
-      const pv = planAheadPreview(PLAN_AHEAD_DAYS);
-      const btn = el(`<button class="add-btn" style="background:#b45309;margin-top:8px">`
-        + `⚡ Get the next ${pv.span} days ready</button>`);
-      btn.onclick = planAhead;
-      box.appendChild(btn);
-      box.appendChild(el(`<div style="font-size:10px;color:#5f7189;margin-top:4px">`
-        + (pv.worthLevelling
-          ? `Evens the days out (heaviest ${pv.lp.settledBefore} → ${pv.lp.settledAfter} rooms), lays every day out `
-          : `Lays every day out `)
-        + `from the schedule and hands it to whoever is rostered on. Nothing already handed out is moved.</div>`));
-    }
-    wrap.appendChild(box);
-  }
-
-  wrap.appendChild(el(`<div class="note">Planned from the schedule — daily rooms, every-other-day rooms that fall due, and anything overdue. Add or remove below, then assign whoever badges in.</div>`));
-  if (seeded) wrap.appendChild(el(`<div class="section-label" style="color:#15803d">Filled in ${seeded} job${seeded === 1 ? '' : 's'} due on ${esc(day)}.</div>`));
-
-  // Day picker
-  const dayRow = el('<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"></div>');
-  const dayIn = el(`<input type="date" value="${esc(day)}" min="${esc(todayKey())}" style="flex:1;min-width:0;background:#ffffff;color:#15202e;border:1px solid #d8e0ea;border-radius:8px;padding:9px 10px;font-size:14px">`);
-  dayIn.onchange = (e) => { planDay = e.target.value || null; render(); };
-  dayRow.appendChild(dayIn);
-  wrap.appendChild(dayRow);
-  const quick = el('<div style="display:flex;gap:6px;margin-bottom:14px"></div>');
+  // WHICH DAY. First, because everything under it is that day's work.
+  const quick = el('<div style="display:flex;gap:6px;margin-bottom:8px"></div>');
   const jump = (lbl, key, on) => { const b = el(`<button class="freqmini ${on ? 'on' : ''}" style="flex:1">${lbl}</button>`); b.onclick = () => { planDay = key; render(); }; return b; };
   quick.appendChild(jump('Today', todayKey(), isToday));
   quick.appendChild(jump('Tomorrow', tomorrowKey(), isTomorrow));
+  const dayIn = el(`<input type="date" value="${esc(day)}" min="${esc(todayKey())}" style="flex:1;min-width:0;background:#ffffff;color:#15202e;border:1px solid #d8e0ea;border-radius:8px;padding:7px 9px;font-size:13px">`);
+  dayIn.onchange = (e) => { planDay = e.target.value || null; render(); };
+  quick.appendChild(dayIn);
   wrap.appendChild(quick);
+
+  // THE ONE BUTTON.
+  const planBtn = el(`<button class="add-btn" style="background:#15803d;margin-bottom:10px;font-size:15px;padding:12px">`
+    + (isTomorrow ? `⚡ Plan tomorrow's rooms` : `⚡ Plan this day`) + `</button>`);
+  planBtn.onclick = () => {
+    if (isTomorrow) { planTomorrow(); return; }
+    ensureDayPlanned(day);
+    const plan = getPlan(day);
+    const loose = Object.keys(plan).filter((k) => plan[k].kind === 'unit' && !plan[k].assignedTo);
+    if (loose.length && !isToday) assignNewPlanJobs(day, loose);
+    save();
+    const rooms = Object.values(plan).filter((v) => v.kind === 'unit');
+    hikSyncMsg = { text: rooms.length + ' room' + (rooms.length === 1 ? '' : 's') + ' on this day, '
+      + rooms.filter((v) => v.assignedTo).length + ' handed out.' };
+    render();
+  };
+  wrap.appendChild(planBtn);
 
   if (hikSyncMsg) wrap.appendChild(el(`<div class="section-label" style="color:${hikSyncMsg.err ? '#dc2626' : '#15803d'}">${esc(hikSyncMsg.text)}</div>`));
 
-  // WHO IS ON, AND WHO HAS WHAT — a future day is laid out from the rota the first
-  // time it is opened, so this is normally just reporting what is already done.
-  // Today is left to the morning: the door reader decides who is actually in.
-  if (!isToday) {
-    const onDuty = cleaningStaff().filter((p) => worksOnDay(p, day));
-    const jobs = planJobs(day);
-    const roomJobs = jobs.filter((j) => j.kind === 'unit');
-    const named = roomJobs.filter((j) => j.assignedTo).length;
-    const box = el('<div style="margin-bottom:14px"></div>');
-    box.appendChild(el(`<div style="font-size:12px;color:#5f7189;font-weight:600">`
-      + `<b style="color:${onDuty.length ? '#15803d' : '#b45309'}">${onDuty.length}</b> rostered on`
-      + (onDuty.length ? ` · ${esc(onDuty.map((p) => p.name.split(' ')[0]).join(', '))}` : '')
-      + `</div>`));
-    if (roomJobs.length) {
-      box.appendChild(el(`<div style="font-size:12px;color:#5f7189;font-weight:600;margin-top:4px">`
-        + `${named} of ${roomJobs.length} rooms already handed out</div>`));
-    }
-    // Handing the rooms out lives with the jobs it hands out, below — one
-    // auto-assign for the day rather than two buttons doing nearly the same thing
-    // in two places.
-    // A day built before the schedule changed keeps whatever it was given, so there
-    // has to be a way to say "do this one again from scratch".
-    const rb = el(`<button class="freqmini" style="width:100%;padding:9px;margin-top:6px;border-color:#b45309;color:#b45309">⟳ Rebuild this day from the schedule</button>`);
-    rb.onclick = () => {
-      showConfirm(
-        'Rebuild ' + day + '?',
-        'The rooms on this day are set back to exactly what the schedule says is due, and handed out again. '
-          + 'Rooms you added or removed by hand for this day are lost. Communal areas are left as they are.',
-        () => {
-          const r = rebuildPlanDay(day);
-          hikSyncMsg = { text: 'Rebuilt: ' + r.added + ' added, ' + r.removed + ' dropped, ' + r.assigned + ' handed out.' };
-          render();
-        },
-        'Rebuild it',
-        'safe'
-      );
-    };
-    box.appendChild(rb);
-    wrap.appendChild(box);
-  }
-
-  // Due from the schedule but not on the plan — either removed by hand, or fallen
-  // due since the day was seeded. Offered back rather than silently re-added.
-  const plan0 = getPlan(day);
-  const missing = planningJobsFor(day).filter(s => !plan0[planKey(s.kind, s.id)]);
-  if (missing.length) {
-    wrap.appendChild(el(`<div class="section-label" style="margin-top:6px;color:#b45309">Due but not planned (${missing.length})</div>`));
-    const addAll = el(`<button class="add-btn" style="background:#b45309;margin-bottom:8px">＋ Add all ${missing.length} due job${missing.length === 1 ? '' : 's'}</button>`);
-    addAll.onclick = () => { applySuggestions(day, missing); save(); render(); };
-    wrap.appendChild(addAll);
-    const box = el('<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px"></div>');
-    missing.forEach(s => {
-      const b = el(`<button class="freqmini" style="flex:0 0 auto;padding:8px 12px${s.late ? ';border-color:#b45309;color:#b45309' : ''}">+ ${esc(s.label)} · ${esc(s.why)}</button>`);
-      b.onclick = () => togglePlanJob(day, s.kind, s.id, s.label);
-      box.appendChild(b);
-    });
-    wrap.appendChild(box);
-  }
-
-  // Planned jobs + assignment
+  // THE DAY'S WORK, as one block. Grouped under each cleaner rather than listed
+  // room by room with a dropdown each: the old layout was two rows and a full-width
+  // select per room, so fourteen rooms was a long scroll and no use as a picture.
+  // This is what gets sent to the crew, so it reads as a rota — name, count, rooms.
   const jobs = planJobs(day);
-  wrap.appendChild(el(`<div class="section-label" style="margin-top:6px">Planned jobs (${jobs.length})</div>`));
+  const rooms = jobs.filter((j) => j.kind === 'unit');
+  const areas = jobs.filter((j) => j.kind !== 'unit');
+  const staffById = {};
+  (state.staff || []).forEach((p) => { staffById[p.id] = p; });
+
+  const head = el('<div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px"></div>');
+  head.appendChild(el(`<div class="section-label" style="margin:0">${esc(dt.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' }))}</div>`));
+  head.appendChild(el(`<div style="font-size:12px;color:#5f7189;font-weight:700;flex:0 0 auto">`
+    + `${rooms.length} room${rooms.length === 1 ? '' : 's'}${areas.length ? ` · ${areas.length} area${areas.length === 1 ? '' : 's'}` : ''}</div>`));
+  wrap.appendChild(head);
+
   if (!jobs.length) {
-    wrap.appendChild(el(`<div class="empty" style="padding:14px 0">Nothing due on this day, and nothing added by hand.</div>`));
+    wrap.appendChild(el(`<div class="empty" style="padding:14px 0">Nothing on this day yet. Press the button above.</div>`));
   } else {
+    const byWho = {};
+    rooms.forEach((j) => { (byWho[j.assignedTo || ''] = byWho[j.assignedTo || ''] || []).push(j); });
+    const order = Object.keys(byWho).sort((a, b) => {
+      if (a === '') return 1; if (b === '') return -1;   // unhanded last, where it is noticed
+      return String((staffById[a] || {}).name || a).localeCompare(String((staffById[b] || {}).name || b));
+    });
+    const box = el('<div style="margin-top:6px"></div>');
+    order.forEach((id) => {
+      const list = byWho[id].slice().sort((x, y) =>
+        String(x.label).localeCompare(String(y.label), undefined, { numeric: true }));
+      const none = !id;
+      const name = none ? 'Not handed out' : ((staffById[id] || {}).name || id);
+      const grp = el(`<div style="padding:8px 0;border-top:1px solid #e7ecf3"></div>`);
+      grp.appendChild(el(`<div style="font-size:13px;font-weight:800;color:${none ? '#b45309' : '#0f1a27'};margin-bottom:5px">`
+        + `${esc(name)} <span style="font-weight:600;color:#5f7189">· ${list.length}</span></div>`));
+      const chips = el('<div style="display:flex;flex-wrap:wrap;gap:5px"></div>');
+      list.forEach((j) => {
+        const short = String(j.label).replace(/^Unit\s+/, '');
+        const c = el(`<button class="freqmini" style="flex:0 0 auto;padding:6px 10px;font-size:13px`
+          + (none ? ';border-color:#b45309;color:#b45309' : '') + `">${esc(short)}</button>`);
+        c.onclick = () => { _planPick = { day, key: j.key }; render(); };
+        chips.appendChild(c);
+      });
+      grp.appendChild(chips);
+      box.appendChild(grp);
+    });
+    if (areas.length) {
+      const grp = el(`<div style="padding:8px 0;border-top:1px solid #e7ecf3"></div>`);
+      grp.appendChild(el(`<div style="font-size:13px;font-weight:800;color:#0f1a27;margin-bottom:5px">`
+        + `Communal <span style="font-weight:600;color:#5f7189">· ${areas.length}</span></div>`));
+      const chips = el('<div style="display:flex;flex-wrap:wrap;gap:5px"></div>');
+      areas.forEach((j) => {
+        const c = el(`<button class="freqmini" style="flex:0 0 auto;padding:6px 10px;font-size:13px">${esc(j.label)}</button>`);
+        c.onclick = () => { _planPick = { day, key: j.key }; render(); };
+        chips.appendChild(c);
+      });
+      grp.appendChild(chips);
+      box.appendChild(grp);
+    }
+    wrap.appendChild(box);
+
     // One auto-assign, which reads the right thing for the day it is on. Today the
     // door reader decides who is in; on a day that has not happened nobody has
     // badged in at all, and the old button simply failed with "no one clocked in".
-    const auto = el(`<button class="add-btn" style="background:#15803d;margin-bottom:6px">`
+    const auto = el(`<button class="freqmini" style="width:100%;padding:9px;margin-top:10px">`
       + (isToday ? `⚡ Auto-assign to who's clocked in` : `⚡ Auto-assign to whoever is rostered on`)
       + `</button>`);
     auto.onclick = () => {
@@ -3652,58 +3612,149 @@ function viewPlan() {
       render();
     };
     wrap.appendChild(auto);
-    const clr = el(`<button class="reset-btn">Clear this day's plan</button>`);
-    clr.onclick = () => clearPlanDay(day);
-    wrap.appendChild(clr);
+  }
 
-    const arrivedIds = new Set(Object.keys(hikArrivals));
-    const staff = cleaningStaff();
-    jobs.forEach(j => {
-      const card = el(`<div class="su-card"></div>`);
-      const top = el(`<div class="su-top"></div>`);
-      top.appendChild(el(`<div style="flex:1;min-width:0"><div class="su-unit" style="font-size:15px">${esc(j.label)}</div></div>`));
-      const rm = el(`<button class="su-rm">✕</button>`);
-      rm.onclick = () => togglePlanJob(day, j.kind, j.refId, j.label);
-      top.appendChild(rm);
-      card.appendChild(top);
-      const sel = el(`<select class="area-select" style="margin-top:8px"></select>`);
-      sel.appendChild(el(`<option value="">— Assign someone —</option>`));
-      staff.slice().sort((a, b) => (arrivedIds.has(b.id) ? 1 : 0) - (arrivedIds.has(a.id) ? 1 : 0))
-        .forEach(p => {
-          const o = el(`<option value="${esc(p.id)}">${arrivedIds.has(p.id) ? '✓ ' : ''}${esc(p.name)}</option>`);
-          if (j.assignedTo === p.id) o.setAttribute('selected', '');
-          sel.appendChild(o);
+  // Due but not on the plan is a discrepancy, not a detail — it stays in the open.
+  const plan0 = getPlan(day);
+  const missing = planningJobsFor(day).filter((s) => !plan0[planKey(s.kind, s.id)]);
+  if (missing.length) {
+    wrap.appendChild(el(`<div class="section-label" style="margin-top:14px;color:#b45309">Due but not planned (${missing.length})</div>`));
+    const addAll = el(`<button class="freqmini" style="width:100%;padding:9px;border-color:#b45309;color:#b45309">＋ Add all ${missing.length} due job${missing.length === 1 ? '' : 's'}</button>`);
+    addAll.onclick = () => { applySuggestions(day, missing); save(); render(); };
+    wrap.appendChild(addAll);
+  }
+
+  // EVERYTHING ELSE, folded away. None of it is part of the day's list, and all of
+  // it was pushing that list off the screen.
+  const moreBtn = el(`<button class="reset-btn" style="margin-top:16px">${planMore ? '⌄ Hide' : '› Show more'}</button>`);
+  moreBtn.onclick = () => { planMore = !planMore; render(); };
+  wrap.appendChild(moreBtn);
+
+  if (planMore) {
+    // THE DAYS AHEAD — which day is heavy, before it arrives.
+    const ahead = scheduleAhead(7);
+    const peak = Math.max(1, ...ahead.map((d) => d.count));
+    const box = el('<div style="margin:12px 0 16px"></div>');
+    box.appendChild(el(`<div class="section-label">The week ahead</div>`));
+    ahead.forEach((d, i) => {
+      const ddt = new Date(d.day + 'T00:00:00');
+      const lbl = i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : ddt.toLocaleDateString('en-US', { weekday: 'long' });
+      const row = el(`<div class="su-card" style="display:flex;align-items:center;gap:10px;padding:8px 11px;margin-bottom:5px;cursor:pointer${d.day === day ? ';border-color:#0284c7' : ''}"></div>`);
+      row.appendChild(el(`<div style="flex:0 0 84px;font-size:12px;font-weight:800;color:#0f1a27">${esc(lbl)}</div>`));
+      const bar = el('<div style="flex:1;height:8px;background:#eef2f7;border-radius:4px;overflow:hidden"></div>');
+      const heavy = d.count >= peak * 0.85 && peak > 1;
+      bar.appendChild(el(`<div style="height:100%;width:${Math.round((d.count / peak) * 100)}%;background:${heavy ? '#b45309' : '#0284c7'}"></div>`));
+      row.appendChild(bar);
+      row.appendChild(el(`<div style="flex:0 0 auto;font-size:15px;font-weight:800;color:${heavy ? '#b45309' : '#0f1a27'}">${d.count}</div>`));
+      row.onclick = () => { planDay = d.day; render(); };
+      box.appendChild(row);
+    });
+    if (state.lastAutoLevel && state.lastAutoLevel.day === todayKey() && state.lastAutoLevel.moves) {
+      const al = state.lastAutoLevel;
+      box.appendChild(el(`<div style="font-size:11px;color:#15803d;font-weight:600;margin-top:6px">`
+        + `✓ Levelled today — ${al.moves} room${al.moves === 1 ? '' : 's'} spread across the cycle, `
+        + `heaviest day ${al.from} → ${al.to}`
+        + (al.extras ? `. ${al.extras} got one extra clean to break up the clump` : '') + `.</div>`));
+    }
+    const pv = planAheadPreview(PLAN_AHEAD_DAYS);
+    const wkBtn = el(`<button class="freqmini" style="width:100%;padding:9px;margin-top:6px;border-color:#b45309;color:#b45309">`
+      + `⚡ Get the next ${pv.span} days ready</button>`);
+    wkBtn.onclick = planAhead;
+    box.appendChild(wkBtn);
+    wrap.appendChild(box);
+
+    if (!isToday) {
+      const onDuty = cleaningStaff().filter((p) => worksOnDay(p, day));
+      wrap.appendChild(el(`<div style="font-size:12px;color:#5f7189;font-weight:600;margin-bottom:8px">`
+        + `<b style="color:${onDuty.length ? '#15803d' : '#b45309'}">${onDuty.length}</b> rostered on`
+        + (onDuty.length ? ` · ${esc(onDuty.map((p) => p.name.split(' ')[0]).join(', '))}` : '') + `</div>`));
+      // A day built before the schedule changed keeps whatever it was given, so there
+      // has to be a way to say "do this one again from scratch".
+      const rb = el(`<button class="freqmini" style="width:100%;padding:9px;margin-bottom:6px;border-color:#b45309;color:#b45309">⟳ Rebuild this day from the schedule</button>`);
+      rb.onclick = () => {
+        showConfirm(
+          'Rebuild ' + day + '?',
+          'The rooms on this day are set back to exactly what the schedule says is due, and handed out again. '
+            + 'Rooms you added or removed by hand for this day are lost. Communal areas are left as they are.',
+          () => {
+            const r = rebuildPlanDay(day);
+            hikSyncMsg = { text: 'Rebuilt: ' + r.added + ' added, ' + r.removed + ' dropped, ' + r.assigned + ' handed out.' };
+            render();
+          },
+          'Rebuild it', 'safe'
+        );
+      };
+      wrap.appendChild(rb);
+    }
+    if (jobs.length) {
+      const clr = el(`<button class="reset-btn">Clear this day's plan</button>`);
+      clr.onclick = () => clearPlanDay(day);
+      wrap.appendChild(clr);
+    }
+
+    // Add jobs — grouped pool with toggles
+    wrap.appendChild(el(`<div class="section-label" style="margin-top:16px">Add jobs to this day</div>`));
+    const pool = planPool();
+    if (!pool.length) {
+      wrap.appendChild(el(`<div class="empty">No rooms or areas yet — add some on the Airbnb / Buildings / Offices tabs first.</div>`));
+    } else {
+      [...new Set(pool.map((x) => x.group))].forEach((g) => {
+        wrap.appendChild(el(`<div class="section-label" style="margin-top:10px;color:#5b6a7f">${esc(g)}</div>`));
+        const box2 = el('<div style="display:flex;flex-wrap:wrap;gap:6px"></div>');
+        pool.filter((x) => x.group === g).forEach((x) => {
+          const on = !!plan0[planKey(x.kind, x.id)];
+          const b = el(`<button class="freqmini ${on ? 'on' : ''}" style="flex:0 0 auto;padding:8px 12px">${on ? '✓ ' : '+ '}${esc(x.label)}</button>`);
+          b.onclick = () => togglePlanJob(day, x.kind, x.id, x.label);
+          box2.appendChild(b);
         });
-      sel.onchange = (e) => setPlanAssignee(day, j.key, e.target.value);
-      card.appendChild(sel);
-      wrap.appendChild(card);
-    });
+        wrap.appendChild(box2);
+      });
+    }
   }
 
-  // Add jobs — grouped pool with toggles
-  wrap.appendChild(el(`<div class="section-label" style="margin-top:20px">Add jobs to this day</div>`));
-  const plan = getPlan(day);
-  const pool = planPool();
-  if (!pool.length) {
-    wrap.appendChild(el(`<div class="empty">No rooms or areas yet — add some on the Airbnb / Buildings / Offices tabs first.</div>`));
-  } else {
-    const groups = [...new Set(pool.map(x => x.group))];
-    groups.forEach(g => {
-      wrap.appendChild(el(`<div class="section-label" style="margin-top:12px;color:#5b6a7f">${esc(g)}</div>`));
-      const box = el(`<div style="display:flex;flex-wrap:wrap;gap:6px"></div>`);
-      pool.filter(x => x.group === g).forEach(x => {
-        const on = !!plan[planKey(x.kind, x.id)];
-        const b = el(`<button class="freqmini ${on ? 'on' : ''}" style="flex:0 0 auto;padding:8px 12px">${on ? '✓ ' : '+ '}${esc(x.label)}</button>`);
-        b.onclick = () => togglePlanJob(day, x.kind, x.id, x.label);
-        box.appendChild(b);
-      });
-      wrap.appendChild(box);
-    });
+  // Tapping a job asks who takes it. A dropdown per room is what made the list
+  // unreadable, so the choice is a sheet, opened only for the one being changed.
+  if (_planPick && _planPick.day === day) {
+    const plan = getPlan(day);
+    const j = plan[_planPick.key];
+    if (j) {
+      const arrived = new Set(Object.keys(hikArrivals));
+      const overlay = el('<div class="modal-overlay"></div>');
+      const modal = el('<div class="modal"></div>');
+      modal.appendChild(el(`<div class="modal-title">${esc(j.label)}</div>`));
+      modal.appendChild(el(`<div class="modal-sub">Who takes it${isToday ? '' : ' on ' + esc(dt.toLocaleDateString('en-US', { weekday: 'long' }))}?</div>`));
+      const picker = el('<div class="cover-picker"></div>');
+      const load = {};
+      Object.values(plan).forEach((v) => { if (v.assignedTo) load[v.assignedTo] = (load[v.assignedTo] || 0) + 1; });
+      cleaningStaff().slice()
+        .sort((a, b) => (isToday ? (arrived.has(b.id) ? 1 : 0) - (arrived.has(a.id) ? 1 : 0) : 0)
+          || ((load[a.id] || 0) - (load[b.id] || 0))
+          || String(a.name).localeCompare(String(b.name)))
+        .forEach((p) => {
+          const on = j.assignedTo === p.id;
+          const n = load[p.id] || 0;
+          const b = el(`<button class="cover-pick${on ? ' on' : ''}"><span>${isToday && arrived.has(p.id) ? '✓ ' : ''}${esc(p.name)}</span>`
+            + `<span class="cover-load">${n} room${n === 1 ? '' : 's'}</span></button>`);
+          b.onclick = () => { const k = _planPick.key; _planPick = null; setPlanAssignee(day, k, p.id); };
+          picker.appendChild(b);
+        });
+      modal.appendChild(picker);
+      const btnRow = el('<div class="modal-btns"></div>');
+      const off = el('<button class="modal-confirm" style="background:#b45309">Take it off this day</button>');
+      off.onclick = () => { _planPick = null; togglePlanJob(day, j.kind, j.refId, j.label); };
+      const pool2 = el('<button class="modal-skip">Nobody yet</button>');
+      pool2.onclick = () => { const k = _planPick.key; _planPick = null; setPlanAssignee(day, k, ''); };
+      btnRow.appendChild(pool2); btnRow.appendChild(off);
+      modal.appendChild(btnRow);
+      overlay.appendChild(modal);
+      overlay.onclick = (e) => { if (e.target === overlay) { _planPick = null; render(); } };
+      wrap.appendChild(overlay);
+    } else { _planPick = null; }
   }
+
   return wrap;
 }
 
-// A single consolidated list of every room on the cleaning list.
 function viewRooms() {
   const wrap = el('<div class="body"></div>');
   const units = (state.servicedUnits || []).slice()
@@ -5709,7 +5760,7 @@ async function boot() {
   // Level first — it decides which rooms fall on which day, and planning ahead of it
   // would lay out days it is about to move.
   autoLevelIfLopsided();
-  ensureTomorrowPlanned();   // tomorrow is laid out and handed round without anyone asking
+  ensureWeekPlanned();   // the week ahead is laid out and handed round without anyone asking
   loadHikArrivals().then(() => { maybeAutoAssign(); route(); });
   startArrivalPolling();
   subscribeRealtime();
