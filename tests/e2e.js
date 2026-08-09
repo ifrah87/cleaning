@@ -1433,6 +1433,47 @@ function serve() {
   check('and the schedule does not put it back',
     !(await planState()).rooms.includes(dropKey), 'the re-sync re-added a job that was removed by hand');
 
+  // ------------------------------------------------- LEVELS WITHOUT ASKING
+  // Waiting to be asked meant the every-other-day rooms went on stacking until
+  // somebody noticed the chart and went looking for the button.
+  console.log('\n\x1b[1mLEVELS ITSELF — nobody has to notice\x1b[0m');
+  const autoLvl = await page.evaluate(() => {
+    state.rollCallTypes = null;
+    const saved = JSON.parse(JSON.stringify(state.servicedUnits));
+    state.servicedUnits = [];
+    for (let i = 1; i <= 20; i += 1) state.servicedUnits.push({
+      id: 'a' + i, unit: String(400 + i), freq: 'eod', lastCleaned: shiftDay(workToday(), -1),
+    });
+    delete state.autoLevelledOn; delete state.lastAutoLevel;
+    state.autoBalance = true;
+
+    const before = levelPlan(14).settledBefore;
+    const ran = autoLevelIfLopsided();                 // what opening the app does
+    const settled = Object.values(projectedCounts(14)).slice(7);
+    // Pressing on shouldn't keep churning the schedule all day.
+    const again = autoLevelIfLopsided();
+
+    // And it must stay off when the office has turned it off.
+    state.autoBalance = false;
+    delete state.autoLevelledOn;
+    state.servicedUnits.forEach((u) => { delete u.alsoCleanOn; u.lastCleaned = shiftDay(workToday(), -1); });
+    const offRun = autoLevelIfLopsided();
+
+    const out = { before, moves: ran.moves, again: again.moves, offRun: offRun.moves,
+                  peak: Math.max(...settled), note: state.lastAutoLevel };
+    state.servicedUnits = saved;
+    state.autoBalance = true;
+    return out;
+  });
+  check('opening the app levels a lopsided fortnight on its own', autoLvl.moves > 0,
+    'it proposed nothing, from a settled peak of ' + autoLvl.before);
+  check('the days really do come out level', autoLvl.peak <= autoLvl.before / 2 + 1,
+    'settled peak ' + autoLvl.before + ' → ' + autoLvl.peak);
+  eq('it does not keep churning the schedule all day', autoLvl.again, 0);
+  eq('and it stays out of it when the setting is off', autoLvl.offRun, 0);
+  check('it records what it did, so the change is not invisible',
+    !!autoLvl.note && autoLvl.note.moves > 0, 'nothing recorded: ' + JSON.stringify(autoLvl.note));
+
   // ------------------------------------------------ ONE BUTTON FOR TOMORROW
   // The thing the Plan tab is opened to do: plan tomorrow, then edit it.
   console.log('\n\x1b[1mPLAN TOMORROW — one press, then edit\x1b[0m');

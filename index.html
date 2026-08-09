@@ -3335,6 +3335,30 @@ function runPlanAhead(nDays, doLevel) {
   return { jobs, assigned, span };
 }
 
+// Level the days without being asked. Waiting to be asked meant the every-other-day
+// rooms went on stacking onto one morning until somebody noticed the chart and went
+// looking for the button — which is the same as not having it. Governed by the
+// existing "Keep the week level" setting, and only when it is genuinely lopsided:
+// a room or two of difference is just how they fall and is not worth an extra clean.
+function autoLevelIfLopsided() {
+  if (state.autoBalance === false) return { moves: 0 };
+  if (state.autoLevelledOn === todayKey()) return { moves: 0 };   // once a day is plenty
+  const lp = levelPlan(LEVEL_HORIZON);
+  if (!lp.moves.length || (lp.settledBefore - lp.settledAfter) < 2) return { moves: 0 };
+  state.autoLevelledOn = todayKey();
+  // Kept so the week-ahead panel can say what happened. Levelling changes the shape
+  // of the fortnight on its own, and a change nobody can see is one nobody trusts.
+  state.lastAutoLevel = {
+    day: todayKey(),
+    moves: lp.moves.length,
+    extras: lp.moves.filter((m) => m.kind === 'extra').length,
+    from: lp.settledBefore,
+    to: lp.settledAfter,
+  };
+  applyLevelPlan(lp);
+  return { moves: lp.moves.length };
+}
+
 // Plan tomorrow, in one press, and land on it ready to be edited. Tomorrow lays
 // itself out when the app opens, but there was no way to simply ASK for it — you had
 // to know that, trust it, and go looking. This is the asking.
@@ -3574,6 +3598,16 @@ function viewPlan() {
       row.onclick = () => { planDay = d.day; render(); };
       box.appendChild(row);
     });
+    // Say so when the app levelled the days by itself. It reshapes the fortnight
+    // without being asked, and a change nobody can see is one nobody trusts.
+    if (state.lastAutoLevel && state.lastAutoLevel.day === todayKey() && state.lastAutoLevel.moves) {
+      const al = state.lastAutoLevel;
+      box.appendChild(el(`<div style="font-size:11px;color:#15803d;font-weight:600;margin-top:8px">`
+        + `✓ Levelled today — ${al.moves} room${al.moves === 1 ? '' : 's'} spread across the cycle, `
+        + `heaviest day ${al.from} → ${al.to}`
+        + (al.extras ? `. ${al.extras} got one extra clean to break up the clump` : '')
+        + `.</div>`));
+    }
     // One button for the whole week: level the days, lay them out, hand them round.
     // Doing it in three separate taps meant knowing which order they went in.
     {
@@ -4624,7 +4658,7 @@ function viewSettings() {
     ['autoAssign', 'Hand out rooms each morning',
      'Once the first cleaners badge in, today\'s rooms are shared out automatically. Only ever when nothing has been handed out yet, so it can\'t undo your own decisions. Every room still needs your Yes.'],
     ['autoBalance', 'Keep the week level',
-     'Stops the every-other-day rooms stacking onto one morning. Rooms are only ever delayed, never brought forward.'],
+     'Stops the every-other-day rooms all falling due on the same morning — they are split across the cycle so the days stop swinging between a huge one and an empty one. Nothing is ever left longer than its frequency: a room takes its next turn earlier, or is cleaned once more to move it onto the opposite day.'],
   ].forEach(([k, label, why]) => {
     const on = state[k] !== false;
     const row = el(`<div style="display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-top:1px solid #e7ecf3"></div>`);
@@ -5637,6 +5671,9 @@ async function boot() {
   load();
   route();              // login → app
   await remotePull();   // wait for the staff roster before matching arrivals
+  // Level first — it decides which rooms fall on which day, and planning ahead of it
+  // would lay out days it is about to move.
+  autoLevelIfLopsided();
   ensureTomorrowPlanned();   // tomorrow is laid out and handed round without anyone asking
   loadHikArrivals().then(() => { maybeAutoAssign(); route(); });
   startArrivalPolling();
