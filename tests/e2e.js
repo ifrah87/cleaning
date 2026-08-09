@@ -1433,6 +1433,53 @@ function serve() {
   check('and the schedule does not put it back',
     !(await planState()).rooms.includes(dropKey), 'the re-sync re-added a job that was removed by hand');
 
+  // ------------------------------------------------ ONE BUTTON FOR TOMORROW
+  // The thing the Plan tab is opened to do: plan tomorrow, then edit it.
+  console.log('\n\x1b[1mPLAN TOMORROW — one press, then edit\x1b[0m');
+  await page.evaluate(() => {
+    const d = tomorrowKey();
+    delete state.plans[d]; delete state.planSeeded[d];
+    if (state.planDropped) delete state.planDropped[d];
+    planDay = null; state.tab = 'plan'; render();
+  });
+  await page.waitForTimeout(400);
+  const tomBtn = page.locator('button', { hasText: "Plan tomorrow's rooms" }).first();
+  check('the Plan tab leads with one button for tomorrow', await tomBtn.count() > 0,
+    'no "Plan tomorrow" button on the tab');
+  await tomBtn.click();
+  await page.waitForTimeout(500);
+  const tom = await page.evaluate(() => {
+    const d = tomorrowKey();
+    const plan = state.plans[d] || {};
+    const rooms = Object.values(plan).filter((v) => v.kind === 'unit');
+    return { landed: planDay === d, jobs: Object.keys(plan).length, rooms: rooms.length,
+             assigned: rooms.filter((v) => v.assignedTo).length,
+             rostered: cleaningStaff().filter((p) => worksOnDay(p, d)).length };
+  });
+  check('one press lays tomorrow out', tom.jobs > 0, 'tomorrow is still empty');
+  check('and hands the rooms out', !tom.rooms || !tom.rostered || tom.assigned > 0,
+    tom.assigned + ' of ' + tom.rooms + ' handed out');
+  check('and leaves you on tomorrow, ready to change it', tom.landed, 'the tab did not move to tomorrow');
+
+  // Editing after pressing it must stick — and pressing again must not undo the edit.
+  const edited = await page.evaluate(() => {
+    const d = tomorrowKey();
+    const plan = state.plans[d];
+    const k = Object.keys(plan).find((x) => plan[x].kind === 'unit');
+    if (!k) return null;
+    setPlanAssignee(d, k, null);
+    const dropped = Object.keys(plan).find((x) => plan[x].kind === 'unit' && x !== k);
+    if (dropped) togglePlanJob(d, 'unit', plan[dropped].refId, 'x');
+    planTomorrow();
+    return { k, stillGone: !state.plans[d][dropped], reassigned: !!state.plans[d][k].assignedTo };
+  });
+  if (edited) {
+    check('a job removed after planning stays removed when it is pressed again', edited.stillGone,
+      'the removed job came back');
+    check('and a room left unassigned gets picked up on the next press', edited.reassigned,
+      'it was not handed to anybody');
+  }
+
   // --------------------------------------------- AUTO-ASSIGN ON PLAN A DAY
   // The Plan tab's auto-assign handed rooms to whoever had clocked in, which on a
   // day that has not happened is nobody — so it just failed.

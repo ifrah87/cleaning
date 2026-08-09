@@ -3335,6 +3335,29 @@ function runPlanAhead(nDays, doLevel) {
   return { jobs, assigned, span };
 }
 
+// Plan tomorrow, in one press, and land on it ready to be edited. Tomorrow lays
+// itself out when the app opens, but there was no way to simply ASK for it — you had
+// to know that, trust it, and go looking. This is the asking.
+//
+// It never wipes an edit: anything already on the day stays, anything already handed
+// out keeps its cleaner. To start the day over there is "Rebuild this day" below.
+function planTomorrow() {
+  const day = tomorrowKey();
+  ensureDayPlanned(day);
+  const plan = getPlan(day);
+  const loose = Object.keys(plan).filter((k) => plan[k].kind === 'unit' && !plan[k].assignedTo);
+  if (loose.length) assignNewPlanJobs(day, loose);
+  save();
+  planDay = day;                       // land on it, so the next tap is an edit
+  const rooms = Object.values(plan).filter((v) => v.kind === 'unit');
+  const named = rooms.filter((v) => v.assignedTo).length;
+  hikSyncMsg = rooms.length
+    ? { text: 'Tomorrow is planned — ' + rooms.length + ' room' + (rooms.length === 1 ? '' : 's') + ', '
+        + named + ' handed out. Change anything below.' }
+    : { err: true, text: 'Nothing is due tomorrow. Add a job below if something needs doing.' };
+  render();
+}
+
 function planAhead() {
   const pv = planAheadPreview(PLAN_AHEAD_DAYS);
   const bits = [];
@@ -3507,6 +3530,18 @@ function viewPlan() {
   // screen is what the schedule says now — not what it said when it was first opened.
   const seeded = seedPlanOnce(day);
   const resynced = (!seeded && day > todayKey()) ? resyncPlanDay(day) : { added: 0, removed: 0, assigned: 0 };
+
+  // The one thing this tab is opened to do. First, and on its own, so it is not
+  // something to find among the week's controls.
+  {
+    const btn = el(`<button class="add-btn" style="background:#15803d;margin-bottom:4px;font-size:15px;padding:13px">`
+      + `⚡ Plan tomorrow's rooms</button>`);
+    btn.onclick = planTomorrow;
+    wrap.appendChild(btn);
+    wrap.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin-bottom:14px">`
+      + `Lays tomorrow out from the schedule and hands it to whoever is rostered on — then edit it below. `
+      + `Nothing you have already changed is touched.</div>`));
+  }
 
   // THE DAYS AHEAD — the week at a glance before dropping into any one day, so a
   // heavy Thursday is visible on Monday rather than on Thursday morning.
