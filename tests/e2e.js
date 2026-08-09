@@ -1452,7 +1452,7 @@ function serve() {
     return {
       rooms: rooms.length,
       peakBefore: plan.peakBefore, peakAfter: plan.peakAfter,
-      moves: plan.moves.map((m) => ({ unit: m.u.unit, from: m.from, to: m.to })),
+      moves: plan.moves.map((m) => ({ unit: m.u.unit, from: m.from, to: m.to, kind: m.kind })),
       days: plan.days,
     };
   });
@@ -1462,8 +1462,9 @@ function serve() {
     'peak ' + lvl.peakBefore + ' → ' + lvl.peakAfter);
   check('it actually moves rooms to do it', lvl.moves.length > 0, 'no moves proposed');
   check('and never makes a room wait longer than it already is',
-    lvl.moves.every((m) => m.to < m.from),
-    'these were pushed later: ' + JSON.stringify(lvl.moves.filter((m) => m.to >= m.from)));
+    lvl.moves.every((m) => (m.kind === 'earlier' ? m.to < m.from : m.to > m.from)),
+    'offending moves: ' + JSON.stringify(lvl.moves.filter((m) =>
+      !(m.kind === 'earlier' ? m.to < m.from : m.to > m.from))));
   check('nothing is moved onto today, with the round already under way',
     lvl.moves.every((m) => m.to > lvl.days[0]),
     'moved onto today: ' + JSON.stringify(lvl.moves.filter((m) => m.to <= lvl.days[0])));
@@ -1477,6 +1478,40 @@ function serve() {
     return { promised, realised: Math.max(...Object.values(counts)) };
   });
   eq('the schedule really ends up as level as it promised', lvlAfter.realised, lvlAfter.promised);
+
+  // The case this exists for: every every-other-day room falling due together, so
+  // the estate swings between a huge day and an empty one for ever. There is no
+  // earlier day to move any of them to — the only way to prise them apart is to
+  // clean some twice, once, after which they run on the opposite day for good.
+  const eodClump = await page.evaluate(() => {
+    state.rollCallTypes = null;
+    const saved = JSON.parse(JSON.stringify(state.servicedUnits));   // put the fixture back afterwards
+    state.servicedUnits = [];
+    for (let i = 1; i <= 20; i += 1) state.servicedUnits.push({
+      id: 'e' + i, unit: String(100 + i), freq: 'eod', lastCleaned: shiftDay(workToday(), -1),
+    });
+    const before = levelPlan(14);
+    applyLevelPlan(before);
+    const counts = projectedCounts(14);
+    const tail = Object.keys(counts).sort().slice(7).map((d) => counts[d]);
+    const out = {
+      settledBefore: before.settledBefore, settledAfter: before.settledAfter,
+      moves: before.moves.length,
+      extras: before.moves.filter((m) => m.kind === 'extra').length,
+      tail,
+      emptyDays: tail.filter((n) => n === 0).length,
+    };
+    state.servicedUnits = saved;
+    return out;
+  });
+  check('twenty rooms falling due together is caught as lopsided', eodClump.settledBefore >= 20,
+    'settled peak was ' + eodClump.settledBefore);
+  check('the clump is broken up', eodClump.moves > 0, 'nothing was moved');
+  check('by cleaning some of them twice, since none can be delayed', eodClump.extras > 0,
+    'no extra cleans proposed — a clump due now cannot be split any other way');
+  check('afterwards no day carries them all', eodClump.settledAfter <= eodClump.settledBefore / 2 + 1,
+    'settled peak ' + eodClump.settledBefore + ' → ' + eodClump.settledAfter);
+  eq('and there are no empty days left swinging against heavy ones', eodClump.emptyDays, 0);
 
   // ------------------------------------------------------------- DURABILITY
   // A save is not finished until the server has it. These cover the way changes

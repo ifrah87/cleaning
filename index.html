@@ -1384,35 +1384,61 @@ function levelPlan(horizon) {
 
   const moves = [];
   movable.forEach((m) => {
-    // Never later than the room is already due, and never today — the crew is on
-    // today's round already. Earliest candidate is tomorrow.
-    const lo = Math.min(1, m.from), hi = m.from;
-    let bestAt = m.from, bestCost = Infinity;
-    for (let at = lo; at <= hi; at += 1) {
+    // A room already due today is the hard case, and the common one: when every
+    // every-other-day room falls due together there is no earlier day to move any of
+    // them to, so nothing can prise them apart. It is going to be cleaned today
+    // whatever happens, so the way to split the clump is an EXTRA clean on the
+    // opposite day — one more clean, once, after which the room runs on its new day
+    // for good. Nothing is ever delayed to tidy the schedule.
+    // Two ways to move a room, and never a third: bring its next turn FORWARD, or
+    // leave that turn where it is and give it one EXTRA clean later in the cycle.
+    // Nothing is ever held back. The extra clean is what prises apart a clump that
+    // is due now — there is no earlier day to move any of them to, so the only way
+    // to break it up is to clean some of them twice, once, and let them carry on
+    // from the opposite day thereafter.
+    const cands = [];
+    for (let at = Math.min(1, m.from); at <= m.from; at += 1) cands.push({ at, kind: 'earlier', keep: [] });
+    for (let at = m.from + 1; at <= m.from + m.n - 1 && at < span; at += 1) cands.push({ at, kind: 'extra', keep: [m.from] });
+
+    const inSeries = (i, at) => i >= at && (i - at) % m.n === 0;
+    let best = { at: m.from, kind: 'earlier', keep: [] }, bestCost = Infinity;
+    cands.forEach((c) => {
       let peak = 0, sq = 0;
       for (let i = 0; i < span; i += 1) {
-        const extra = (i >= at && (i - at) % m.n === 0) ? 1 : 0;
-        const v = load[i] + extra;
+        const v = load[i] + ((inSeries(i, c.at) || c.keep.includes(i)) ? 1 : 0);
         if (v > peak) peak = v;
         sq += v * v;
       }
-      // Flatten the worst day first, then the shape as a whole; a tie stays put.
-      const cost = peak * 10000 + sq;
-      if (cost < bestCost - 1e-9) { bestCost = cost; bestAt = at; }
+      // Flatten the worst day first, then the shape as a whole. An extra clean is
+      // real work, so it has to beat staying put outright rather than merely tie.
+      const cost = peak * 10000 + sq + (c.kind === 'extra' ? 1 : 0);
+      if (cost < bestCost - 1e-9) { bestCost = cost; best = c; }
+    });
+
+    best.keep.forEach((i) => { if (!inSeries(i, best.at)) load[i] += 1; });
+    for (let i = best.at; i < span; i += m.n) load[i] += 1;
+    if (best.at !== m.from) {
+      moves.push({ u: m.u, from: days[m.from], to: days[best.at], freq: m.u.freq, kind: best.kind });
     }
-    for (let i = bestAt; i < span; i += m.n) load[i] += 1;
-    if (bestAt !== m.from) moves.push({ u: m.u, from: days[m.from], to: days[bestAt], freq: m.u.freq });
   });
 
   const after = {};
   days.forEach((d, i) => { after[d] = load[i]; });
   const nums = days.map((d) => after[d]);
+  // The first days of the horizon carry work that is already due and is never
+  // delayed, so they cannot be lightened and judging the result by them hides a
+  // real fix: a clump due tomorrow still lands tomorrow, whatever we do about the
+  // fortnight after it. The settled half is where levelling shows up.
+  const tail = Math.floor(span / 2);
   return {
     days, moves, before, after,
     peakBefore: Math.max(...days.map((d) => before[d] || 0)),
     peakAfter: Math.max(...nums),
     lowBefore: Math.min(...days.map((d) => before[d] || 0)),
     lowAfter: Math.min(...nums),
+    settledBefore: Math.max(...days.slice(tail).map((d) => before[d] || 0)),
+    settledAfter: Math.max(...nums.slice(tail)),
+    settledLowAfter: Math.min(...nums.slice(tail)),
   };
 }
 
@@ -1433,12 +1459,21 @@ function levelWeek() {
   const fmt = (d) => new Date(d + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   const sample = plan.moves.slice(0, 4)
     .map((m) => 'Room ' + m.u.unit + ' ' + fmt(m.from) + ' → ' + fmt(m.to)).join(', ');
+  const extra = plan.moves.filter((m) => m.kind === 'extra').length;
+  const earlier = plan.moves.length - extra;
+  // The cost has to be on the screen before it is agreed to: splitting a clump that
+  // is due today means those rooms get cleaned twice this cycle.
+  const cost = [
+    earlier ? earlier + ' brought forward a day or two' : '',
+    extra ? extra + ' cleaned twice this round — once today as normal, once on their new day' : '',
+  ].filter(Boolean).join('; ');
   showConfirm(
     'Level the next ' + LEVEL_HORIZON + ' days?',
-    'The heaviest day goes from ' + plan.peakBefore + ' rooms to ' + plan.peakAfter + ', the lightest from '
-      + plan.lowBefore + ' to ' + plan.lowAfter + '. Moves ' + plan.moves.length + ' room'
-      + (plan.moves.length === 1 ? '' : 's') + ' — ' + sample + (plan.moves.length > 4 ? ', and more' : '')
-      + '. Every one is cleaned EARLIER than it is due now, never later, and carries on from its new day.',
+    'Once it settles, the heaviest day goes from ' + plan.settledBefore + ' rooms to ' + plan.settledAfter
+      + ' and every day sits between ' + plan.settledLowAfter + ' and ' + plan.settledAfter + '. '
+      + sample + (plan.moves.length > 4 ? ', and more' : '') + '. ' + cost
+      + '. Work already due is never put off, so the next day or two stay as heavy as they are — '
+      + 'the evening out starts from there and holds.',
     () => { applyLevelPlan(plan); render(); },
     'Level it out',
     'safe'
@@ -3388,14 +3423,16 @@ function viewPlan() {
     // difference is just how the rooms fall and isn't worth an extra clean.
     {
       const lp = levelPlan(LEVEL_HORIZON);
-      if (lp.moves.length && lp.peakBefore - lp.peakAfter >= 2) {
+      if (lp.moves.length && lp.settledBefore - lp.settledAfter >= 2) {
+        const extras = lp.moves.filter((m) => m.kind === 'extra').length;
         const btn = el(`<button class="add-btn" style="background:#b45309;margin-top:8px">`
-          + `⇄ Level the fortnight — heaviest day ${lp.peakBefore} → ${lp.peakAfter} rooms</button>`);
+          + `⇄ Level the fortnight — heaviest day ${lp.settledBefore} → ${lp.settledAfter} rooms</button>`);
         btn.onclick = levelWeek;
         box.appendChild(btn);
         box.appendChild(el(`<div style="font-size:10px;color:#5f7189;margin-top:4px">`
-          + `Moves ${lp.moves.length} room${lp.moves.length === 1 ? '' : 's'} onto a lighter day. `
-          + `Every one is cleaned earlier than it is due now, never later.</div>`));
+          + `Spreads ${lp.moves.length} room${lp.moves.length === 1 ? '' : 's'} across the cycle so they stop `
+          + `falling due together. Nothing waits longer than its frequency`
+          + (extras ? `; ${extras} get one extra clean to break up the clump` : '') + `.</div>`));
       }
     }
     wrap.appendChild(box);
