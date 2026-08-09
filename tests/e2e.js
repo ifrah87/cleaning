@@ -1433,6 +1433,46 @@ function serve() {
   check('and the schedule does not put it back',
     !(await planState()).rooms.includes(dropKey), 'the re-sync re-added a job that was removed by hand');
 
+  // ------------------------------------------------------- ONE BUTTON, A WEEK
+  // Getting a week ready used to be level, then open each day, then check each was
+  // handed round — several taps in an order you had to know.
+  console.log('\n\x1b[1mONE BUTTON — the whole week ready\x1b[0m');
+  const week = await page.evaluate(() => {
+    // Wipe every day ahead so the button is doing all of the work.
+    for (let i = 1; i <= 7; i += 1) {
+      const d = shiftDay(workToday(), i);
+      delete state.plans[d]; delete state.planSeeded[d];
+      if (state.planDropped) delete state.planDropped[d];
+    }
+    const pv = planAheadPreview(7);
+    const ran = runPlanAhead(7, pv.worthLevelling);
+    const days = [];
+    for (let i = 1; i <= 7; i += 1) {
+      const d = shiftDay(workToday(), i);
+      const plan = state.plans[d] || {};
+      const rooms = Object.values(plan).filter((v) => v.kind === 'unit');
+      days.push({ day: d, jobs: Object.keys(plan).length, rooms: rooms.length,
+                  assigned: rooms.filter((v) => v.assignedTo).length,
+                  rostered: cleaningStaff().filter((p) => worksOnDay(p, d)).length });
+    }
+    return { ran, days, levelled: pv.worthLevelling };
+  });
+  check('one tap lays out every day of the week', week.days.every((d) => d.jobs > 0),
+    'empty days: ' + JSON.stringify(week.days.filter((d) => !d.jobs).map((d) => d.day)));
+  check('and hands out the rooms on each of them',
+    week.days.every((d) => !d.rooms || !d.rostered || d.assigned > 0),
+    'unhanded days: ' + JSON.stringify(week.days.filter((d) => d.rooms && d.rostered && !d.assigned)));
+  check('it reports what it actually did', week.ran.jobs > 0, 'reported ' + JSON.stringify(week.ran));
+
+  // Pressing it twice must not double anything up or re-deal settled work.
+  const twice = await page.evaluate(() => {
+    const before = JSON.stringify(state.plans);
+    const again = runPlanAhead(7, false);
+    return { same: JSON.stringify(state.plans) === before, again };
+  });
+  check('pressing it again changes nothing', twice.same,
+    'the second run altered the plans: ' + JSON.stringify(twice.again));
+
   // -------------------------------------------------------- LEARN THE USUALS
   // Rooms go back to their regular cleaner only if somebody tied them by hand, one
   // at a time, which is why hardly any are tied. The log already knows.

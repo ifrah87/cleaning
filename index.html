@@ -1530,36 +1530,6 @@ function applyLevelPlan(plan) {
   save();
 }
 
-function levelWeek() {
-  const plan = levelPlan(LEVEL_HORIZON);
-  if (!plan.moves.length) {
-    hikSyncMsg = { err: false, text: 'The next ' + LEVEL_HORIZON + ' days are already as level as the schedule allows.' };
-    render(); return;
-  }
-  const fmt = (d) => new Date(d + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  const sample = plan.moves.slice(0, 4)
-    .map((m) => 'Room ' + m.u.unit + ' ' + fmt(m.from) + ' → ' + fmt(m.to)).join(', ');
-  const extra = plan.moves.filter((m) => m.kind === 'extra').length;
-  const earlier = plan.moves.length - extra;
-  // The cost has to be on the screen before it is agreed to: splitting a clump that
-  // is due today means those rooms get cleaned twice this cycle.
-  const cost = [
-    earlier ? earlier + ' brought forward a day or two' : '',
-    extra ? extra + ' cleaned twice this round — once today as normal, once on their new day' : '',
-  ].filter(Boolean).join('; ');
-  showConfirm(
-    'Level the next ' + LEVEL_HORIZON + ' days?',
-    'Once it settles, the heaviest day goes from ' + plan.settledBefore + ' rooms to ' + plan.settledAfter
-      + ' and every day sits between ' + plan.settledLowAfter + ' and ' + plan.settledAfter + '. '
-      + sample + (plan.moves.length > 4 ? ', and more' : '') + '. ' + cost
-      + '. Work already due is never put off, so the next day or two stay as heavy as they are — '
-      + 'the evening out starts from there and holds.',
-    () => { applyLevelPlan(plan); render(); },
-    'Level it out',
-    'safe'
-  );
-}
-
 function balanceUnitsAcrossDays(ids, groupLabel) {
   const plan = balancePlan(ids);
   if (!plan.length) return;
@@ -3317,11 +3287,81 @@ function staggerFrequencyGroup(freqKeyName, dryRun) {
 // then left alone for good — brings it back in line every time it is looked at,
 // so a plan drawn up this morning still matches what the schedule says tonight.
 // ============================================================
-function ensureTomorrowPlanned() {
-  const day = tomorrowKey();
+function ensureDayPlanned(day) {
   if (!state.planSeeded) state.planSeeded = {};
   if (!state.planSeeded[day]) return { day, seeded: seedPlanOnce(day), added: 0, removed: 0, assigned: 0 };
   return { day, seeded: 0, ...resyncPlanDay(day) };
+}
+function ensureTomorrowPlanned() { return ensureDayPlanned(tomorrowKey()); }
+
+// ============================================================
+// PLAN THE WEEK AHEAD — one button
+// Getting a week ready meant levelling the fortnight, then opening each day in
+// turn so it would lay itself out, then checking each was handed round. That is
+// four or five taps and knowing which order they go in. This is the whole thing:
+// level the days if they are lopsided, lay every day out from the schedule, hand
+// each one to whoever is rostered on it.
+// ============================================================
+const PLAN_AHEAD_DAYS = 7;
+
+// What one tap would do, worked out without changing anything.
+function planAheadPreview(nDays) {
+  const span = nDays || PLAN_AHEAD_DAYS;
+  const lp = levelPlan(LEVEL_HORIZON);
+  const worthLevelling = lp.moves.length > 0 && (lp.settledBefore - lp.settledAfter) >= 2;
+  let toPlan = 0, days = 0;
+  for (let i = 1; i <= span; i += 1) {
+    const day = shiftDay(workToday(), i);
+    const already = Object.keys(getPlan(day)).length;
+    const want = planningJobsFor(day).length;
+    if (want > already) toPlan += want - already;
+    if (want || already) days += 1;
+  }
+  return { span, lp, worthLevelling, toPlan, days };
+}
+
+function runPlanAhead(nDays, doLevel) {
+  const span = nDays || PLAN_AHEAD_DAYS;
+  // Levelling first: it changes which rooms fall on which day, and laying the days
+  // out before that would plan the days it is about to move.
+  if (doLevel) applyLevelPlan(levelPlan(LEVEL_HORIZON));
+  let jobs = 0, assigned = 0;
+  for (let i = 1; i <= span; i += 1) {
+    const r = ensureDayPlanned(shiftDay(workToday(), i));
+    jobs += (r.seeded || 0) + (r.added || 0);
+    assigned += (r.assigned || 0);
+  }
+  save();
+  return { jobs, assigned, span };
+}
+
+function planAhead() {
+  const pv = planAheadPreview(PLAN_AHEAD_DAYS);
+  const bits = [];
+  if (pv.worthLevelling) {
+    const extras = pv.lp.moves.filter((m) => m.kind === 'extra').length;
+    bits.push('Evens the days out — the heaviest goes from ' + pv.lp.settledBefore + ' rooms to '
+      + pv.lp.settledAfter + ', by spreading ' + pv.lp.moves.length + ' across the cycle'
+      + (extras ? ' (' + extras + ' get one extra clean to break up the clump)' : '')
+      + '. Nothing waits longer than its frequency.');
+  }
+  bits.push(pv.toPlan
+    ? 'Lays out the next ' + pv.span + ' days — about ' + pv.toPlan + ' more job'
+      + (pv.toPlan === 1 ? '' : 's') + ' from the schedule — and hands each day to whoever is rostered on it.'
+    : 'Lays out the next ' + pv.span + ' days and hands each one to whoever is rostered on it.');
+  bits.push('Anything already handed out stays where it is.');
+  showConfirm(
+    'Get the next ' + pv.span + ' days ready?',
+    bits.join(' '),
+    () => {
+      const r = runPlanAhead(PLAN_AHEAD_DAYS, pv.worthLevelling);
+      hikSyncMsg = { text: 'Next ' + r.span + ' days are ready — ' + r.jobs + ' job'
+        + (r.jobs === 1 ? '' : 's') + ' laid out, ' + r.assigned + ' handed round.' };
+      render();
+    },
+    'Get them ready',
+    'safe'
+  );
 }
 
 // Bring a already-laid-out day back in line with what the schedule now says, without
@@ -3499,21 +3539,19 @@ function viewPlan() {
       row.onclick = () => { planDay = d.day; render(); };
       box.appendChild(row);
     });
-    // Offer to flatten it when the days are genuinely lopsided. A day or two of
-    // difference is just how the rooms fall and isn't worth an extra clean.
+    // One button for the whole week: level the days, lay them out, hand them round.
+    // Doing it in three separate taps meant knowing which order they went in.
     {
-      const lp = levelPlan(LEVEL_HORIZON);
-      if (lp.moves.length && lp.settledBefore - lp.settledAfter >= 2) {
-        const extras = lp.moves.filter((m) => m.kind === 'extra').length;
-        const btn = el(`<button class="add-btn" style="background:#b45309;margin-top:8px">`
-          + `⇄ Level the fortnight — heaviest day ${lp.settledBefore} → ${lp.settledAfter} rooms</button>`);
-        btn.onclick = levelWeek;
-        box.appendChild(btn);
-        box.appendChild(el(`<div style="font-size:10px;color:#5f7189;margin-top:4px">`
-          + `Spreads ${lp.moves.length} room${lp.moves.length === 1 ? '' : 's'} across the cycle so they stop `
-          + `falling due together. Nothing waits longer than its frequency`
-          + (extras ? `; ${extras} get one extra clean to break up the clump` : '') + `.</div>`));
-      }
+      const pv = planAheadPreview(PLAN_AHEAD_DAYS);
+      const btn = el(`<button class="add-btn" style="background:#b45309;margin-top:8px">`
+        + `⚡ Get the next ${pv.span} days ready</button>`);
+      btn.onclick = planAhead;
+      box.appendChild(btn);
+      box.appendChild(el(`<div style="font-size:10px;color:#5f7189;margin-top:4px">`
+        + (pv.worthLevelling
+          ? `Evens the days out (heaviest ${pv.lp.settledBefore} → ${pv.lp.settledAfter} rooms), lays every day out `
+          : `Lays every day out `)
+        + `from the schedule and hands it to whoever is rostered on. Nothing already handed out is moved.</div>`));
     }
     wrap.appendChild(box);
   }
