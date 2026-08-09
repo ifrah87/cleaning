@@ -1433,6 +1433,47 @@ function serve() {
   check('and the schedule does not put it back',
     !(await planState()).rooms.includes(dropKey), 'the re-sync re-added a job that was removed by hand');
 
+  // --------------------------------------------- AUTO-ASSIGN ON PLAN A DAY
+  // The Plan tab's auto-assign handed rooms to whoever had clocked in, which on a
+  // day that has not happened is nobody — so it just failed.
+  console.log('\n\x1b[1mPLAN A DAY — auto-assign fits the day it is on\x1b[0m');
+  await page.evaluate(() => { planDay = tomorrowKey(); state.tab = 'plan'; render(); });
+  await page.waitForTimeout(400);
+  const planBtn = page.locator('button', { hasText: 'Auto-assign' }).first();
+  check('the Plan tab offers an auto-assign', await planBtn.count() > 0, 'no auto-assign button on Plan a Day');
+  contains('and on a future day it goes by the rota, not the door reader',
+    await planBtn.textContent(), 'rostered on');
+
+  const dealt = await page.evaluate(() => {
+    const d = tomorrowKey();
+    const plan = state.plans[d] || {};
+    Object.keys(plan).forEach((k) => { plan[k].assignedTo = null; });
+    return { before: Object.values(plan).filter((v) => v.kind === 'unit' && v.assignedTo).length };
+  });
+  await planBtn.click();
+  await page.waitForTimeout(400);
+  const afterDeal = await page.evaluate(() => {
+    const plan = state.plans[tomorrowKey()] || {};
+    const rooms = Object.values(plan).filter((v) => v.kind === 'unit');
+    return { assigned: rooms.filter((v) => v.assignedTo).length, rooms: rooms.length,
+             rostered: cleaningStaff().filter((p) => worksOnDay(p, tomorrowKey())).map((p) => p.id),
+             who: [...new Set(rooms.map((v) => v.assignedTo).filter(Boolean))] };
+  });
+  eq('nothing was handed out to begin with', dealt.before, 0);
+  check('pressing it hands the rooms out', afterDeal.assigned > 0,
+    'still ' + afterDeal.assigned + ' of ' + afterDeal.rooms + ' handed out');
+  check('to people rostered on that day', afterDeal.who.every((id) => afterDeal.rostered.includes(id)),
+    JSON.stringify(afterDeal.who) + ' vs rostered ' + JSON.stringify(afterDeal.rostered));
+
+  // Today still reads the door, since that is who is actually in.
+  await page.evaluate(() => { planDay = todayKey(); render(); });
+  await page.waitForTimeout(300);
+  const todayBtn = page.locator('button', { hasText: 'Auto-assign' }).first();
+  if (await todayBtn.count()) {
+    contains('on today it still goes by who clocked in', await todayBtn.textContent(), "clocked in");
+  }
+  await page.evaluate(() => { planDay = null; });
+
   // ------------------------------------------------------- ONE BUTTON, A WEEK
   // Getting a week ready used to be level, then open each day, then check each was
   // handed round — several taps in an order you had to know.

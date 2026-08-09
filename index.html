@@ -3590,15 +3590,9 @@ function viewPlan() {
       box.appendChild(el(`<div style="font-size:12px;color:#5f7189;font-weight:600;margin-top:4px">`
         + `${named} of ${roomJobs.length} rooms already handed out</div>`));
     }
-    const re = el(`<button class="freqmini" style="width:100%;padding:9px;margin-top:8px">⚡ Hand the rooms out again</button>`);
-    re.onclick = () => {
-      const r = autoPlanDay(day);
-      hikSyncMsg = r.assigned
-        ? { text: 'Handed ' + r.assigned + ' rooms to the ' + r.crew + ' on that day.' }
-        : { err: true, text: 'Nothing to hand out — ' + (r.reason || 'no rooms on the plan') + '.' };
-      render();
-    };
-    box.appendChild(re);
+    // Handing the rooms out lives with the jobs it hands out, below — one
+    // auto-assign for the day rather than two buttons doing nearly the same thing
+    // in two places.
     // A day built before the schedule changed keeps whatever it was given, so there
     // has to be a way to say "do this one again from scratch".
     const rb = el(`<button class="freqmini" style="width:100%;padding:9px;margin-top:6px;border-color:#b45309;color:#b45309">⟳ Rebuild this day from the schedule</button>`);
@@ -3644,8 +3638,20 @@ function viewPlan() {
   if (!jobs.length) {
     wrap.appendChild(el(`<div class="empty" style="padding:14px 0">Nothing due on this day, and nothing added by hand.</div>`));
   } else {
-    const auto = el(`<button class="add-btn" style="background:#15803d;margin-bottom:6px">⚡ Auto-assign to who's clocked in</button>`);
-    auto.onclick = () => autoAssignPlan(day);
+    // One auto-assign, which reads the right thing for the day it is on. Today the
+    // door reader decides who is in; on a day that has not happened nobody has
+    // badged in at all, and the old button simply failed with "no one clocked in".
+    const auto = el(`<button class="add-btn" style="background:#15803d;margin-bottom:6px">`
+      + (isToday ? `⚡ Auto-assign to who's clocked in` : `⚡ Auto-assign to whoever is rostered on`)
+      + `</button>`);
+    auto.onclick = () => {
+      if (isToday) { autoAssignPlan(day); return; }
+      const r = autoPlanDay(day);
+      hikSyncMsg = r.assigned
+        ? { text: 'Handed ' + r.assigned + ' room' + (r.assigned === 1 ? '' : 's') + ' to the ' + r.crew + ' rostered on that day.' }
+        : { err: true, text: 'Nothing to hand out — ' + (r.reason || 'no rooms on the plan') + '.' };
+      render();
+    };
     wrap.appendChild(auto);
     const clr = el(`<button class="reset-btn">Clear this day's plan</button>`);
     clr.onclick = () => clearPlanDay(day);
