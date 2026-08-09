@@ -1539,6 +1539,48 @@ function serve() {
   check('it records what it did, so the change is not invisible',
     !!autoLvl.note && autoLvl.note.moves > 0, 'nothing recorded: ' + JSON.stringify(autoLvl.note));
 
+  // -------------------------------------------------------- SOMEBODY IS OFF
+  // The plan is only worth having if it survives somebody phoning in sick.
+  console.log('\n\x1b[1mSOMEBODY IS OFF — the day is dealt round the rest\x1b[0m');
+  const sick = await page.evaluate(() => {
+    const d = tomorrowKey();
+    const plan = state.plans[d] || {};
+    const rooms = Object.values(plan).filter((v) => v.kind === 'unit');
+    // Give one person the lot, then take them out.
+    const crew = cleaningStaff().filter((p) => worksOnDay(p, d));
+    const victim = crew[0];
+    Object.keys(plan).forEach((k) => { if (plan[k].kind === 'unit') plan[k].assignedTo = victim.id; });
+    const had = rooms.length;
+    const r = sharePersonsRoomsOut(d, victim.id);
+    const after = Object.values(state.plans[d]).filter((v) => v.kind === 'unit');
+    return {
+      had, moved: r.moved, victim: victim.id, crew: crew.length,
+      stillTheirs: after.filter((v) => v.assignedTo === victim.id).length,
+      spread: [...new Set(after.map((v) => v.assignedTo).filter(Boolean))].length,
+      unhanded: after.filter((v) => !v.assignedTo).length,
+    };
+  });
+  check('there was a full day on one person to move', sick.had > 1, 'only ' + sick.had + ' rooms');
+  eq('none of it is left with the person who is off', sick.stillTheirs, 0);
+  check('it is dealt round the others', sick.spread >= Math.min(sick.crew - 1, 2),
+    'went to only ' + sick.spread + ' of ' + (sick.crew - 1) + ' remaining');
+  eq('and nothing is dropped on the floor', sick.unhanded, 0);
+
+  // Marking somebody sick must keep today's hand-out away from them.
+  const sickStatus = await page.evaluate(() => {
+    const p = cleaningStaff()[0];
+    state.attendance[p.id] = 'sick';
+    const d = todayKey();
+    state.plans[d] = state.plans[d] || {};
+    const dealt = autoPlanDay(d);
+    const got = Object.values(state.plans[d]).filter((v) => v.kind === 'unit' && v.assignedTo === p.id).length;
+    state.attendance[p.id] = 'present';
+    return { id: p.id, got, order: STATUS_ORDER, dealt: dealt.assigned };
+  });
+  check('sick is one of the statuses a person can be put in', sickStatus.order.includes('sick'),
+    'statuses are ' + JSON.stringify(sickStatus.order));
+  eq('somebody marked sick is given no rooms today', sickStatus.got, 0);
+
   // ------------------------------------------------- PLAN A DAY, AS A ROTA
   // The day's list is sent to the crew as a screenshot, so it has to fit on a screen
   // and read as a rota. It used to be two rows and a full-width dropdown per room.

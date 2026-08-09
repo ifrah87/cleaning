@@ -303,9 +303,14 @@ const STATUS = {
   present: { label: 'PRESENT', color: '#15803d' },
   late:    { label: 'LATE', color: '#b45309' },
   noshow:  { label: 'NO-SHOW', color: '#dc2626' },
+  sick:    { label: 'SICK', color: '#9333ea' },
   off:     { label: 'OFF', color: '#5b6a7f' },
 };
-const STATUS_ORDER = ['present', 'late', 'noshow', 'off'];
+const STATUS_ORDER = ['present', 'late', 'noshow', 'sick', 'off'];
+// Not in for work, whatever the reason. Cover, planning and hand-outs all care
+// about this rather than about which kind of absence it is.
+const AWAY = ['noshow', 'sick', 'off'];
+const isAway = (pid) => AWAY.includes(state.attendance[pid] || 'present');
 
 // Areas live in state (editable). Helpers to read them:
 function areasInterior() { return (state.areas || []).filter(a => a.kind === 'interior'); }
@@ -715,13 +720,13 @@ function cleanerForUnit(u) {
   if (u.assignedTo) { const p = STAFF.find(s => s.id === u.assignedTo); if (p) return { person: p, reason: 'override' }; }
   if (state.unitCover && state.unitCover[u.id]) { const p = STAFF.find(s => s.id === state.unitCover[u.id]); if (p) return { person: p, reason: 'cover' }; }
   const owner = ownerOfFloor(floorOfUnit(u.unit));
-  if (owner) return { person: owner, reason: state.attendance[owner.id] === 'noshow' ? 'owner-absent' : 'owner' };
+  if (owner) return { person: owner, reason: isAway(owner.id) ? 'owner-absent' : 'owner' };
   return null;
 }
 // Count today's units per present person (for lightest-load suggestion)
 function unitLoads() {
   const load = {};
-  STAFF.forEach(p => { if (state.attendance[p.id] !== 'noshow') load[p.id] = 0; });
+  STAFF.forEach(p => { if (!isAway(p.id)) load[p.id] = 0; });
   state.servicedUnits.forEach(u => {
     const c = cleanerForUnit(u);
     if (c && c.reason !== 'owner-absent' && load[c.person.id] != null) load[c.person.id]++;
@@ -1232,7 +1237,7 @@ function personFloors(p) {
 function gaps() {
   const out = [];
   STAFF.forEach(p => {
-    if (state.attendance[p.id] === 'noshow' && p.floors && p.floors.length) {
+    if (isAway(p.id) && p.floors && p.floors.length) {
       p.floors.forEach(f => { if (!state.coverage[f]) out.push({ person: p, floor: f }); });
     }
   });
@@ -1265,7 +1270,7 @@ function cycleStatus(pid) {
   const next = STATUS_ORDER[(STATUS_ORDER.indexOf(cur)+1) % STATUS_ORDER.length];
   state.attendance[pid] = next;
 
-  if (next === 'noshow') {
+  if (next === 'noshow' || next === 'sick') {
     // Does this person own any serviced units (via their floors)?
     const affected = unitsOwnedBy(pid);
     if (affected.length) {
@@ -1749,7 +1754,7 @@ function applyPlannedAssignments() {
     if (j.kind !== 'unit' || !j.assignedTo) return;
     const u = unitById[j.refId];
     if (!u || !onRollCall(u) || !unitDueToday(u) || u.assignedTo) return;
-    if (!hikArrivals[j.assignedTo]) { out.absent += 1; return; }   // planned for, not in
+    if (!hikArrivals[j.assignedTo] || isAway(j.assignedTo)) { out.absent += 1; return; }   // planned for, not working
     if (!canCleanUnit(staffById[j.assignedTo], u)) return;
     u.assignedTo = j.assignedTo;
     // Planned the night before is a decision, not a suggestion awaiting a yes/no.
@@ -3087,7 +3092,9 @@ function applySuggestions(day, jobs) {
 // for the morning.
 function autoPlanDay(day) {
   const plan = getPlan(day);
-  const crew = cleaningStaff().filter((p) => worksOnDay(p, day))
+  // Marked sick or off is a statement about today, so it only overrides the rota
+  // for today — a rota says who is expected next Thursday, not who is ill now.
+  const crew = cleaningStaff().filter((p) => worksOnDay(p, day) && !(day === todayKey() && isAway(p.id)))
     .slice().sort((a, b) => String(a.name).localeCompare(String(b.name)));
   if (!crew.length) return { assigned: 0, crew: 0, reason: 'nobody is rostered on' };
   const unitById = {};
@@ -3399,11 +3406,15 @@ function resyncPlanDay(day) {
 
 // Hand out only the jobs just added, fitting them around what is already dealt.
 // autoPlanDay deals the whole day from scratch and would wipe existing hand-outs.
-function assignNewPlanJobs(day, keys) {
+function assignNewPlanJobs(day, keys, skip) {
   const plan = getPlan(day);
   const roomKeys = keys.filter((k) => plan[k] && plan[k].kind === 'unit');
   if (!roomKeys.length) return 0;
-  const crew = cleaningStaff().filter((p) => worksOnDay(p, day))
+  // skip = whoever cannot take work today, so somebody off sick does not get handed
+  // their own rooms straight back.
+  const out = skip instanceof Set ? skip : new Set(skip ? [skip] : []);
+  const crew = cleaningStaff().filter((p) => worksOnDay(p, day) && !out.has(p.id)
+      && !(day === todayKey() && isAway(p.id)))
     .slice().sort((a, b) => String(a.name).localeCompare(String(b.name)));
   if (!crew.length) return 0;
 
@@ -3448,6 +3459,19 @@ function assignNewPlanJobs(day, keys) {
   const inSlot = (s) => roomKeys.filter((k) => unitById[plan[k].refId] && timeSlot(unitById[plan[k].refId]) === s);
   [...inSlot('early'), ...inSlot('late'), ...inSlot('any')].forEach((k) => { if (give(k)) n += 1; });
   return n;
+}
+
+// Somebody is off. Take their rooms back and deal them round whoever is left,
+// rather than making the office move them one at a time — which is the moment the
+// plan gets abandoned and the morning is improvised instead.
+function sharePersonsRoomsOut(day, personId) {
+  const plan = getPlan(day);
+  const theirs = Object.keys(plan).filter((k) => plan[k].kind === 'unit' && plan[k].assignedTo === personId);
+  if (!theirs.length) return { moved: 0, stranded: 0 };
+  theirs.forEach((k) => { plan[k].assignedTo = null; });
+  const dealt = assignNewPlanJobs(day, theirs, personId);
+  save();
+  return { moved: dealt, stranded: theirs.length - dealt };
 }
 
 function getPlan(day) { if (!state.plans) state.plans = {}; if (!state.plans[day]) state.plans[day] = {}; return state.plans[day]; }
@@ -3567,33 +3591,63 @@ function viewPlan() {
       const list = byWho[id].slice().sort((x, y) =>
         String(x.label).localeCompare(String(y.label), undefined, { numeric: true }));
       const none = !id;
-      const name = none ? 'Not handed out' : ((staffById[id] || {}).name || id);
-      const grp = el(`<div style="padding:8px 0;border-top:1px solid #e7ecf3"></div>`);
-      grp.appendChild(el(`<div style="font-size:13px;font-weight:800;color:${none ? '#b45309' : '#0f1a27'};margin-bottom:5px">`
-        + `${esc(name)} <span style="font-weight:600;color:#5f7189">· ${list.length}</span></div>`));
-      const chips = el('<div style="display:flex;flex-wrap:wrap;gap:5px"></div>');
+      const p = staffById[id];
+      const name = none ? 'Not handed out' : ((p || {}).name || id);
+      // Same card as the roll call's clocked-in cleaners: name, a line under it,
+      // then the rooms as chips. That block is the one the office reads fastest.
+      const card = el('<div class="person" style="flex-direction:column;align-items:stretch;gap:8px"></div>');
+      const info = el('<div class="person-info"></div>');
+      const lead = (p && p.isLeader) ? ` <span style="color:#d97706;font-size:12px;font-weight:700">★</span>` : '';
+      const nameRow = el(`<div style="display:flex;align-items:center;gap:8px"></div>`);
+      nameRow.appendChild(el(`<div class="person-name" style="flex:1">${esc(name)}${lead}</div>`));
+      // The sick-day button. Without it, moving five rooms means five taps and the
+      // plan gets abandoned in favour of improvising the morning.
+      if (!none) {
+        const off = el(`<button class="su-rm" style="flex:0 0 auto">Off — share out</button>`);
+        off.onclick = () => showConfirm(
+          name.split(' ')[0] + ' is off?',
+          `Their ${list.length} room${list.length === 1 ? '' : 's'} go back and are dealt round whoever else is `
+            + `on that day, evenly. Anything nobody is cleared for is left unhanded so you can see it.`,
+          () => {
+            const r = sharePersonsRoomsOut(day, id);
+            hikSyncMsg = r.stranded
+              ? { err: true, text: 'Shared out ' + r.moved + ' — ' + r.stranded + ' left for you to place.' }
+              : { text: 'Shared ' + r.moved + ' room' + (r.moved === 1 ? '' : 's') + ' round the rest.' };
+            render();
+          },
+          'Share them out', 'safe');
+        nameRow.appendChild(off);
+      }
+      info.appendChild(nameRow);
+      info.appendChild(el(`<div class="person-floors" style="color:${none ? '#b45309' : '#15803d'};font-weight:600">`
+        + (none ? `${list.length} still to hand out` : `${list.length} room${list.length === 1 ? '' : 's'}`)
+        + `</div>`));
+      card.appendChild(info);
+      const chips = el('<div style="display:flex;flex-wrap:wrap;gap:6px"></div>');
       list.forEach((j) => {
         const short = String(j.label).replace(/^Unit\s+/, '');
-        const c = el(`<button class="freqmini" style="flex:0 0 auto;padding:6px 10px;font-size:13px`
+        const c = el(`<button class="freqmini${none ? '' : ' on'}" style="flex:0 0 auto;padding:6px 11px`
           + (none ? ';border-color:#b45309;color:#b45309' : '') + `">${esc(short)}</button>`);
         c.onclick = () => { _planPick = { day, key: j.key }; render(); };
         chips.appendChild(c);
       });
-      grp.appendChild(chips);
-      box.appendChild(grp);
+      card.appendChild(chips);
+      box.appendChild(card);
     });
     if (areas.length) {
-      const grp = el(`<div style="padding:8px 0;border-top:1px solid #e7ecf3"></div>`);
-      grp.appendChild(el(`<div style="font-size:13px;font-weight:800;color:#0f1a27;margin-bottom:5px">`
-        + `Communal <span style="font-weight:600;color:#5f7189">· ${areas.length}</span></div>`));
-      const chips = el('<div style="display:flex;flex-wrap:wrap;gap:5px"></div>');
+      const card = el('<div class="person" style="flex-direction:column;align-items:stretch;gap:8px"></div>');
+      const info = el('<div class="person-info"></div>');
+      info.appendChild(el(`<div class="person-name">Communal areas</div>`));
+      info.appendChild(el(`<div class="person-floors">${areas.length} on this day</div>`));
+      card.appendChild(info);
+      const chips = el('<div style="display:flex;flex-wrap:wrap;gap:6px"></div>');
       areas.forEach((j) => {
-        const c = el(`<button class="freqmini" style="flex:0 0 auto;padding:6px 10px;font-size:13px">${esc(j.label)}</button>`);
+        const c = el(`<button class="freqmini" style="flex:0 0 auto;padding:6px 11px;background:#15803d;border-color:#15803d;color:#ffffff">${esc(j.label)}</button>`);
         c.onclick = () => { _planPick = { day, key: j.key }; render(); };
         chips.appendChild(c);
       });
-      grp.appendChild(chips);
-      box.appendChild(grp);
+      card.appendChild(chips);
+      box.appendChild(card);
     }
     wrap.appendChild(box);
 
