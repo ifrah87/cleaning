@@ -1542,6 +1542,44 @@ function serve() {
   check('it records what it did, so the change is not invisible',
     !!autoLvl.note && autoLvl.note.moves > 0, 'nothing recorded: ' + JSON.stringify(autoLvl.note));
 
+  // ------------------------------------------- LAST NIGHT'S PLAN, NEXT MORNING
+  // The morning the planned day arrives, the plan has to be ON the board — not one
+  // tab away waiting for somebody to press something.
+  console.log('\n\x1b[1mTHE PLANNED DAY ARRIVES — it is already on the board\x1b[0m');
+  const arrives = await page.evaluate(() => {
+    state.rollCallTypes = null;
+    const d = todayKey();
+    const crew = cleaningStaff();
+    const rooms = state.servicedUnits.filter((u) => onRollCall(u)).slice(0, 3);
+    // Last night somebody planned today. Nothing is on the board yet.
+    state.plans[d] = {};
+    rooms.forEach((u, i) => {
+      u.assignedTo = null; delete state.assignConfirmed[u.id];
+      state.plans[d][planKey('unit', u.id)] =
+        { kind: 'unit', refId: u.id, label: 'Unit ' + u.unit, assignedTo: crew[i % crew.length].id, auto: true };
+    });
+    // One of them the office has already given to somebody else this morning.
+    const touched = rooms[0];
+    const other = crew[crew.length - 1];
+    touched.assignedTo = other.id;
+
+    const moved = carryPlanToBoardOnOpen();
+    return {
+      moved,
+      onBoard: rooms.filter((u) => u.assignedTo).length,
+      total: rooms.length,
+      matchesPlan: rooms.slice(1).every((u) =>
+        u.assignedTo === state.plans[d][planKey('unit', u.id)].assignedTo),
+      signedOff: rooms.slice(1).every((u) => state.assignConfirmed[u.id] === d),
+      touchedKept: touched.assignedTo === other.id,
+    };
+  });
+  eq('opening the app puts the whole plan on the board', arrives.onBoard, arrives.total);
+  check('with each room going to the person it was planned for', arrives.matchesPlan, 'the board does not match the plan');
+  check('and counting as signed off, not as a fresh suggestion', arrives.signedOff, 'not marked as checked');
+  check('but a room already changed on the board that morning is left alone',
+    arrives.touchedKept, 'the plan overwrote a hand-out made on the board');
+
   // -------------------------------------------------------- SOMEBODY IS OFF
   // The plan is only worth having if it survives somebody phoning in sick.
   console.log('\n\x1b[1mSOMEBODY IS OFF — the day is dealt round the rest\x1b[0m');

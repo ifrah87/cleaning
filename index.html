@@ -3631,7 +3631,7 @@ function setPlanAssignee(day, k, pid) {
 // the plan lived in state.plans and the roll call read the room's own assignedTo,
 // so planning today changed nothing the crew could see. Anything set on today's
 // plan is written straight onto the room (or area) the roll call reads.
-function mirrorPlanToBoard(day, key) {
+function mirrorPlanToBoard(day, key, keepBoard) {
   if (day !== todayKey() && day !== workToday()) return;
   const plan = getPlan(day);
   const keys = key ? [key] : Object.keys(plan);
@@ -3641,15 +3641,33 @@ function mirrorPlanToBoard(day, key) {
     if (j.kind === 'unit') {
       const u = (state.servicedUnits || []).find((x) => x.id === j.refId);
       if (!u) return;
+      if (keepBoard && u.assignedTo) return;   // the board was changed since; it wins
       u.assignedTo = j.assignedTo || null;
       // Handing a room out on purpose is the sign-off, exactly as it is on the board.
       if (j.assignedTo) state.assignConfirmed[u.id] = todayKey();
       else delete state.assignConfirmed[u.id];
     } else {
       const a = areasInterior().find((x) => x.id === j.refId);
-      if (a) a.assignedTo = j.assignedTo || null;
+      if (!a || (keepBoard && a.assignedTo)) return;
+      a.assignedTo = j.assignedTo || null;
     }
   });
+}
+
+// The morning the planned day arrives. A plan made last night for today only
+// reached the board if somebody edited it again, or if the automatic hand-out
+// happened to run — which needs badge-ins and only fires once. So the crew could
+// open the app to an empty board and a plan sitting one tab away. This puts it on
+// the roll call as the app opens, without touching anything already handed out
+// there: a change made on the board is newer than the plan and wins.
+function carryPlanToBoardOnOpen() {
+  const day = todayKey();
+  if (!state.plans || !state.plans[day]) return 0;
+  const before = (state.servicedUnits || []).filter((u) => u.assignedTo).length;
+  mirrorPlanToBoard(day, null, true);
+  const after = (state.servicedUnits || []).filter((u) => u.assignedTo).length;
+  if (after !== before) save();
+  return after - before;
 }
 // Whether a planned job has actually been done, read from the same place the roll
 // call reads it, so a plan for today shows the morning's real progress.
@@ -5981,6 +5999,7 @@ async function boot() {
   // would lay out days it is about to move.
   autoLevelIfLopsided();
   ensureWeekPlanned();   // the week ahead is laid out and handed round without anyone asking
+  carryPlanToBoardOnOpen();   // and last night's plan for today is on the board already
   loadHikArrivals().then(() => { maybeAutoAssign(); route(); });
   startArrivalPolling();
   subscribeRealtime();
