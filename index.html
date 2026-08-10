@@ -3561,10 +3561,18 @@ function makeRoomDraggable(chipEl, day, key, label, isSpare) {
   };
   chipEl.addEventListener('pointerup', finish);
   chipEl.addEventListener('pointercancel', () => { cleanup(); chipEl.style.opacity = ''; render(); });
-  // A tap that never became a drag takes the room off that person, exactly as the
-  // roll call's chips do. A room already spare has nobody to take it off.
+  // On today, a tap ticks the job off — planning today and working today are the
+  // same thing, so the plan is where you record it done. On a day ahead there is
+  // nothing to tick yet, so a tap takes the room off that person, as the roll call's
+  // chips do. Either way the ✕/✓ on the chip says which it will be.
   chipEl.addEventListener('click', (e) => {
     if (moved) { e.preventDefault(); e.stopPropagation(); return; }
+    if (day === todayKey() || day === workToday()) {
+      const j = getPlan(day)[key];
+      if (!j) return;
+      if (j.kind === 'unit') toggleServicedDone(j.refId); else toggleAreaDone(j.refId);
+      return;
+    }
     if (isSpare) return;
     setPlanAssignee(day, key, '');
   });
@@ -3579,6 +3587,7 @@ function sharePersonsRoomsOut(day, personId) {
   if (!theirs.length) return { moved: 0, stranded: 0 };
   theirs.forEach((k) => { plan[k].assignedTo = null; });
   const dealt = assignNewPlanJobs(day, theirs, personId);
+  mirrorPlanToBoard(day);
   save();
   return { moved: dealt, stranded: theirs.length - dealt };
 }
@@ -3612,7 +3621,43 @@ function unmarkPlanDropped(day, k) {
   delete d[k];
   if (!Object.keys(d).length) delete state.planDropped[day];
 }
-function setPlanAssignee(day, k, pid) { const plan = getPlan(day); if (plan[k]) plan[k].assignedTo = pid || null; save(); render(); }
+function setPlanAssignee(day, k, pid) {
+  const plan = getPlan(day);
+  if (plan[k]) plan[k].assignedTo = pid || null;
+  mirrorPlanToBoard(day, k);
+  save(); render();
+}
+// Planning TODAY and the morning roll call are the same job. They were separate:
+// the plan lived in state.plans and the roll call read the room's own assignedTo,
+// so planning today changed nothing the crew could see. Anything set on today's
+// plan is written straight onto the room (or area) the roll call reads.
+function mirrorPlanToBoard(day, key) {
+  if (day !== todayKey() && day !== workToday()) return;
+  const plan = getPlan(day);
+  const keys = key ? [key] : Object.keys(plan);
+  keys.forEach((k) => {
+    const j = plan[k];
+    if (!j) return;
+    if (j.kind === 'unit') {
+      const u = (state.servicedUnits || []).find((x) => x.id === j.refId);
+      if (!u) return;
+      u.assignedTo = j.assignedTo || null;
+      // Handing a room out on purpose is the sign-off, exactly as it is on the board.
+      if (j.assignedTo) state.assignConfirmed[u.id] = todayKey();
+      else delete state.assignConfirmed[u.id];
+    } else {
+      const a = areasInterior().find((x) => x.id === j.refId);
+      if (a) a.assignedTo = j.assignedTo || null;
+    }
+  });
+}
+// Whether a planned job has actually been done, read from the same place the roll
+// call reads it, so a plan for today shows the morning's real progress.
+function planJobDone(j) {
+  if (j.kind === 'unit') return servicedDone(j.refId);
+  const a = areasInterior().find((x) => x.id === j.refId);
+  return a ? areaDone(a) : false;
+}
 function clearPlanDay(day) { showConfirm('Clear this day’s plan?', 'Removes every planned job for ' + day + '.', () => { if (state.plans) delete state.plans[day]; save(); render(); }); }
 // Auto-spread the planned jobs evenly across whoever's clocked in.
 function autoAssignPlan(day) {
@@ -3660,6 +3705,7 @@ function viewPlan() {
     const plan = getPlan(day);
     const loose = Object.keys(plan).filter((k) => plan[k].kind === 'unit' && !plan[k].assignedTo);
     if (loose.length && !isToday) assignNewPlanJobs(day, loose);
+    mirrorPlanToBoard(day);
     save();
     const rooms = Object.values(plan).filter((v) => v.kind === 'unit');
     hikSyncMsg = { text: rooms.length + ' room' + (rooms.length === 1 ? '' : 's') + ' on this day, '
@@ -3733,20 +3779,33 @@ function viewPlan() {
         nameRow.appendChild(off);
       }
       info.appendChild(nameRow);
-      info.appendChild(el(`<div class="person-floors" style="color:${none ? '#b45309' : '#15803d'};font-weight:600">`
-        + (none ? `${list.length} still to hand out`
-          : `${nRooms} room${nRooms === 1 ? '' : 's'}${nAreas ? ` · ${nAreas} area${nAreas === 1 ? '' : 's'}` : ''}`)
-        + `</div>`));
+      // On today, what the door reader saw — the same line the roll call shows, so
+      // you can tell at a glance who is actually in before moving work around.
+      const arr = (isToday && id) ? hikArrivals[id] : null;
+      const badged = arr
+        ? (arr.out ? `✓ In ${esc(arr.time)} <span style="color:#5b6a7f">·</span> Out ${esc(arr.out)}`
+                   : `✓ In ${esc(arr.time)} <span style="color:#5b6a7f">· still in</span>`)
+        : null;
+      const doneN = list.filter((j) => isToday && planJobDone(j)).length;
+      const counts = none ? `${list.length} still to hand out`
+        : `${nRooms} room${nRooms === 1 ? '' : 's'}${nAreas ? ` · ${nAreas} area${nAreas === 1 ? '' : 's'}` : ''}`
+          + (doneN ? ` · ${doneN} done` : '');
+      if (badged) info.appendChild(el(`<div class="person-floors" style="color:#15803d;font-weight:600">${badged}</div>`));
+      else if (isToday && id && !badged) info.appendChild(el(`<div class="person-floors" style="color:#b45309;font-weight:600">Not badged in yet</div>`));
+      info.appendChild(el(`<div class="person-floors" style="color:${none ? '#b45309' : '#5f7189'};font-weight:600">${counts}</div>`));
       card.appendChild(info);
       const chips = el('<div style="display:flex;flex-wrap:wrap;gap:6px"></div>');
       list.forEach((j) => {
         const short = String(j.label).replace(/^Unit\s+/, '');
         const isArea = j.kind !== 'unit';
+        const done = isToday && planJobDone(j);
         // Exactly the roll call's chip: the room, and an ✕ that takes it off them.
         // A walk of the building is green so it reads differently from a number.
-        const style = none ? ';border-color:#b45309;color:#b45309'
+        const style = done ? ';background:#eef7f0;border-color:#15803d;color:#15803d;opacity:0.75'
+          : none ? ';border-color:#b45309;color:#b45309'
           : isArea ? ';background:#15803d;border-color:#15803d;color:#ffffff' : '';
-        const c = el(`<button class="freqmini${none || isArea ? '' : ' on'}" style="flex:0 0 auto;padding:6px 11px;touch-action:none${style}">${esc(short)}${none ? '' : ' ✕'}</button>`);
+        const mark = done ? ' ✓' : (none ? '' : ' ✕');
+        const c = el(`<button class="freqmini${none || isArea || done ? '' : ' on'}" style="flex:0 0 auto;padding:6px 11px;touch-action:none${style}">${esc(short)}${mark}</button>`);
         makeRoomDraggable(c, day, j.key, j.label, none);
         chips.appendChild(c);
       });
