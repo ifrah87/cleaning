@@ -3763,8 +3763,13 @@ function viewPlan() {
     });
     const box = el('<div style="margin-top:6px"></div>');
     order.forEach((id) => {
+      // Order is the instruction: the rooms a customer asked for first thing come
+      // first, so the list can be read top to bottom and worked in that order.
+      const slotOf = (j) => j.kind === 'unit'
+        ? timeSlot((state.servicedUnits || []).find((u) => u.id === j.refId)) : 'any';
+      const rank = (j) => slotOf(j) === 'early' ? 0 : j.kind === 'unit' ? 1 : 3;   // early, rooms, walks
       const list = byWho[id].slice().sort((x, y) =>
-        ((x.kind === 'unit' ? 0 : 1) - (y.kind === 'unit' ? 0 : 1))     // rooms first, then walks
+        (rank(x) - rank(y))
         || String(x.label).localeCompare(String(y.label), undefined, { numeric: true }));
       const nRooms = list.filter((j) => j.kind === 'unit').length;
       const nAreas = list.length - nRooms;
@@ -3805,8 +3810,11 @@ function viewPlan() {
                    : `✓ In ${esc(arr.time)} <span style="color:#5b6a7f">· still in</span>`)
         : null;
       const doneN = list.filter((j) => isToday && planJobDone(j)).length;
+      const earlyN = list.filter((j) => j.kind === 'unit'
+        && timeSlot((state.servicedUnits || []).find((u) => u.id === j.refId)) === 'early').length;
       const counts = none ? `${list.length} still to hand out`
         : `${nRooms} room${nRooms === 1 ? '' : 's'}${nAreas ? ` · ${nAreas} area${nAreas === 1 ? '' : 's'}` : ''}`
+          + (earlyN ? ` · <span style="color:#b91c1c">${earlyN} early</span>` : '')
           + (doneN ? ` · ${doneN} done` : '');
       if (badged) info.appendChild(el(`<div class="person-floors" style="color:#15803d;font-weight:600">${badged}</div>`));
       else if (isToday && id && !badged) info.appendChild(el(`<div class="person-floors" style="color:#b45309;font-weight:600">Not badged in yet</div>`));
@@ -3817,13 +3825,19 @@ function viewPlan() {
         const short = String(j.label).replace(/^Unit\s+/, '');
         const isArea = j.kind !== 'unit';
         const done = isToday && planJobDone(j);
+        // A room the customer asked for first thing. Called out wherever it is
+        // listed, so an uneven early round is visible rather than something you
+        // work out by reading every chip.
+        const early = j.kind === 'unit'
+          && timeSlot((state.servicedUnits || []).find((u) => u.id === j.refId)) === 'early';
         // Exactly the roll call's chip: the room, and an ✕ that takes it off them.
         // A walk of the building is green so it reads differently from a number.
         const style = done ? ';background:#eef7f0;border-color:#15803d;color:#15803d;opacity:0.75'
+          : early ? ';background:#fee2e2;border-color:#dc2626;color:#b91c1c;font-weight:800'
           : none ? ';border-color:#b45309;color:#b45309'
           : isArea ? ';background:#15803d;border-color:#15803d;color:#ffffff' : '';
         const mark = done ? ' ✓' : (none ? '' : ' ✕');
-        const c = el(`<button class="freqmini${none || isArea || done ? '' : ' on'}" style="flex:0 0 auto;padding:6px 11px;touch-action:none${style}">${esc(short)}${mark}</button>`);
+        const c = el(`<button class="freqmini${none || isArea || done || early ? '' : ' on'}" style="flex:0 0 auto;padding:6px 11px;touch-action:none${style}">${early ? '🌅 ' : ''}${esc(short)}${mark}</button>`);
         makeRoomDraggable(c, day, j.key, j.label, none);
         chips.appendChild(c);
       });

@@ -1649,14 +1649,14 @@ function serve() {
 
   // Editing is the roll call's: tap a chip to take the room off somebody, and use
   // the per-person dropdown to give them one.
-  const roomChip = page.locator('.freqmini', { hasText: /^\d+ ✕$/ }).first();
+  const roomChip = page.locator('.freqmini', { hasText: /\d+ ✕$/ }).first();
   check('rooms are chips with an ✕, as on the roll call', await roomChip.count() > 0, 'no room chips found');
   const chipInfo = await page.evaluate(() => {
     const d = tomorrowKey(); const plan = state.plans[d];
     const k = Object.keys(plan).find((x) => plan[x].kind === 'unit' && plan[x].assignedTo);
     return { k, who: plan[k].assignedTo, label: String(plan[k].label).replace(/^Unit\s+/, '') };
   });
-  await page.locator('.freqmini', { hasText: new RegExp('^' + chipInfo.label + ' ✕$') }).first().click();
+  await page.locator('.freqmini', { hasText: new RegExp('(^|\\s)' + chipInfo.label + ' ✕$') }).first().click();
   await page.waitForTimeout(350);
   eq('tapping one takes the room off them',
     await page.evaluate((k) => state.plans[tomorrowKey()][k].assignedTo || '', chipInfo.k), '');
@@ -1684,7 +1684,7 @@ function serve() {
   check('there are two cleaners to drag a room between', !!dragSetup, 'not enough crew on that day');
   if (dragSetup) {
     const short = String(dragSetup.label).replace(/^Unit\s+/, '');
-    const chip = page.locator('.freqmini', { hasText: new RegExp('^' + short + ' ✕$') }).first();
+    const chip = page.locator('.freqmini', { hasText: new RegExp('(^|\\s)' + short + ' ✕$') }).first();
     const target = page.locator(`[data-plan-target="${dragSetup.to}"]`).first();
     const cb = await chip.boundingBox(), tb = await target.boundingBox();
     check('the room and the person it moves to are both on screen', !!cb && !!tb, 'could not locate both');
