@@ -3836,6 +3836,27 @@ function viewPlan() {
     });
     wrap.appendChild(box);
 
+    // Closing out the plan you made last night. Ticking fourteen rooms one at a time
+    // is the same tap-per-job the roll call's close-out exists to avoid, and this is
+    // the screen the plan was made on — so it closes here too, over exactly the jobs
+    // that were planned rather than everything the roll call happens to think is due.
+    if (isToday) {
+      const openRooms = rooms.filter((j) => !planJobDone(j))
+        .map((j) => (state.servicedUnits || []).find((u) => u.id === j.refId)).filter(Boolean);
+      const openAreas = areas.filter((j) => !planJobDone(j))
+        .map((j) => areasInterior().find((a) => a.id === j.refId)).filter(Boolean);
+      const openTotal = openRooms.length + openAreas.length;
+      if (openTotal) {
+        const allBtn = el(`<button class="add-btn" style="background:#15803d;color:#ffffff;margin-top:10px">`
+          + `✓ Mark all ${openTotal} as cleaned</button>`);
+        allBtn.onclick = () => confirmBulkMarkDone(openRooms, openAreas, "today's plan");
+        wrap.appendChild(allBtn);
+      } else if (jobs.length) {
+        wrap.appendChild(el(`<div class="section-label" style="color:#15803d;margin-top:10px">`
+          + `All ${jobs.length} planned job${jobs.length === 1 ? '' : 's'} are done.</div>`));
+      }
+    }
+
     // One auto-assign, which reads the right thing for the day it is on. Today the
     // door reader decides who is in; on a day that has not happened nobody has
     // badged in at all, and the old button simply failed with "no one clocked in".
