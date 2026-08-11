@@ -2477,6 +2477,30 @@ function plannedRoomsToday() {
   const rooms = jobs.filter((j) => j.kind === 'unit').map((j) => byId[j.refId])
     .filter((u) => u && onRollCall(u) && !u.paused);
   const areas = jobs.filter((j) => j.kind !== 'unit').map((j) => areasById[j.refId]).filter(Boolean);
+
+  // WORK THAT WAS MISSED. A day ahead is planned from a projection that assumes
+  // each day gets done — which is how it stops every-other-day rooms landing on all
+  // seven days. But somebody does not come in, their rooms are not cleaned, and
+  // tomorrow's plan was drawn up believing they were. Now that the plan IS the
+  // board, such a room would simply disappear rather than be carried forward.
+  // Anything planned on an earlier day and never done is added to today.
+  const seen = new Set(rooms.map((u) => u.id));
+  const seenA = new Set(areas.map((a) => a.id));
+  Object.keys(state.plans || {}).forEach((d) => {
+    if (d >= day) return;                       // only days already gone
+    Object.values(state.plans[d]).forEach((j) => {
+      if (j.kind === 'unit') {
+        const u = byId[j.refId];
+        if (!u || seen.has(u.id) || !onRollCall(u) || u.paused) return;
+        if (String(lastCleanDate(u) || '') >= d) return;   // it did get done, on the day or since
+        seen.add(u.id); rooms.push(u);
+      } else {
+        const a = areasById[j.refId];
+        if (!a || seenA.has(a.id) || areaDone(a)) return;
+        seenA.add(a.id); areas.push(a);
+      }
+    });
+  });
   return (rooms.length || areas.length) ? { rooms, areas } : null;
 }
 // Today's rooms, planned or derived — the one answer both the panel and the

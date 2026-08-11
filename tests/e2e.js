@@ -1615,6 +1615,35 @@ function serve() {
     JSON.stringify(oneList.outstanding));
   eq('with no plan, the schedule decides as before', oneList.fallback, oneList.derived);
 
+  // Work nobody got to does not stop needing doing. A day ahead is planned from a
+  // projection that assumes each day gets done, so yesterday's misses are not in
+  // today's plan — and now that the plan IS the board, they would vanish.
+  const missed = await page.evaluate(() => {
+    state.rollCallTypes = null;
+    const d = todayKey(), y = shiftDay(d, -1);
+    const all = state.servicedUnits.filter((u) => onRollCall(u));
+    const skipped = all[0], donePast = all[1], planned = all[2];
+    all.forEach((u) => { delete u.holdUntil; delete lastCleanedByUnit[u.id]; });
+    skipped.lastCleaned = shiftDay(d, -9);        // planned yesterday, never done
+    donePast.lastCleaned = y;                     // planned yesterday and done
+    state.plans[y] = {
+      [planKey('unit', skipped.id)]: { kind: 'unit', refId: skipped.id, label: 'Unit ' + skipped.unit },
+      [planKey('unit', donePast.id)]: { kind: 'unit', refId: donePast.id, label: 'Unit ' + donePast.unit },
+    };
+    state.plans[d] = {
+      [planKey('unit', planned.id)]: { kind: 'unit', refId: planned.id, label: 'Unit ' + planned.unit },
+    };
+    const ids = todaysRoomList().map((u) => u.id);
+    delete state.plans[y]; delete state.plans[d];
+    return { ids, skipped: skipped.id, donePast: donePast.id, planned: planned.id };
+  });
+  check("today still shows what today's plan asked for", missed.ids.includes(missed.planned),
+    JSON.stringify(missed.ids));
+  check('a room planned yesterday and never done is carried onto today',
+    missed.ids.includes(missed.skipped), 'the missed room vanished: ' + JSON.stringify(missed.ids));
+  check('one that did get done yesterday is not dragged back',
+    !missed.ids.includes(missed.donePast), 'a finished room came back: ' + JSON.stringify(missed.ids));
+
   // -------------------------------------------------------- SOMEBODY IS OFF
   // The plan is only worth having if it survives somebody phoning in sick.
   console.log('\n\x1b[1mSOMEBODY IS OFF — the day is dealt round the rest\x1b[0m');
