@@ -1671,38 +1671,35 @@ function serve() {
   eq('and it gives the room back to them',
     await page.evaluate((k) => state.plans[tomorrowKey()][k].assignedTo, chipInfo.k), chipInfo.who);
 
-  // HOLD AND DRAG. Tapping is fine for one room; shuffling a morning around is
-  // faster with a thumb. The hold is what tells a drag from a tap.
-  const dragSetup = await page.evaluate(() => {
+  // HOLD TO MOVE. Dragging a room onto somebody meant aiming with a thumb at a
+  // target underneath your own hand, on a list that scrolls. Same gesture, but it
+  // opens a list of names.
+  const moveSetup = await page.evaluate(() => {
     const d = tomorrowKey();
     const plan = state.plans[d];
     const k = Object.keys(plan).find((x) => plan[x].kind === 'unit' && plan[x].assignedTo);
     const from = plan[k].assignedTo;
     const to = cleaningStaff().find((p) => p.id !== from && worksOnDay(p, d));
-    return k && to ? { k, from, to: to.id, toName: to.name, label: plan[k].label } : null;
+    return k && to ? { k, from, to: to.id, toName: to.name,
+                       label: String(plan[k].label).replace(/^Unit\s+/, '') } : null;
   });
-  check('there are two cleaners to drag a room between', !!dragSetup, 'not enough crew on that day');
-  if (dragSetup) {
-    const short = String(dragSetup.label).replace(/^Unit\s+/, '');
-    const chip = page.locator('.freqmini', { hasText: new RegExp('(^|\\s)' + short + ' ✕$') }).first();
-    const target = page.locator(`[data-plan-target="${dragSetup.to}"]`).first();
-    const cb = await chip.boundingBox(), tb = await target.boundingBox();
-    check('the room and the person it moves to are both on screen', !!cb && !!tb, 'could not locate both');
-    if (cb && tb) {
-      await page.mouse.move(cb.x + cb.width / 2, cb.y + cb.height / 2);
-      await page.mouse.down();
-      await page.waitForTimeout(450);                    // hold past the threshold
-      check('holding lifts the room off the page', (await page.locator('.drag-ghost').count()) > 0,
-        'no drag ghost appeared');
-      await page.mouse.move(tb.x + tb.width / 2, tb.y + 20, { steps: 8 });
-      check('the person under it lights up as the drop', (await page.locator('.drop-live').count()) > 0,
-        'no drop target highlighted');
-      await page.mouse.up();
-      await page.waitForTimeout(400);
-      eq('letting go moves the room to them',
-        await page.evaluate((k) => state.plans[tomorrowKey()][k].assignedTo, dragSetup.k), dragSetup.to);
-      eq('and the ghost is gone', await page.locator('.drag-ghost').count(), 0);
-    }
+  check('there are two cleaners to move a room between', !!moveSetup, 'not enough crew on that day');
+  if (moveSetup) {
+    const chip = page.locator('.freqmini', { hasText: new RegExp('(^|\\s)' + moveSetup.label + ' ✕$') }).first();
+    const bb = await chip.boundingBox();
+    await page.mouse.move(bb.x + bb.width / 2, bb.y + bb.height / 2);
+    await page.mouse.down();
+    await page.waitForTimeout(450);                     // hold past the threshold
+    await page.mouse.up();
+    await page.waitForTimeout(300);
+    check('holding a room asks who should have it', (await page.locator('.modal-title').count()) > 0,
+      'no move sheet opened');
+    contains('and the sheet names the room', await page.locator('.modal-title').textContent(), moveSetup.label);
+    await page.locator('.cover-pick', { hasText: moveSetup.toName }).first().click();
+    await page.waitForTimeout(300);
+    eq('picking somebody moves the room to them',
+      await page.evaluate((k) => state.plans[tomorrowKey()][k].assignedTo, moveSetup.k), moveSetup.to);
+    eq('and the sheet closes', await page.locator('.modal-title').count(), 0);
   }
 
   // Show more brings the rest back without it living on the main screen.
