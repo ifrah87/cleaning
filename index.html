@@ -2458,7 +2458,42 @@ function toggleAreaDone(id) {
 // Everything still open on this morning's roll call, in the order the roll call
 // itself shows it. Airbnb and anything else switched off in Settings stays out —
 // onRollCall already excludes it, and it is a separate job with its own tab.
+// THE PLAN IS TODAY'S LIST.
+// The roll call used to work out its own rooms from each room's dates, while the
+// plan lived in state.plans — two derivations of the same morning, which is why a
+// day you planned last night turned up on the board with different rooms on it.
+// When a plan exists for today it IS the list; without one, the schedule decides
+// as it always did.
+function plannedRoomsToday() {
+  const day = todayKey();
+  const plan = (state.plans || {})[day];
+  if (!plan) return null;
+  const jobs = Object.values(plan);
+  if (!jobs.length) return null;
+  const byId = {};
+  (state.servicedUnits || []).forEach((u) => { byId[u.id] = u; });
+  const areasById = {};
+  areasInterior().forEach((a) => { areasById[a.id] = a; });
+  const rooms = jobs.filter((j) => j.kind === 'unit').map((j) => byId[j.refId])
+    .filter((u) => u && onRollCall(u) && !u.paused);
+  const areas = jobs.filter((j) => j.kind !== 'unit').map((j) => areasById[j.refId]).filter(Boolean);
+  return (rooms.length || areas.length) ? { rooms, areas } : null;
+}
+// Today's rooms, planned or derived — the one answer both the panel and the
+// close-out read, so they can no longer disagree.
+function todaysRoomList() {
+  const planned = plannedRoomsToday();
+  if (planned) return planned.rooms;
+  return (state.servicedUnits || []).filter((u) => onRollCall(u) && onTodaysList(u));
+}
 function rollCallOutstanding() {
+  const planned = plannedRoomsToday();
+  if (planned) {
+    return {
+      rooms: planned.rooms.filter((u) => !cleanedToday(u)),
+      areas: planned.areas.filter((a) => !areaDone(a)),
+    };
+  }
   const rooms = (state.servicedUnits || []).filter((u) => onRollCall(u) && onTodaysList(u) && !cleanedToday(u));
   return { rooms, areas: areasOutstanding() };
 }
@@ -4536,7 +4571,7 @@ function viewRollCall() {
   // call opens, instead of only finding out after tapping auto-assign.
   // Same order auto-assign uses: 🌅 early first, then ⭐ priority, then room number —
   // so what you see at the top is what gets handed out first.
-  const todaysRooms = (state.servicedUnits || []).filter((u) => onRollCall(u) && onTodaysList(u)).slice()
+  const todaysRooms = todaysRoomList().slice()
     .sort((a, b) => (slotRank(a) - slotRank(b))
       || (b.priority ? 1 : 0) - (a.priority ? 1 : 0)
       || String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }));

@@ -1580,6 +1580,41 @@ function serve() {
   check('but a room already changed on the board that morning is left alone',
     arrives.touchedKept, 'the plan overwrote a hand-out made on the board');
 
+  // ------------------------------------------ THE PLAN *IS* TODAY'S ROLL CALL
+  // The roll call used to work its own rooms out from each room's dates while the
+  // plan lived elsewhere — two answers to the same question, so a day planned last
+  // night turned up on the board with different rooms on it.
+  console.log('\n\x1b[1mONE LIST — the plan is what the roll call shows\x1b[0m');
+  const oneList = await page.evaluate(() => {
+    state.rollCallTypes = null;
+    const d = todayKey();
+    const all = state.servicedUnits.filter((u) => onRollCall(u));
+    // Make everything due today, then plan only two of them.
+    all.forEach((u) => { u.lastCleaned = null; delete lastCleanedByUnit[u.id]; delete u.holdUntil; });
+    const derived = all.filter((u) => onTodaysList(u)).length;
+    const picked = all.slice(0, 2);
+    state.plans[d] = {};
+    picked.forEach((u) => {
+      state.plans[d][planKey('unit', u.id)] = { kind: 'unit', refId: u.id, label: 'Unit ' + u.unit, auto: true };
+    });
+    const listed = todaysRoomList().map((u) => u.id);
+    const outstanding = rollCallOutstanding().rooms.map((u) => u.id);
+    // With the plan cleared away, the schedule decides again as it always did.
+    delete state.plans[d];
+    return { derived, planned: picked.map((u) => u.id), listed, outstanding,
+             fallback: todaysRoomList().length };
+  });
+  check('the schedule alone would put more rooms on today', oneList.derived > oneList.planned.length,
+    oneList.derived + ' due vs ' + oneList.planned.length + ' planned — nothing to tell apart');
+  eq('the roll call shows exactly what was planned, no more', oneList.listed.length, oneList.planned.length);
+  check('and they are the planned rooms', oneList.planned.every((id) => oneList.listed.includes(id)),
+    JSON.stringify(oneList.listed) + ' vs planned ' + JSON.stringify(oneList.planned));
+  check('the close-out covers the same rooms and no others',
+    oneList.outstanding.length === oneList.planned.length
+      && oneList.planned.every((id) => oneList.outstanding.includes(id)),
+    JSON.stringify(oneList.outstanding));
+  eq('with no plan, the schedule decides as before', oneList.fallback, oneList.derived);
+
   // -------------------------------------------------------- SOMEBODY IS OFF
   // The plan is only worth having if it survives somebody phoning in sick.
   console.log('\n\x1b[1mSOMEBODY IS OFF — the day is dealt round the rest\x1b[0m');
