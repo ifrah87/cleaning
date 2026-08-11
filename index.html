@@ -2510,6 +2510,14 @@ function todaysRoomList() {
   if (planned) return planned.rooms;
   return (state.servicedUnits || []).filter((u) => onRollCall(u) && onTodaysList(u));
 }
+// "Mark all 20 as cleaned" over fourteen rooms and six communal walks is a number
+// nobody can check against the screen. Say what the 20 is made of.
+function markAllLabel(nRooms, nAreas) {
+  const parts = [];
+  if (nRooms) parts.push(nRooms + ' room' + (nRooms === 1 ? '' : 's'));
+  if (nAreas) parts.push(nAreas + ' area' + (nAreas === 1 ? '' : 's'));
+  return '✓ Mark all ' + (parts.join(' + ') || '0') + ' as cleaned';
+}
 function rollCallOutstanding() {
   const planned = plannedRoomsToday();
   if (planned) {
@@ -3945,7 +3953,7 @@ function viewPlan() {
       const openTotal = openRooms.length + openAreas.length;
       if (openTotal) {
         const allBtn = el(`<button class="add-btn" style="background:#15803d;color:#ffffff;margin-top:10px">`
-          + `✓ Mark all ${openTotal} as cleaned</button>`);
+          + `${esc(markAllLabel(openRooms.length, openAreas.length))}</button>`);
         allBtn.onclick = () => confirmBulkMarkDone(openRooms, openAreas, "today's plan");
         wrap.appendChild(allBtn);
       } else if (jobs.length) {
@@ -4520,7 +4528,7 @@ function viewRollCall() {
     const openTotal = open.rooms.length + open.areas.length;
     if (openTotal) {
       const allBox = el('<div style="margin-bottom:18px"></div>');
-      const allBtn = el(`<button class="add-btn" style="background:#15803d;color:#ffffff">✓ Mark all ${openTotal} as cleaned</button>`);
+      const allBtn = el(`<button class="add-btn" style="background:#15803d;color:#ffffff">${esc(markAllLabel(open.rooms.length, open.areas.length))}</button>`);
       allBtn.onclick = () => markRollCallAllDone();
       allBox.appendChild(allBtn);
       allBox.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin-top:6px">`

@@ -1180,7 +1180,10 @@ function serve() {
   const allBtn = page.locator('button', { hasText: 'Mark all' }).first();
   check('the roll call offers a single mark-all button', await allBtn.count() > 0, 'no mark-all button on Roll Call');
   const allLabel = await allBtn.textContent();
-  const allTotal = Number((allLabel.match(/Mark all (\d+)/) || [])[1] || 0);
+  // The label spells the total out — "14 rooms + 6 areas" — so a number on a button
+  // can always be checked against what is on the screen.
+  const allTotal = (allLabel.match(/(\d+)\s+(?:room|area)/g) || [])
+    .reduce((n, part) => n + Number(part.match(/\d+/)[0]), 0);
   check('it says how many it will close out', allTotal > 0, 'label: ' + JSON.stringify(allLabel));
   // What is still open right now, straight from the app, so the assertion does not
   // depend on how earlier sections left the state.
