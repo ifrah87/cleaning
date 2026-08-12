@@ -1189,9 +1189,13 @@ function serve() {
   // depend on how earlier sections left the state.
   const before = await page.evaluate(() => {
     const o = rollCallOutstanding();
-    return { rooms: o.rooms.map((u) => u.unit), areas: o.areas.map((a) => a.label) };
+    // The close-out covers what somebody was actually given. A room nobody holds is
+    // left out on purpose, so it cannot be recorded as cleaned by nobody.
+    return { rooms: o.rooms.filter((u) => u.assignedTo).map((u) => u.unit),
+             areas: o.areas.map((a) => a.label),
+             loose: o.rooms.filter((u) => !u.assignedTo).length };
   });
-  eq('the count matches what is actually outstanding', allTotal, before.rooms.length + before.areas.length);
+  eq('the count matches what has actually been handed out', allTotal, before.rooms.length + before.areas.length);
   check('it covers the communal areas too, not just rooms', before.areas.length > 0, 'no areas were outstanding to prove this');
 
   const loggedBefore = logged.length;

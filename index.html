@@ -4524,11 +4524,21 @@ function viewRollCall() {
   // Today only: on a past day the rooms have long since been ticked or missed, and
   // a bulk tick there would silently backdate a whole morning.
   if ((selectedDay || todayKey()) === todayKey()) {
-    const open = rollCallOutstanding();
+    const all = rollCallOutstanding();
+    // Only close out what somebody was actually holding. Sweeping in rooms nobody
+    // was given records them as cleaned and credits them to "Office", which is how
+    // a room nobody did ends up in History as done — and it is why the number on
+    // the button never matched the number handed out.
+    // Rooms only. A communal walk is routinely done without a name against it, so
+    // excluding unnamed areas would quietly drop them from the close-out entirely.
+    const open = { rooms: all.rooms.filter((u) => u.assignedTo), areas: all.areas };
+    const loose = all.rooms.length - open.rooms.length;
     const openTotal = open.rooms.length + open.areas.length;
     if (openTotal) {
       const allBox = el('<div style="margin-bottom:18px"></div>');
       const allBtn = el(`<button class="add-btn" style="background:#15803d;color:#ffffff">${esc(markAllLabel(open.rooms.length, open.areas.length))}</button>`);
+      if (loose) allBox.appendChild(el(`<div style="font-size:11px;color:#b45309;font-weight:700;margin-top:4px">`
+        + `${loose} more nobody has been given — hand ${loose === 1 ? 'it' : 'them'} out, or tick ${loose === 1 ? 'it' : 'them'} one by one.</div>`));
       allBtn.onclick = () => markRollCallAllDone();
       allBox.appendChild(allBtn);
       allBox.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin-top:6px">`
@@ -5920,8 +5930,11 @@ function render() {
   }
   if (state.tab === 'rollcall') {
     const clockedIn = Object.keys(hikArrivals).length;
-    const assigned = (state.servicedUnits || []).filter((u) => u.assignedTo).length;
-    const totalRooms = (state.servicedUnits || []).length;
+    // Of TODAY's rooms, not of every room in the building. "14/33" invited you to
+    // reconcile the day against a number that has nothing to do with it.
+    const today = todaysRoomList();
+    const assigned = today.filter((u) => u.assignedTo).length;
+    const totalRooms = today.length;
     const strip = el(`<div class="stats"></div>`);
     strip.appendChild(el(`<div class="stat"><div class="lbl">CLOCKED IN</div><div class="val">${clockedIn}</div></div>`));
     strip.appendChild(el(`<div class="stat"><div class="lbl">ROOMS ASSIGNED</div><div class="val">${assigned}/${totalRooms}</div></div>`));
