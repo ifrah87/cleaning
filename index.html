@@ -249,6 +249,13 @@
   input[type="date"]::-webkit-calendar-picker-indicator { opacity: 0.55; cursor: pointer; }
   input[type="date"] { -webkit-appearance: none; appearance: none; }
 
+  /* Lists of rooms flow into columns as the window allows. One room per full-width
+     row is right on a phone and absurd on a desktop, where twenty-three of them
+     become a scroll through a column of mostly empty space. auto-fill means the
+     same markup is one column on a handset and five on the office monitor. */
+  .rc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 8px; }
+  .rc-grid > * { margin-bottom: 0 !important; }
+
   /* ---- TV board -----------------------------------------------------------
      Read from across the office, not from the hand. Everything is sized in vw/vh
      so the same file fills a 32" screen and a 65" one, and the 3vw/3vh padding
@@ -5012,6 +5019,7 @@ function viewRollCall() {
     // still needs a yes/no. "No" opens the picker so the room goes somewhere else.
     if (toCheck.length) {
       box.appendChild(el(`<div class="section-label" style="margin-top:16px;color:#b45309">⚠ Check these assignments (${toCheck.length})</div>`));
+      const grid = el('<div class="rc-grid"></div>');
       toCheck.forEach((u) => {
         const who = (state.staff || []).find((p) => p.id === u.assignedTo);
         const row = el('<div class="su-card" style="display:flex;align-items:center;gap:8px;padding:10px 12px;margin-bottom:8px"></div>');
@@ -5024,8 +5032,9 @@ function viewRollCall() {
         const no = el('<button class="freqmini" style="flex:0 0 auto;padding:9px 14px">✕ No</button>');
         no.onclick = () => openAssignPicker(u.id);
         row.appendChild(yes); row.appendChild(no);
-        box.appendChild(row);
+        grid.appendChild(row);
       });
+      box.appendChild(grid);
     } else if (okCount) {
       box.appendChild(el(`<div style="font-size:12px;color:#15803d;font-weight:700;margin-top:12px">✓ All ${okCount} assignment${okCount === 1 ? '' : 's'} confirmed</div>`));
     }
