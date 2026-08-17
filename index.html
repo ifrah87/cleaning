@@ -946,6 +946,13 @@ function load() {
 function save() {
   dedupeServicedUnits();   // never persist a duplicate room, no matter how it got created
   try { localStorage.setItem(STORE, JSON.stringify(state)); } catch (e) {}
+  // THE BOARD NEVER WRITES BACK. A display that sits open for days holds the
+  // stalest copy in the building, and the whole state travels as one blob, so a
+  // single push from the TV overwrites everything the crew and the office have done
+  // since it last looked. It keeps its own local copy so the screen stays right; it
+  // just never sends it. Nothing is lost — every figure on that board was saved by
+  // whichever device actually did the work.
+  if (TV_MODE) return;
   markDirty();
   remotePush();
 }
@@ -986,7 +993,7 @@ function remotePush() {
 
 // Send the current state to the server. Resolves true only when the row is written.
 async function pushNow() {
-  if (!db || _pushing) return false;
+  if (!db || _pushing || TV_MODE) return false;   // the board is a display, not a writer
   clearTimeout(_pushTimer);    // a pending debounce is now redundant
   clearTimeout(_retryTimer);
   _pushing = true;
@@ -1053,7 +1060,7 @@ function applyRemote(saved) {
   const serialized = JSON.stringify(saved);
   if (serialized === _lastRemoteJSON) return;   // this is our own write echoing back
   // Never discard a change this device has not delivered yet; send ours instead.
-  if (isDirty()) { pushNow(); return; }
+  if (isDirty() && !TV_MODE) { pushNow(); return; }   // the board has nothing of its own to send
   _lastRemoteJSON = serialized;
   const keepTab = state.tab;
   // A DAY THAT ONLY THIS DEVICE HAS SEEN SURVIVES THE PULL.
@@ -1077,12 +1084,12 @@ function applyRemote(saved) {
   state = { ...state, ...saved, tab: keepTab, pendingCover: null, editingUnit: null, editingArea: null, editingEmp: null };
   state.plans = mergedPlans;
   state.planSeeded = mergedSeeded;
-  if (rescued) markDirty();      // ours to deliver — the server has not got these yet
+  if (rescued && !TV_MODE) markDirty();   // ours to deliver — the server has not got these yet
   if (state.coverageDay !== todayKey()) { state.coverage = {}; state.unitCover = {}; state.pendingCover = null; state.coverageDay = todayKey(); }
   finalizeState();
   try { localStorage.setItem(STORE, JSON.stringify(state)); } catch (e) {}
   tvLastData = Date.now();   // the TV board dates itself off the last thing it heard
-  if (rescued) remotePush();  // get the rescued days up before anything overwrites them again
+  if (rescued && !TV_MODE) remotePush();  // get the rescued days up before anything overwrites them
   route();
 }
 
