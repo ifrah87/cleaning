@@ -1056,11 +1056,33 @@ function applyRemote(saved) {
   if (isDirty()) { pushNow(); return; }
   _lastRemoteJSON = serialized;
   const keepTab = state.tab;
+  // A DAY THAT ONLY THIS DEVICE HAS SEEN SURVIVES THE PULL.
+  // The whole state travels as one blob and the last writer wins, so a plan made
+  // here while the connection was down was being wiped by the next device to push —
+  // a TV or a phone whose copy had never contained it. The plan was correct, saved,
+  // and then deleted by somebody else's snapshot, which is why it never reached the
+  // roll call. Days the incoming copy has are still its business; days it has never
+  // heard of are kept and pushed back rather than dropped on the floor.
+  const localPlans = state.plans || {};
+  const mergedPlans = { ...(saved.plans || {}) };
+  let rescued = 0;
+  Object.keys(localPlans).forEach((d) => {
+    if (mergedPlans[d] || !Object.keys(localPlans[d] || {}).length) return;
+    mergedPlans[d] = localPlans[d]; rescued += 1;
+  });
+  const localSeeded = state.planSeeded || {};
+  const mergedSeeded = { ...(saved.planSeeded || {}) };
+  Object.keys(localSeeded).forEach((d) => { if (mergedPlans[d]) mergedSeeded[d] = mergedSeeded[d] || localSeeded[d]; });
+
   state = { ...state, ...saved, tab: keepTab, pendingCover: null, editingUnit: null, editingArea: null, editingEmp: null };
+  state.plans = mergedPlans;
+  state.planSeeded = mergedSeeded;
+  if (rescued) markDirty();      // ours to deliver — the server has not got these yet
   if (state.coverageDay !== todayKey()) { state.coverage = {}; state.unitCover = {}; state.pendingCover = null; state.coverageDay = todayKey(); }
   finalizeState();
   try { localStorage.setItem(STORE, JSON.stringify(state)); } catch (e) {}
   tvLastData = Date.now();   // the TV board dates itself off the last thing it heard
+  if (rescued) remotePush();  // get the rescued days up before anything overwrites them again
   route();
 }
 
