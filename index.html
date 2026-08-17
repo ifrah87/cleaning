@@ -1904,6 +1904,15 @@ async function saveBackdate() {
 // the office. Confirmation is stamped with the day so it expires on its own.
 let _assignPick = null;   // {unitId} while the "who should take this?" picker is open
 const assignConfirmedToday = (u) => (state.assignConfirmed || {})[u.id] === todayKey();
+// Taking the whole deal in one go. Checking a hand-out room by room is right when
+// you disagree with two of them and wrong as the default: twenty-three yes-taps is
+// not a review, it is a toll, and the point of dealing the rooms out automatically
+// was to stop the morning being a list of small confirmations.
+function confirmAllAssignments(ids) {
+  const day = todayKey();
+  (ids || []).forEach((id) => { state.assignConfirmed[id] = day; });
+  save(); render();
+}
 function confirmAssignment(id) {
   state.assignConfirmed[id] = todayKey();
   save(); render();
@@ -5018,9 +5027,24 @@ function viewRollCall() {
     // SIGN-OFF: auto-assign hands rooms out straight away, but every one it picked
     // still needs a yes/no. "No" opens the picker so the room goes somewhere else.
     if (toCheck.length) {
-      box.appendChild(el(`<div class="section-label" style="margin-top:16px;color:#b45309">⚠ Check these assignments (${toCheck.length})</div>`));
+      // One line and two buttons by default. The full list is a page of cards, and
+      // it was appearing every morning whether or not anything was actually wrong.
+      const hdr = el('<div style="display:flex;align-items:center;gap:8px;margin-top:16px;flex-wrap:wrap"></div>');
+      hdr.appendChild(el(`<div class="section-label" style="margin:0;flex:1;min-width:150px;color:#b45309">`
+        + `⚠ ${toCheck.length} assignment${toCheck.length === 1 ? '' : 's'} to check</div>`));
+      const yesAll = el('<button class="freqmini" style="flex:0 0 auto;padding:9px 14px;background:#15803d;border-color:#15803d;color:#ffffff">✓ Yes to all</button>');
+      yesAll.onclick = () => confirmAllAssignments(toCheck.map((u) => u.id));
+      hdr.appendChild(yesAll);
+      const toggle = el(`<button class="freqmini" style="flex:0 0 auto;padding:9px 12px">${state.checkExpanded ? 'Hide the list' : 'Go through them'}</button>`);
+      toggle.onclick = () => { state.checkExpanded = !state.checkExpanded; save(); render(); };
+      hdr.appendChild(toggle);
+      box.appendChild(hdr);
+      if (!state.checkExpanded) {
+        box.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin-top:4px">`
+          + `Dealt out automatically and even. Take the lot, or go through them to move any.</div>`));
+      }
       const grid = el('<div class="rc-grid"></div>');
-      toCheck.forEach((u) => {
+      if (state.checkExpanded) toCheck.forEach((u) => {
         const who = (state.staff || []).find((p) => p.id === u.assignedTo);
         const row = el('<div class="su-card" style="display:flex;align-items:center;gap:8px;padding:10px 12px;margin-bottom:8px"></div>');
         const info = el('<div style="flex:1;min-width:0"></div>');
@@ -5034,7 +5058,7 @@ function viewRollCall() {
         row.appendChild(yes); row.appendChild(no);
         grid.appendChild(row);
       });
-      box.appendChild(grid);
+      if (state.checkExpanded) box.appendChild(grid);
     } else if (okCount) {
       box.appendChild(el(`<div style="font-size:12px;color:#15803d;font-weight:700;margin-top:12px">✓ All ${okCount} assignment${okCount === 1 ? '' : 's'} confirmed</div>`));
     }
