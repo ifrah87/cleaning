@@ -248,6 +248,67 @@
   .drop-live { border-color: #0284c7 !important; background: #f0f9ff !important; }
   input[type="date"]::-webkit-calendar-picker-indicator { opacity: 0.55; cursor: pointer; }
   input[type="date"] { -webkit-appearance: none; appearance: none; }
+
+  /* ---- TV board -----------------------------------------------------------
+     Read from across the office, not from the hand. Everything is sized in vw/vh
+     so the same file fills a 32" screen and a 65" one, and the 3vw/3vh padding
+     keeps the edges clear of the overscan a TV crops off its own picture.
+     Dark ground: a white board on a screen left on all day is a lamp, and the
+     one thing an office TV must not be is tiring to glance at. */
+  body.tv { background: #0a1220; color: #eaf1fb; }
+  body.tv #app { min-height: 100vh; padding: 0; }
+  ::-webkit-scrollbar { display: none; }
+  .tv-wrap { min-height: 100vh; padding: 3vh 3vw; display: flex; flex-direction: column; gap: 2vh; }
+  .tv-top { display: flex; align-items: flex-end; justify-content: space-between; gap: 2vw; }
+  .tv-brand { font-size: 1.5vw; font-weight: 800; letter-spacing: 0.18em; color: #6f8ab0; }
+  .tv-date { font-size: 3vw; font-weight: 800; line-height: 1.05; }
+  .tv-clock { font-size: 5vw; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; }
+  .tv-stamp { font-size: 1.2vw; font-weight: 600; color: #6f8ab0; text-align: right; margin-top: 0.4vh; }
+  .tv-stale { color: #f59e0b; }
+
+  .tv-progress { display: flex; align-items: baseline; gap: 0.8vw; }
+  .tv-progress .n { font-size: 5vw; font-weight: 800; line-height: 1; color: #22c55e; }
+  .tv-progress .of { font-size: 2vw; font-weight: 700; color: #6f8ab0; }
+  .tv-bar { height: 1.1vh; border-radius: 1vh; background: #1b2942; overflow: hidden; }
+  .tv-bar > i { display: block; height: 100%; background: #22c55e; border-radius: 1vh; }
+
+  .tv-crew { display: flex; flex-wrap: wrap; gap: 0.7vw; }
+  .tv-chip {
+    font-size: 1.35vw; font-weight: 800; padding: 0.7vh 1.1vw; border-radius: 0.9vw;
+    background: #16233a; border: 0.18vw solid transparent; letter-spacing: 0.02em;
+  }
+  .tv-chip .st { font-size: 0.95vw; font-weight: 700; opacity: 0.85; margin-left: 0.5vw; }
+
+  .tv-cols { flex: 1; display: grid; gap: 1.2vw; grid-auto-rows: minmax(0, 1fr); }
+  .tv-col { background: #101c30; border-radius: 1vw; padding: 1.4vh 1vw; display: flex; flex-direction: column; gap: 1vh; min-width: 0; min-height: 0; }
+  .tv-col-hd { border-bottom: 0.15vw solid #1e2f4d; padding-bottom: 0.9vh; }
+  .tv-hd-row { display: flex; align-items: baseline; justify-content: space-between; gap: 0.6vw; }
+  .tv-who { font-size: 1.9vw; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .tv-count { font-size: 1.3vw; font-weight: 800; color: #6f8ab0; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .tv-sub { font-size: 1.05vw; font-weight: 800; letter-spacing: 0.06em; margin-top: 0.4vh; }
+  .tv-jobs { display: flex; flex-wrap: wrap; gap: 0.5vw; align-content: start; }
+  .tv-job {
+    font-size: 2vw; font-weight: 800; padding: 1vh 1.1vw; border-radius: 0.6vw;
+    background: #1c2b45; color: #dce8f8; border-left: 0.35vw solid #3d557f;
+  }
+  /* Urgency reads as colour, and the order on screen is the instruction:
+     early rooms red and at the front, done green, nobody-assigned amber. */
+  .tv-job.early { background: #4a1414; color: #ffd9d9; border-left-color: #ef4444; }
+  .tv-job.done  { background: #123020; color: #86efac; border-left-color: #22c55e; text-decoration: line-through; text-decoration-thickness: 0.15vw; opacity: 0.75; }
+  .tv-job.area  { background: #1a2438; color: #b7c8de; border-left-color: #64748b; font-weight: 700; }
+  /* Amber is the colour of work with no one behind it — whether it was never
+     handed out, or the person it was handed to is off sick. Same colour either
+     way, because from across the room they are the same problem. */
+  .tv-job.cover { background: #3d2c08; color: #fde68a; border-left-color: #f59e0b; }
+  .tv-col.none { background: #2b2008; }
+  .tv-col.none .tv-who, .tv-col.none .tv-count { color: #fbbf24; }
+  .tv-col.out { background: #241a06; }
+  .tv-col.out .tv-who { color: #fcd34d; }
+
+  .tv-empty { font-size: 1.4vw; font-weight: 700; color: #56698a; padding: 1vh 0; }
+  .tv-pager { display: flex; gap: 0.6vw; justify-content: center; }
+  .tv-dot { width: 0.8vw; height: 0.8vw; border-radius: 50%; background: #24344f; }
+  .tv-dot.on { background: #7ea6dc; }
 </style>
 </head>
 <body>
@@ -623,12 +684,15 @@ const heldBack = (u, day) => !!(u.holdUntil && String(day) < String(u.holdUntil)
 // Nothing is ever skipped to tidy the schedule. It lapses the moment it is done.
 const extraCleanDue = (u, day) => !!(u.alsoCleanOn && String(u.alsoCleanOn) === String(day)
   && String(lastCleanDate(u) || '') !== String(day));
+// "Is this due today?" is the same question the plan asks about a future day, so
+// it is answered in one place. It used to count days against the CALENDAR day
+// while everything else worked off the WORK day, and between midnight and the 3am
+// cutoff those are different dates: an every-other-day room cleaned on the 14th
+// read as due at 1am on the 16th, when the crew was still working the 15th. A
+// daily room is due every day either way, so the split only ever showed up on the
+// every-other-day rooms — as the app "forgetting" they had just been done.
 function unitDueToday(u) {
-  if (extraCleanDue(u, workToday())) return true;      // an extra clean beats everything
-  if (heldBack(u, workToday())) return false;
-  const base = lastCleanDate(u);
-  if (!base) return true;                       // never cleaned → due now
-  return daysSince(base) >= cycleLen(u);        // enough days have passed
+  return dueOnDay(u, workToday());
 }
 // Was this unit already cleaned today? Either ticked off in the app, or logged
 // as cleaned today from another phone (the shared history log wins across devices).
@@ -637,23 +701,67 @@ const cleanedToday = (u) => servicedDone(u.id) || lastCleanDate(u) === workToday
 // rooms stay on the list with a ✓ so the daily list doesn't shrink as work gets done.
 const onTodaysList = (u) => unitDueToday(u) || cleanedToday(u);
 // The date this unit is next due (null = due now).
-function nextDueDate(u) {
-  const base = lastCleanDate(u);
+// A room pinned to FIXED WEEKDAYS. Counting a gap from the last clean makes the
+// schedule drift: clean a Wednesday room on Thursday and every clean after it moves
+// too, so after a few missed or hand-done rooms nothing is on the day the office
+// thinks it is. Days are absolute — 305 is a Sat/Mon/Wed/Fri room, and missing Monday
+// does not move Wednesday. Rooms with no days set keep the old rolling cycle, so
+// nothing changes until a room is actually pinned.
+const DOW_LABEL = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+// Two letters, not one: S/S and T/T on a row of buttons are a coin toss.
+const DOW_SHORT = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+const DOW_PICK_ORDER = [6, 0, 1, 2, 3, 4, 5];   // the working week starts on Saturday here
+const dowOf = (day) => new Date(day + 'T00:00:00').getDay();
+const fixedDays = (u) => (u && Array.isArray(u.days) && u.days.length) ? u.days : null;
+function nextFixedDay(u, base) {
+  const days = fixedDays(u);
+  if (!days) return null;
+  for (let i = 1; i <= 14; i += 1) {           // two weeks is past any weekly pattern
+    const d = shiftDay(base, i);
+    if (days.indexOf(dowOf(d)) >= 0) return d;
+  }
+  return null;
+}
+// The next clean after `base`, whichever way this room is scheduled. One place, so
+// the projection and the roll call can't drift apart the way they did before.
+function nextDueFrom(u, base) {
   if (!base) return null;
+  if (fixedDays(u)) return nextFixedDay(u, base);
   const dt = new Date(base + 'T00:00:00');
   dt.setDate(dt.getDate() + cycleLen(u));
   return dt.toLocaleDateString('en-CA');
 }
+function nextDueDate(u) { return nextDueFrom(u, lastCleanDate(u)); }
 const FREQ_LABEL = { nightly: 'Nightly', daily: 'Daily', eod: 'Every other day', weekly: 'Weekly', monthly: 'Monthly' };
+// How this room is scheduled, in words, for anywhere that used to print the frequency.
+function schedLabel(u) {
+  const days = fixedDays(u);
+  if (!days) return FREQ_LABEL[u.freq] || 'Daily';
+  if (days.length === 7) return 'Every day';
+  return DOW_PICK_ORDER.filter((d) => days.indexOf(d) >= 0).map((d) => DOW_LABEL[d]).join(' ');
+}
 // "What needs doing tomorrow?" is "what's due today?" asked about a later date.
-// A room is due on `day` once its next-due date has arrived, and stays due after
-// that: work nobody got to doesn't stop needing doing.
-function dueOnDay(u, day) {
+// A room is due on `day` once its next-due date has arrived, and stays after that:
+// work nobody got to doesn't stop needing doing. `base` is the last clean to reckon
+// from — the room's real one normally, or a projected one when looking ahead.
+function dueOnDayFrom(u, day, base) {
   if (extraCleanDue(u, day)) return true;
   if (heldBack(u, day)) return false;
-  const base = lastCleanDate(u);
+  const days = fixedDays(u);
+  if (days) {
+    // A pinned room IS its days and nothing else. If it wasn't ticked, the schedule
+    // assumes it happened and moves to the next one, rather than carrying it forward
+    // and showing it every day until somebody clears it. That keeps the board equal
+    // to the rota — set the days once and stop thinking about it — at the price of a
+    // genuinely skipped room not announcing itself. The gap audit is where that shows.
+    return days.indexOf(dowOf(day)) >= 0;
+  }
   if (!base) return true;                  // never recorded → due now
-  return nextDueDate(u) <= day;
+  const nd = nextDueFrom(u, base);
+  return !!nd && nd <= day;
+}
+function dueOnDay(u, day) {
+  return dueOnDayFrom(u, day, lastCleanDate(u));
 }
 
 // The shape of the days ahead: how much work each upcoming day actually carries.
@@ -679,17 +787,11 @@ function projectDueDays(nDays) {
     const day = shiftDay(start, i);
     const due = [];
     units.forEach((u) => {
-      const base = proj[u.id];
-      let isDue;
-      if (extraCleanDue(u, day)) isDue = true;       // an extra clean put in to break up a clump
-      else if (heldBack(u, day)) isDue = false;      // deliberately held back
-      else if (!base) isDue = true;                  // never recorded → due straight away
-      else {
-        const dt = new Date(base + 'T00:00:00');
-        dt.setDate(dt.getDate() + cycleLen(u));
-        isDue = dt.toLocaleDateString('en-CA') <= day;
-      }
-      if (isDue) { due.push(u); proj[u.id] = day; }  // cleaned that day → next one a full cycle later
+      // Same predicate the roll call uses, reckoned from the projected last clean
+      // rather than the real one. It used to be a second copy of the rule here,
+      // which is how a fixed-weekday room would have been projected on a cycle.
+      if (!dueOnDayFrom(u, day, proj[u.id])) return;
+      due.push(u); proj[u.id] = day;                 // cleaned that day → next one a cycle later
     });
     out.push({ day, due });
   }
@@ -951,6 +1053,7 @@ function applyRemote(saved) {
   if (state.coverageDay !== todayKey()) { state.coverage = {}; state.unitCover = {}; state.pendingCover = null; state.coverageDay = todayKey(); }
   finalizeState();
   try { localStorage.setItem(STORE, JSON.stringify(state)); } catch (e) {}
+  tvLastData = Date.now();   // the TV board dates itself off the last thing it heard
   route();
 }
 
@@ -1364,6 +1467,23 @@ function removeServicedUnit(id) {
     save(); render();
   });
 }
+// Pin or unpin one weekday on a room. Clearing the last day hands the room back to
+// its frequency, so this is always reversible.
+function toggleUnitDay(id, dow) {
+  const u = (state.servicedUnits || []).find((x) => x.id === id);
+  if (!u) return;
+  const cur = Array.isArray(u.days) ? u.days.slice() : [];
+  const at = cur.indexOf(dow);
+  if (at >= 0) cur.splice(at, 1); else cur.push(dow);
+  cur.sort((a, b) => a - b);
+  u.days = cur.length ? cur : null;
+  save(); render();
+}
+function clearUnitDays(id) {
+  const u = (state.servicedUnits || []).find((x) => x.id === id);
+  if (!u) return;
+  u.days = null; save(); render();
+}
 function setUnitFreq(id, freq) {
   const u = state.servicedUnits.find(x => x.id === id);
   if (u) { u.freq = freq; u.startDate = todayKey(); } // reset cycle anchor to today
@@ -1388,6 +1508,108 @@ function setUnitsFreqBulk(ids, freq, groupLabel) {
     'safe'
   );
 }
+// Pin a whole group to the same weekdays in one go. Sixty-six rooms is not a job
+// anybody is going to do a tap at a time, so a feature with no bulk setter is a
+// feature that never gets switched on.
+function setUnitsDaysBulk(ids, days, groupLabel) {
+  const list = (state.servicedUnits || []).filter((u) => ids.includes(u.id));
+  if (!list.length) return;
+  const what = days && days.length
+    ? DOW_PICK_ORDER.filter((d) => days.indexOf(d) >= 0).map((d) => DOW_LABEL[d]).join(' ')
+    : null;
+  showConfirm(
+    what ? `Put ${list.length} room${list.length === 1 ? '' : 's'} on ${what}?`
+         : `Take ${list.length} room${list.length === 1 ? '' : 's'} off fixed days?`,
+    what
+      ? `Applies to ${groupLabel} only. They come round on those days from now on, whatever day they were last done — so the schedule stops drifting. Any room can still be changed on its own.`
+      : `They go back to coming round on their frequency, counted from the last clean.`,
+    () => {
+      list.forEach((u) => { u.days = what ? days.slice() : null; });
+      save(); render();
+    },
+    what ? 'Set days' : 'Clear days',
+    'safe'
+  );
+}
+
+// WORK OUT THE DAYS FROM THE FREQUENCY.
+// Saying "305 is every other day" is easy; saying "305 is Sat/Mon/Wed/Fri" is a
+// chore sixty-six times over. So the office sets the frequency, as it always has,
+// and this turns that into actual days — which is the part that stops the drift.
+// Every-other-day rooms go onto one of the two alternating sets. Splitting them
+// between the two is what keeps the week even: put them all on one and half the
+// week is empty while the other half is unworkable.
+const EOD_SETS = [[1, 3, 5, 6], [0, 2, 4]];   // Mon/Wed/Fri/Sat and Sun/Tue/Thu
+function suggestDaysFromFreq() {
+  const rooms = (state.servicedUnits || []).filter((u) => !u.paused && onRollCall(u));
+  const load = [0, 0, 0, 0, 0, 0, 0];
+  // Count what is already pinned, so new suggestions balance around it rather than
+  // against an imaginary empty week.
+  rooms.forEach((u) => { const d = fixedDays(u); if (d) d.forEach((x) => { load[x] += 1; }); });
+  // Judge a set by the WEEK IT LEAVES BEHIND: first the heaviest day, then how flat
+  // the rest is. Scoring on total room-days instead quietly rewards the three-day set
+  // for being smaller, and the every-other-day rooms pile onto Sun/Tue/Thu.
+  const after = (set) => {
+    const t = load.slice();
+    set.forEach((x) => { t[x] += 1; });
+    return [Math.max.apply(null, t), t.reduce((a, b) => a + b * b, 0)];
+  };
+  const flatter = (a, b) => (a[0] !== b[0]) ? a[0] - b[0] : a[1] - b[1];
+
+  const proposals = [], skipped = [];
+  rooms.slice().sort((a, b) => String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }))
+    .forEach((u) => {
+      if (fixedDays(u)) return;                       // already on days — never overrule that
+      const f = u.freq || 'daily';
+      let days = null;
+      if (f === 'eod') {
+        days = flatter(after(EOD_SETS[0]), after(EOD_SETS[1])) <= 0 ? EOD_SETS[0] : EOD_SETS[1];
+      } else if (f === 'weekly') {
+        let best = 0;
+        for (let d = 1; d < 7; d += 1) if (load[d] < load[best]) best = d;
+        days = [best];
+      } else {
+        // Daily and nightly are due every day, so they cannot drift and pinning them
+        // says nothing. Monthly is too rare for a weekday to mean anything.
+        skipped.push({ u, reason: FREQ_LABEL[f] || f });
+        return;
+      }
+      days.forEach((x) => { load[x] += 1; });
+      proposals.push({ u, days: days.slice() });
+    });
+  return { proposals, skipped, load };
+}
+function applySuggestedDays(plan) {
+  plan.proposals.forEach((p) => { p.u.days = p.days.slice(); });
+  save();
+}
+function suggestDaysFromFreqConfirm() {
+  const plan = suggestDaysFromFreq();
+  if (!plan.proposals.length) {
+    hikSyncMsg = { err: false, text: 'Nothing to work out — every room on a repeating cycle is already on fixed days.' };
+    render(); return;
+  }
+  const byPattern = {};
+  plan.proposals.forEach((p) => {
+    const k = DOW_PICK_ORDER.filter((d) => p.days.indexOf(d) >= 0).map((d) => DOW_LABEL[d]).join(' ');
+    (byPattern[k] = byPattern[k] || []).push(p.u.unit);
+  });
+  const summary = Object.keys(byPattern)
+    .map((k) => k + ' — ' + byPattern[k].length + ' room' + (byPattern[k].length === 1 ? '' : 's')).join(' · ');
+  const week = DOW_PICK_ORDER.map((d) => DOW_SHORT[d] + ' ' + plan.load[d]).join(', ');
+  showConfirm(
+    'Put ' + plan.proposals.length + ' room' + (plan.proposals.length === 1 ? '' : 's') + ' on fixed days?',
+    summary + '. Worked out from the frequency each room is already set to, and split so the week comes out even — '
+      + 'rooms per day after this: ' + week + '. '
+      + 'They come round on those days from now on whatever day they were last done, so the schedule stops sliding. '
+      + (plan.skipped.length ? plan.skipped.length + ' room(s) left alone: daily rooms are due every day anyway. ' : '')
+      + 'Rooms already on days are untouched, and any room can still be changed on its own.',
+    () => { applySuggestedDays(plan); render(); },
+    'Set the days',
+    'safe'
+  );
+}
+
 // ============================================================
 // LEVEL THE WEEK
 // Thirteen rooms tomorrow and twenty-four the day after is the same fortnight's
@@ -2256,7 +2478,12 @@ let _arrivalPoll = null;
 function startArrivalPolling() {
   clearInterval(_arrivalPoll);
   _arrivalPoll = setInterval(async () => {
-    if (state.tab !== 'rollcall' || document.hidden || _assignPick) return;
+    // Only the picker blocks a poll now. This used to stop unless you were sitting
+    // on the Roll Call tab with the screen awake — but Hik's Time Card fills in
+    // through the morning, so the badge-ins that trigger the hand-out almost never
+    // land while somebody happens to be watching that one tab. The hand-out then
+    // never ran and the rooms got dealt out by hand instead.
+    if (_assignPick) return;
     const before = JSON.stringify(hikArrivals);
     await loadHikArrivals();
     if (JSON.stringify(hikArrivals) !== before) { maybeAutoAssign(); render(); } else stampLastPull();
@@ -2465,7 +2692,9 @@ function toggleAreaDone(id) {
 // When a plan exists for today it IS the list; without one, the schedule decides
 // as it always did.
 function plannedRoomsToday() {
-  const day = todayKey();
+  // The WORK day, like everything else that asks what the crew is on. Keyed by the
+  // calendar day, a round still running at 1am read tomorrow's plan instead of its own.
+  const day = workToday();
   const plan = (state.plans || {})[day];
   if (!plan) return null;
   const jobs = Object.values(plan);
@@ -2492,6 +2721,7 @@ function plannedRoomsToday() {
       if (j.kind === 'unit') {
         const u = byId[j.refId];
         if (!u || seen.has(u.id) || !onRollCall(u) || u.paused) return;
+        if (fixedDays(u)) return;                          // pinned rooms live on their own days
         if (String(lastCleanDate(u) || '') >= d) return;   // it did get done, on the day or since
         seen.add(u.id); rooms.push(u);
       } else {
@@ -3116,7 +3346,7 @@ function suggestedJobsFor(day) {
     out.push({
       kind: 'unit', id: u.id, label: 'Unit ' + u.unit,
       group: UNIT_TYPES[unitType(u)].label,
-      why: !due ? 'No record yet' : (due < day ? 'Overdue since ' + due : (FREQ_LABEL[u.freq] || 'Daily')),
+      why: !due ? 'No record yet' : (due < day ? 'Overdue since ' + due : schedLabel(u)),
       late: !!due && due < day,
     });
   });
@@ -3323,6 +3553,16 @@ function ensureDayPlanned(day) {
 }
 function ensureTomorrowPlanned() { return ensureDayPlanned(tomorrowKey()); }
 
+// TODAY, which the week-ahead loop skips because it starts at tomorrow. Today's plan
+// was drawn up days ago from a projection that assumes every day gets done. Clean a
+// room by hand, backdate one, change a frequency, add a room — and the schedule now
+// says something is due today that the frozen plan never listed. The plan IS the roll
+// call, and the carry-forward only rescues rooms that were on an EARLIER day's plan,
+// so a room in that gap appears nowhere at all and is quietly skipped. Every-other-day
+// rooms are the ones this catches: a daily room is on every plan, so it cannot fall
+// down the gap. Add-only — today never loses a room this way.
+function topUpTodayPlan() { return resyncPlanDay(workToday(), true); }
+
 // The whole week, not just tomorrow. Tomorrow laid itself out and the rest of the
 // week waited to be asked, so Thursday only existed once somebody went to Thursday.
 // Every day ahead is laid out and handed round when the app opens, and kept in line
@@ -3462,7 +3702,11 @@ function planAhead() {
 // whoever is carrying least; a room that is no longer due is dropped only if the
 // schedule was what put it there and nobody has been given it. Assignments already
 // made are never shuffled — that is the difference between this and a rebuild.
-function resyncPlanDay(day) {
+// addOnly: for TODAY. A day still to come can have rooms taken back off it when the
+// schedule moves, but today is being worked — a room already cleaned drops out of
+// "what's due", and pruning against that would delete the morning's finished work off
+// the board. Today only ever gains rooms.
+function resyncPlanDay(day, addOnly) {
   const plan = getPlan(day);
   // Emptied on purpose ("Clear this day's plan") — an automatic refill would
   // override a deliberate act, so a cleared day stays cleared.
@@ -3471,7 +3715,7 @@ function resyncPlanDay(day) {
   const want = planningJobsFor(day);
   const wantKeys = new Set(want.map((j) => planKey(j.kind, j.id)));
   let removed = 0;
-  Object.keys(plan).forEach((k) => {
+  if (!addOnly) Object.keys(plan).forEach((k) => {
     if (plan[k].kind !== 'unit') return;        // an area on a day was somebody's call
     if (wantKeys.has(k) || plan[k].assignedTo || !plan[k].auto) return;
     delete plan[k]; removed += 1;
@@ -4154,6 +4398,34 @@ function viewRooms() {
     });
     bulk.appendChild(bulkBtns);
 
+    // ...or pin the whole group to fixed weekdays, which is what stops the drift.
+    const pinnedN = list.filter((u) => fixedDays(u)).length;
+    const dayBulk = el(`<div style="margin-top:8px"></div>`);
+    dayBulk.appendChild(el(`<div style="font-size:11px;color:#5b6a7f;font-weight:600;margin-bottom:6px">`
+      + `${pinnedN} of ${list.length} on fixed days · <b>Put all on:</b></div>`));
+    const dayBtns = el(`<div style="display:flex;gap:5px;flex-wrap:wrap"></div>`);
+    let picking = [];
+    DOW_PICK_ORDER.forEach((d) => {
+      const b = el(`<button class="freqmini" style="padding:6px 9px" title="${esc(DOW_LABEL[d])}">${esc(DOW_SHORT[d])}</button>`);
+      b.onclick = () => {
+        const at = picking.indexOf(d);
+        if (at >= 0) { picking.splice(at, 1); b.classList.remove('on'); }
+        else { picking.push(d); b.classList.add('on'); }
+        apply.style.display = picking.length ? '' : 'none';
+      };
+      dayBtns.appendChild(b);
+    });
+    const apply = el(`<button class="freqmini on" style="padding:6px 11px;display:none">Apply</button>`);
+    apply.onclick = () => setUnitsDaysBulk(ids, picking.slice().sort((a, b2) => a - b2), t.label.toLowerCase());
+    dayBtns.appendChild(apply);
+    if (pinnedN) {
+      const off = el(`<button class="freqmini" style="padding:6px 9px">✕ Clear</button>`);
+      off.onclick = () => setUnitsDaysBulk(ids, null, t.label.toLowerCase());
+      dayBtns.appendChild(off);
+    }
+    dayBulk.appendChild(dayBtns);
+    bulk.appendChild(dayBulk);
+
     const cleanedCount = list.filter(cleanedToday).length;
     const markRow = el(`<div style="display:flex;align-items:center;gap:6px;margin-top:8px;flex-wrap:wrap"></div>`);
     markRow.appendChild(el(`<div style="font-size:11px;color:#5b6a7f;font-weight:600;flex:0 0 auto">`
@@ -4466,8 +4738,8 @@ function servicedCard(u, isDue) {
     const nd = nextDueDate(u);
     const label = nd === tomorrowKey() ? 'Next: tomorrow'
       : nd ? 'Next: ' + new Date(nd + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-      : FREQ_LABEL[u.freq];
-    top.appendChild(el(`<div class="su-next" title="${esc(FREQ_LABEL[u.freq])}">${esc(label)}</div>`));
+      : schedLabel(u);
+    top.appendChild(el(`<div class="su-next" title="${esc(schedLabel(u))}">${esc(label)}</div>`));
   }
   card.appendChild(top);
 
@@ -4487,10 +4759,30 @@ function servicedCard(u, isDue) {
   assignRow.appendChild(asel);
   card.appendChild(assignRow);
 
+  // WHICH DAYS. Pinning a room to weekdays stops its schedule drifting every time a
+  // clean lands late or early. While days are set the frequency is not what decides
+  // when the room comes round, so it is shown greyed rather than removed — clearing
+  // the days hands the room straight back to it.
+  const pinned = fixedDays(u);
+  const dayRow = el(`<div class="su-ctl" style="margin-top:8px;align-items:center"></div>`);
+  dayRow.appendChild(el(`<div style="font-size:11px;color:#5b6a7f;font-weight:700;white-space:nowrap">On</div>`));
+  DOW_PICK_ORDER.forEach((d) => {
+    const on = !!pinned && pinned.indexOf(d) >= 0;
+    const b = el(`<button class="freqmini ${on ? 'on' : ''}" style="padding:6px 9px" title="${esc(DOW_LABEL[d])}">${esc(DOW_SHORT[d])}</button>`);
+    b.onclick = () => toggleUnitDay(u.id, d);
+    dayRow.appendChild(b);
+  });
+  if (pinned) {
+    const clr = el(`<button class="freqmini" style="padding:6px 9px" title="Back to a rolling cycle">✕ Days</button>`);
+    clr.onclick = () => clearUnitDays(u.id);
+    dayRow.appendChild(clr);
+  }
+  card.appendChild(dayRow);
+
   // frequency selector + edit + remove
   const ctl = el(`<div class="su-ctl"></div>`);
   ['nightly','daily','eod','weekly'].forEach(fk => {
-    const b = el(`<button class="freqmini ${u.freq===fk?'on':''}">${FREQ_LABEL[fk]}</button>`);
+    const b = el(`<button class="freqmini ${!pinned && u.freq===fk?'on':''}" style="${pinned?'opacity:0.45':''}" title="${pinned?'Set by days above':''}">${FREQ_LABEL[fk]}</button>`);
     b.onclick = () => setUnitFreq(u.id, fk);
     ctl.appendChild(b);
   });
@@ -4675,6 +4967,20 @@ function viewRollCall() {
         box.appendChild(learnBtn);
         box.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin:-2px 0 8px">`
           + `From the last ${LEARN_DAYS} days of the log. Rooms without a clear regular keep rotating.</div>`));
+      }
+    }
+    // Turning frequencies into actual days is the one-off that stops the schedule
+    // drifting. Only offered while there are rooms it would still change.
+    {
+      const sd = suggestDaysFromFreq();
+      if (sd.proposals.length) {
+        const dBtn = el(`<button class="freqmini" style="width:100%;padding:9px;margin-bottom:4px;border-color:#0284c7;color:#0284c7">`
+          + `🗓 Work out the days for ${sd.proposals.length} room${sd.proposals.length === 1 ? '' : 's'}</button>`);
+        dBtn.onclick = () => suggestDaysFromFreqConfirm();
+        box.appendChild(dBtn);
+        box.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin:-2px 0 8px">`
+          + `From the frequency each is already set to, split so the week comes out even. `
+          + `Rooms then come round on the same days instead of sliding.</div>`));
       }
     }
     // Pinned rooms go back to the same person every morning, so once there are a lot
@@ -5898,9 +6204,241 @@ function backdateSheet() {
 }
 
 // ============================================================
+// TV BOARD
+// ============================================================
+// The office TV. Nobody taps it, so it is a statement rather than a screen:
+// who is in, what each of them has, what is done. It redraws itself on a timer
+// and pulls from Supabase on its own, because there is no one to press refresh.
+const TV_MODE = /[?&]tv\b/.test(location.search) || /^#tv\b/.test(location.hash);
+const TV_COLS_PER_PAGE = 5;      // more than five columns on a TV and the names stop being readable
+const TV_PAGE_MS = 15000;        // long enough to read a column before it moves
+const TV_TICK_MS = 20000;        // redraw: clock, and anything realtime already dropped into state
+const TV_PULL_MS = 60000;        // belt and braces — smart TV browsers drop websockets silently
+let tvPage = 0;
+let tvLastData = 0;              // when the board last saw fresh numbers
+
+const tvFirst = (n) => String(n || '').trim().split(/\s+/)[0] || '—';
+
+// Every job on today's board, grouped by who is holding it. Rooms and communal
+// areas together: from across the room a walk is another thing somebody has to
+// get through, and splitting them into two lists hides half the load.
+function tvJobsByPerson() {
+  const buckets = {}, order = [];
+  const bucket = (id) => {
+    const k = id || '__none__';
+    if (!buckets[k]) { buckets[k] = []; order.push(k); }
+    return buckets[k];
+  };
+  todaysRoomList().forEach((u) => {
+    bucket(u.assignedTo).push({
+      label: u.unit,
+      done: cleanedToday(u),
+      early: timeSlot(u) === 'early',
+      area: false,
+    });
+  });
+  areasInterior().forEach((a) => {
+    bucket(a.assignedTo).push({ label: a.label, done: areaDone(a), early: false, area: true });
+  });
+  // Red first, then whatever is still open, then the finished ones out of the way.
+  Object.keys(buckets).forEach((k) => {
+    buckets[k].sort((x, y) =>
+      (x.done ? 1 : 0) - (y.done ? 1 : 0)
+      || (y.early ? 1 : 0) - (x.early ? 1 : 0)
+      || String(x.label).localeCompare(String(y.label), undefined, { numeric: true }));
+  });
+  return { buckets: buckets, order: order };
+}
+
+// Columns: everyone rostered on today gets one even when they are empty-handed,
+// because an empty column is the useful bit of news. Unassigned work goes in an
+// amber column at the front — it is the only thing on the board nobody owns.
+function tvColumns() {
+  const grouped = tvJobsByPerson();
+  const cols = [];
+  const unassigned = grouped.buckets['__none__'] || [];
+  if (unassigned.length) {
+    cols.push({ key: '__none__', name: 'NOBODY YET', jobs: unassigned, none: true, out: false, status: null });
+  }
+  const seen = {};
+  cleaningStaff().filter((p) => worksToday(p)).forEach((p) => {
+    seen[p.id] = true;
+    const st = state.attendance[p.id] || 'present';
+    cols.push({
+      key: p.id, name: tvFirst(p.name), jobs: grouped.buckets[p.id] || [],
+      none: false, out: AWAY.indexOf(st) >= 0, status: st,
+    });
+  });
+  // Somebody off the rota still holding work has to show, or that work vanishes.
+  (state.staff || []).forEach((p) => {
+    if (seen[p.id] || !(grouped.buckets[p.id] || []).length) return;
+    const st = state.attendance[p.id] || 'present';
+    cols.push({
+      key: p.id, name: tvFirst(p.name), jobs: grouped.buckets[p.id],
+      none: false, out: AWAY.indexOf(st) >= 0, status: st,
+    });
+  });
+  // Stranded work first. The board pages itself, and a sick cleaner's untouched
+  // rooms are the one thing that must not be sitting on the page nobody saw.
+  return cols.sort((a, b) => {
+    const rank = (c) => (c.none ? 0 : (c.out && c.jobs.some((j) => !j.done)) ? 1 : 2);
+    return rank(a) - rank(b);
+  });
+}
+
+function tvCrewStrip() {
+  const wrap = el(`<div class="tv-crew"></div>`);
+  const crew = cleaningStaff().filter((p) => worksToday(p));
+  if (!crew.length) { wrap.appendChild(el(`<div class="tv-empty">Nobody is rostered on today</div>`)); return wrap; }
+  // Away first: who is missing is the thing you want to read without hunting.
+  crew.slice().sort((a, b) => {
+    const rank = (p) => AWAY.indexOf(state.attendance[p.id] || 'present') >= 0 ? 0 : 1;
+    return rank(a) - rank(b) || String(a.name).localeCompare(String(b.name));
+  }).forEach((p) => {
+    const st = state.attendance[p.id] || 'present';
+    const meta = STATUS[st] || STATUS.present;
+    const chip = el(`<div class="tv-chip"><span>${esc(tvFirst(p.name))}</span><span class="st">${esc(meta.label)}</span></div>`);
+    chip.style.borderColor = meta.color;
+    chip.style.color = (st === 'present') ? '#eaf1fb' : meta.color;
+    wrap.appendChild(chip);
+  });
+  return wrap;
+}
+
+function renderTV() {
+  const app = document.getElementById('app');
+  document.body.classList.add('tv');
+  app.innerHTML = '';
+  const now = new Date();
+  const wrap = el(`<div class="tv-wrap"></div>`);
+
+  const cols = tvColumns();
+  const jobs = cols.reduce((n, c) => n + c.jobs.length, 0);
+  const done = cols.reduce((n, c) => n + c.jobs.filter((j) => j.done).length, 0);
+  const pct = jobs ? Math.round((done / jobs) * 100) : 0;
+
+  // --- top line ---
+  const top = el(`<div class="tv-top"></div>`);
+  const left = el(`<div></div>`);
+  left.appendChild(el(`<div class="tv-brand">CLEANING BOARD</div>`));
+  left.appendChild(el(`<div class="tv-date">${esc(now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }))}</div>`));
+  top.appendChild(left);
+
+  const mid = el(`<div class="tv-progress"></div>`);
+  mid.appendChild(el(`<div class="n">${done}</div>`));
+  mid.appendChild(el(`<div class="of">of ${jobs} done</div>`));
+  // Work with nobody behind it gets its own number at the top. The columns turn
+  // over on a timer, so the one thing that must never be on the page you missed
+  // is how much of today is currently falling on the floor.
+  const cover = cols.filter((c) => c.out || c.none)
+    .reduce((n, c) => n + c.jobs.filter((j) => !j.done).length, 0);
+  if (cover) {
+    const warn = el(`<div class="tv-progress" style="margin-left:2vw"></div>`);
+    warn.appendChild(el(`<div class="n" style="color:#f59e0b">${cover}</div>`));
+    warn.appendChild(el(`<div class="of" style="color:#f59e0b">need cover</div>`));
+    mid.appendChild(warn);
+  }
+  top.appendChild(mid);
+
+  const right = el(`<div></div>`);
+  right.appendChild(el(`<div class="tv-clock">${esc(now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }))}</div>`));
+  // A board nobody can tell is stale is worse than no board. Say when it last
+  // heard anything, and go amber once that stops being reassuring.
+  const mins = tvLastData ? Math.round((Date.now() - tvLastData) / 60000) : null;
+  const stampTxt = (mins === null) ? 'waiting for data'
+    : mins < 2 ? 'up to date' : mins + ' min since last update';
+  right.appendChild(el(`<div class="tv-stamp${mins !== null && mins >= 10 ? ' tv-stale' : ''}">${esc(stampTxt)}</div>`));
+  top.appendChild(right);
+  wrap.appendChild(top);
+
+  const bar = el(`<div class="tv-bar"><i></i></div>`);
+  bar.firstChild.style.width = pct + '%';
+  wrap.appendChild(bar);
+
+  wrap.appendChild(tvCrewStrip());
+
+  // --- columns, a page at a time ---
+  // Spread the columns evenly over the pages rather than filling each to the
+  // brim: six people is 3+3, not 5 then a lonely 1, and the column width stops
+  // jumping about every time the board turns over.
+  const pages = Math.max(1, Math.ceil(cols.length / TV_COLS_PER_PAGE));
+  const perPage = Math.max(1, Math.ceil(cols.length / pages));
+  if (tvPage >= pages) tvPage = 0;
+  const shown = cols.slice(tvPage * perPage, tvPage * perPage + perPage);
+
+  const grid = el(`<div class="tv-cols"></div>`);
+  grid.style.gridTemplateColumns = 'repeat(' + Math.max(1, shown.length) + ', minmax(0, 1fr))';
+  if (!cols.length) {
+    grid.appendChild(el(`<div class="tv-empty">Nothing on today's board yet</div>`));
+  }
+  shown.forEach((c) => {
+    const col = el(`<div class="tv-col${c.none ? ' none' : ''}${c.out ? ' out' : ''}"></div>`);
+    const hd = el(`<div class="tv-col-hd"></div>`);
+    const row = el(`<div class="tv-hd-row"></div>`);
+    row.appendChild(el(`<div class="tv-who">${esc(c.name)}</div>`));
+    row.appendChild(el(`<div class="tv-count">${c.jobs.filter((j) => j.done).length}/${c.jobs.length}</div>`));
+    hd.appendChild(row);
+    // The name alone doesn't say the work is stranded. Spell it out on its own
+    // line, where a long name can't push it off the edge.
+    const open = c.jobs.filter((j) => !j.done).length;
+    if (c.out) {
+      const meta = STATUS[c.status] || STATUS.noshow;
+      const sub = el(`<div class="tv-sub">${esc(meta.label)}${open ? ' · ' + open + ' NEED COVER' : ' · NOTHING OPEN'}</div>`);
+      sub.style.color = open ? '#fbbf24' : meta.color;
+      hd.appendChild(sub);
+    } else if (c.none) {
+      hd.appendChild(el(`<div class="tv-sub" style="color:#fbbf24">NOT HANDED OUT</div>`));
+    }
+    col.appendChild(hd);
+    const list = el(`<div class="tv-jobs"></div>`);
+    if (!c.jobs.length) list.appendChild(el(`<div class="tv-empty">—</div>`));
+    c.jobs.forEach((j) => {
+      // An away person's unfinished room is nobody's room until someone picks it
+      // up, so it wears the same amber as work that was never handed out.
+      const cls = j.done ? 'done' : (c.out || c.none) ? 'cover' : j.early ? 'early' : j.area ? 'area' : '';
+      list.appendChild(el(`<div class="tv-job ${cls}">${j.early && !j.done ? '🌅 ' : ''}${esc(j.label)}</div>`));
+    });
+    col.appendChild(list);
+    grid.appendChild(col);
+  });
+  wrap.appendChild(grid);
+
+  if (pages > 1) {
+    const pager = el(`<div class="tv-pager"></div>`);
+    for (let i = 0; i < pages; i++) pager.appendChild(el(`<div class="tv-dot${i === tvPage ? ' on' : ''}"></div>`));
+    wrap.appendChild(pager);
+  }
+
+  app.appendChild(wrap);
+}
+
+// No hands on this screen, so the board has to keep itself alive: redraw on a
+// tick, turn the page on its own, and re-pull in case realtime quietly died.
+function startTVLoop() {
+  const pages = () => Math.max(1, Math.ceil(tvColumns().length / TV_COLS_PER_PAGE));
+  setInterval(() => renderTV(), TV_TICK_MS);
+  setInterval(() => { tvPage = (tvPage + 1) % pages(); renderTV(); }, TV_PAGE_MS);
+  setInterval(() => {
+    remotePull().then(() => { tvLastData = Date.now(); renderTV(); }).catch(() => {});
+  }, TV_PULL_MS);
+  // A TV that sleeps at 10am is a blank wall. Wake Lock is refused by most TV
+  // browsers, so this is a try-and-shrug, not a guarantee — turn the screensaver
+  // off in the TV's own settings as well.
+  const hold = () => {
+    if (!navigator.wakeLock || !navigator.wakeLock.request) return;
+    navigator.wakeLock.request('screen').catch(() => {});
+  };
+  hold();
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) { hold(); renderTV(); } });
+}
+
+// ============================================================
 // MAIN RENDER
 // ============================================================
 function render() {
+  // One entry point, so every existing caller — realtime, save, the arrival
+  // poller — lands on the board without knowing the board exists.
+  if (TV_MODE) { renderTV(); return; }
   const app = document.getElementById('app');
   app.innerHTML = '';
   const now = new Date();
@@ -6094,20 +6632,55 @@ function renderLogin() {
   setTimeout(() => { try { pin.focus(); } catch (e) {} }, 100);
 }
 
-async function boot() {
-  load();
-  route();              // login → app
-  await remotePull();   // wait for the staff roster before matching arrivals
+// Everything automatic about planning used to happen here and only here, which meant
+// it happened when somebody OPENED the app. That was survivable while the office
+// reloaded it on a phone each morning; it is not survivable on a TV left on for a
+// week, where boot runs once and the day rolls over without anything re-planning.
+// So the chain lives in its own function and a watcher re-runs it when the work day
+// changes, with nobody touching anything.
+function planningPass() {
   // Level first — it decides which rooms fall on which day, and planning ahead of it
   // would lay out days it is about to move.
   autoLevelIfLopsided();
   ensureWeekPlanned();   // the week ahead is laid out and handed round without anyone asking
+  topUpTodayPlan();      // and anything the schedule says is due today but the frozen plan missed
   carryPlanToBoardOnOpen();   // and last night's plan for today is on the board already
+}
+
+let _plannedForDay = null;
+let _dayWatch = null;
+function startDayWatch() {
+  clearInterval(_dayWatch);
+  _dayWatch = setInterval(() => {
+    // Top up every pass, not only at the rollover: a room can fall due because
+    // somebody backdated a clean or changed a frequency on another device, and the
+    // realtime update brings that in without any day having changed.
+    const day = workToday();
+    if (day !== _plannedForDay) {
+      _plannedForDay = day;
+      planningPass();
+      loadHikArrivals().then(() => { maybeAutoAssign(); render(); });
+      render();
+      return;
+    }
+    if ((topUpTodayPlan().added || 0) > 0) { carryPlanToBoardOnOpen(); render(); }
+  }, 300000);   // five minutes — a day boundary and a backdated clean are both slow news
+}
+
+async function boot() {
+  load();
+  route();              // login → app
+  await remotePull();   // wait for the staff roster before matching arrivals
+  tvLastData = Date.now();
+  _plannedForDay = workToday();
+  planningPass();
   loadHikArrivals().then(() => { maybeAutoAssign(); route(); });
   startArrivalPolling();
+  startDayWatch();
   subscribeRealtime();
   refreshHistory();
   subscribeHistory();
+  if (TV_MODE) startTVLoop();
 }
 
 // Startup: restore any existing Supabase session, then show the right screen.
