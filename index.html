@@ -4963,6 +4963,24 @@ function viewRollCall() {
     const okCount = openR.filter((u) => u.assignedTo && assignConfirmedToday(u)).length;
     const box = el('<div style="margin-bottom:18px"></div>');
     box.appendChild(el(`<div class="section-label">◷ Rooms to clean today (${todaysRooms.length})</div>`));
+    // WHERE THIS LIST CAME FROM. A plan made the night before either drives the roll
+    // call or it does not, and until now the screen looked identical either way — so
+    // "I planned it and it isn't here" could not be told apart from "the plan is here
+    // and it is what I planned". Say which, and if there is no plan for today, say
+    // which days DO have one, because a plan filed against the wrong date is the
+    // usual reason it went missing.
+    {
+      const planned = plannedRoomsToday();
+      const days = Object.keys(state.plans || {}).filter((d) => Object.keys(state.plans[d] || {}).length).sort();
+      const ahead = days.filter((d) => d > workToday());
+      box.appendChild(planned
+        ? el(`<div style="font-size:12px;color:#15803d;font-weight:700;margin:-6px 0 4px">`
+            + `✓ From the plan you made for today (${esc(workToday())})</div>`)
+        : el(`<div style="font-size:12px;color:#b45309;font-weight:700;margin:-6px 0 4px">`
+            + `⚠ No plan for today (${esc(workToday())}) — showing everything the schedule says is due.`
+            + (ahead.length ? ` You have a plan for ${esc(ahead.slice(0, 3).join(', '))}.` : '')
+            + `</div>`));
+    }
     const noRec = openR.filter((u) => !lastCleanDate(u)).length;
     box.appendChild(el(`<div style="font-size:12px;color:#5f7189;font-weight:600;margin:-6px 0 10px">`
       + `${openR.length - unass.length} handed out`
