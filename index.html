@@ -2080,7 +2080,10 @@ function maybeAutoAssign() {
   if (state.autoAssignedOn === todayKey()) return;             // already done today
   const people = Object.keys(hikArrivals).filter((id) => (state.staff || []).some((s) => s.id === id));
   if (!people.length) return;                                  // nobody in yet — wait
-  const due = (state.servicedUnits || []).filter((u) => onRollCall(u) && unitDueToday(u));
+  // The same list the roll call shows, so a room that is on the plan but not
+  // otherwise due today still gets handed to somebody instead of sitting there
+  // with no name against it all morning.
+  const due = todaysRoomList().filter((u) => !cleanedToday(u));
   if (!due.length) return;
   const officeGotThereFirst = due.some((u) => u.assignedTo);
   const carried = applyPlannedAssignments();                   // last night's plan wins over a fresh deal
@@ -2197,7 +2200,7 @@ function autoAssignRooms(onlyRooms, loadSeed, slotSeed) {
   const inIds = new Set(people.map((p) => p.id));
   const load = {}; people.forEach((p) => { load[p.id] = (loadSeed && loadSeed[p.id]) || 0; });
 
-  const pool = onlyRooms || (state.servicedUnits || []).filter((u) => onRollCall(u) && unitDueToday(u));
+  const pool = onlyRooms || todaysRoomList().filter((u) => !cleanedToday(u));
   const rooms = pool.slice().sort((a, b) =>   // due today, of the kinds roll call covers
     (slotRank(a) - slotRank(b))                            // 🌅 early-preference rooms first → earliest arrivals
     || (b.priority ? 1 : 0) - (a.priority ? 1 : 0)                               // then priority ⭐ rooms
@@ -2810,10 +2813,21 @@ function plannedRoomsToday() {
 }
 // Today's rooms, planned or derived — the one answer both the panel and the
 // close-out read, so they can no longer disagree.
+// EVERYTHING DUE, PLUS EVERYTHING PLANNED. It used to be one or the other: a plan
+// for today REPLACED the roll call, so a room the schedule said was due but the plan
+// had never listed simply vanished — and a room that was planned but not otherwise
+// due vanished the other way, because the hand-out only ever deals from what is due.
+// Both happened, days apart, to 105 and then 803, and neither showed up as late or
+// missing anywhere: the room was just absent, which is the one failure the office
+// cannot see. A union cannot lose a room in either direction. The cost is that a plan
+// can no longer take a due room OFF the day — that is what the room's own schedule,
+// pause, or hold is for.
 function todaysRoomList() {
+  const due = (state.servicedUnits || []).filter((u) => onRollCall(u) && onTodaysList(u));
   const planned = plannedRoomsToday();
-  if (planned) return planned.rooms;
-  return (state.servicedUnits || []).filter((u) => onRollCall(u) && onTodaysList(u));
+  if (!planned) return due;
+  const seen = new Set(due.map((u) => u.id));
+  return due.concat(planned.rooms.filter((u) => u && !seen.has(u.id)));
 }
 // "Mark all 20 as cleaned" over fourteen rooms and six communal walks is a number
 // nobody can check against the screen. Say what the 20 is made of.
