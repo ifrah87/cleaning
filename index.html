@@ -6514,7 +6514,23 @@ function render() {
   // fall back to Roll Call rather than showing a header over nothing.
   if (!titles[state.tab]) state.tab = 'rollcall';
   header.appendChild(el(`<div class="h-title">${titles[state.tab]}</div>`));
-  header.appendChild(el(`<div class="h-date">${dateStr}</div>`));
+  // ON THE PLAN SCREEN, SAY WHICH DAY IS BEING PLANNED.
+  // It opens on TOMORROW but the header printed today's date, so the office planned
+  // what it believed was today, the work was filed against tomorrow, and today's roll
+  // call came up empty. Nothing was wrong with the plan or the sync — the screen was
+  // naming the wrong day.
+  if (state.tab === 'plan') {
+    const pd = curPlanDay();
+    const pretty = new Date(pd + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+    const rel = pd === todayKey() ? 'TODAY' : pd === tomorrowKey() ? 'TOMORROW' : null;
+    const isToday = pd === todayKey();
+    header.appendChild(el(`<div class="h-date" style="font-size:13px;font-weight:800;color:${isToday ? '#15803d' : '#b45309'}">`
+      + `Planning ${rel ? rel + ' · ' : ''}${esc(pretty)}</div>`));
+    if (!isToday) header.appendChild(el(`<div class="h-date" style="color:#b45309">`
+      + `Not today — these rooms appear on the roll call on ${esc(pretty.split(',')[0])}.</div>`));
+  } else {
+    header.appendChild(el(`<div class="h-date">${dateStr}</div>`));
+  }
   const typeTab = { offices: 'office', buildings: 'building', airbnb: 'airbnb' }[state.tab];
   if (typeTab) {
     const inType = state.servicedUnits.filter(u => unitType(u) === typeTab);
