@@ -1932,7 +1932,11 @@ async function saveBackdate() {
 // Auto-assign hands rooms out immediately, but each one still needs a yes/no from
 // the office. Confirmation is stamped with the day so it expires on its own.
 let _assignPick = null;   // {unitId} while the "who should take this?" picker is open
-const assignConfirmedToday = (u) => (state.assignConfirmed || {})[u.id] === todayKey();
+// With the morning on automatic there is nothing to sign off: the rooms were dealt
+// from the rota, evenly, by rules the office set. Asking twenty-three times whether
+// that was alright is the manual step, and manual steps are where the mistakes were.
+const assignConfirmedToday = (u) => !!state.autoConfirm
+  || (state.assignConfirmed || {})[u.id] === todayKey();
 // Taking the whole deal in one go. Checking a hand-out room by room is right when
 // you disagree with two of them and wrong as the default: twenty-three yes-taps is
 // not a review, it is a toll, and the point of dealing the rooms out automatically
@@ -5090,6 +5094,14 @@ function viewRollCall() {
       const yesAll = el('<button class="freqmini" style="flex:0 0 auto;padding:9px 14px;background:#15803d;border-color:#15803d;color:#ffffff">✓ Yes to all</button>');
       yesAll.onclick = () => confirmAllAssignments(toCheck.map((u) => u.id));
       hdr.appendChild(yesAll);
+      const always = el('<button class="freqmini" style="flex:0 0 auto;padding:9px 12px;border-color:#0284c7;color:#0284c7">✓ Always — stop asking</button>');
+      always.onclick = () => showConfirm(
+        'Hand the rooms out without asking?',
+        'Every morning the rooms are dealt from the rota and simply handed out — no list to check. '
+          + 'You can still move any room by tapping it, and you can switch this back off in Settings.',
+        () => { state.autoConfirm = true; save(); render(); },
+        'Yes, run it automatically', 'safe');
+      hdr.appendChild(always);
       const toggle = el(`<button class="freqmini" style="flex:0 0 auto;padding:9px 12px">${state.checkExpanded ? 'Hide the list' : 'Go through them'}</button>`);
       toggle.onclick = () => { state.checkExpanded = !state.checkExpanded; save(); render(); };
       hdr.appendChild(toggle);
@@ -5474,18 +5486,23 @@ function viewSettings() {
   const autoBox = el(`<div class="addbox"></div>`);
   [
     ['autoAssign', 'Hand out rooms each morning',
-     'Once the first cleaners badge in, today\'s rooms are shared out automatically. Only ever when nothing has been handed out yet, so it can\'t undo your own decisions. Every room still needs your Yes.'],
+     'Once the first cleaners badge in, today\'s rooms are shared out automatically. Only ever when nothing has been handed out yet, so it can\'t undo your own decisions.'],
+    ['autoConfirm', 'Hand them out without asking',
+     'Skips the morning list of assignments to check. The rooms were dealt from the rota and split evenly, so there is nothing to approve — they are simply handed out. You can still move any room by tapping it. Off by default, because it means the morning happens whether or not anyone looks at it.', false],
     ['autoBalance', 'Keep the week level',
      'Stops the every-other-day rooms all falling due on the same morning — they are split across the cycle so the days stop swinging between a huge one and an empty one. Nothing is ever left longer than its frequency: a room takes its next turn earlier, or is cleaned once more to move it onto the opposite day.'],
-  ].forEach(([k, label, why]) => {
-    const on = state[k] !== false;
+  ].forEach(([k, label, why, defOn]) => {
+    // Most of these are on unless switched off; a couple are off unless switched on.
+    const offByDefault = defOn === false;
+    const on = offByDefault ? !!state[k] : state[k] !== false;
     const row = el(`<div style="display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-top:1px solid #e7ecf3"></div>`);
     const info = el(`<div style="flex:1;min-width:0"></div>`);
     info.appendChild(el(`<div style="font-size:14px;font-weight:600;color:#0f1a27">${label}</div>`));
     info.appendChild(el(`<div style="font-size:11px;color:#5f7189;line-height:1.5;margin-top:2px">${why}</div>`));
     row.appendChild(info);
     const b = el(`<button class="freqmini ${on ? 'on' : ''}" style="flex:0 0 auto;padding:8px 14px">${on ? 'On' : 'Off'}</button>`);
-    b.onclick = () => { state[k] = !on ? undefined : false; save(); render(); };
+    b.onclick = () => { state[k] = offByDefault ? (on ? undefined : true)
+                                               : (on ? false : undefined); save(); render(); };
     row.appendChild(b);
     autoBox.appendChild(row);
   });
