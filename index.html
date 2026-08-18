@@ -2076,6 +2076,10 @@ function applyPlannedAssignments() {
 }
 
 function maybeAutoAssign() {
+  // The board cannot write, so a hand-out it worked out would exist only on the TV:
+  // rooms with names against them that nobody else can see, until the next pull wipes
+  // them. Dealing is for devices that can actually save the result.
+  if (TV_MODE) return;
   if (state.autoAssign === false) return;                      // switched off in Settings
   if (state.autoAssignedOn === todayKey()) return;             // already done today
   const people = Object.keys(hikArrivals).filter((id) => (state.staff || []).some((s) => s.id === id));
