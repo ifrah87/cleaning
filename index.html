@@ -4063,15 +4063,23 @@ function viewPlan() {
   // there on arrival instead of being an empty screen the office has to type in.
   // A day already laid out is re-checked rather than left as drawn, so what is on
   // screen is what the schedule says now — not what it said when it was first opened.
-  const seeded = seedPlanOnce(day);
-  if (!seeded && day > todayKey()) resyncPlanDay(day);
+  // A PAST DAY IS A RECORD, NOT A PLAN. Filling one in from the schedule would
+  // invent a morning that never happened, so days behind the current one are opened
+  // exactly as they were left — or empty, if they were never planned at all.
+  const past = day < workToday();
+  const seeded = past ? 0 : seedPlanOnce(day);
+  if (!past && !seeded && day > todayKey()) resyncPlanDay(day);
 
   // WHICH DAY. First, because everything under it is that day's work.
   const quick = el('<div style="display:flex;gap:6px;margin-bottom:8px"></div>');
   const jump = (lbl, key, on) => { const b = el(`<button class="freqmini ${on ? 'on' : ''}" style="flex:1">${lbl}</button>`); b.onclick = () => { planDay = key; render(); }; return b; };
+  // Backwards as well as forwards: "what was 704 actually put on?" is a question
+  // worth being able to answer, and the day picker used to refuse to go behind today.
+  const yday = shiftDay(workToday(), -1);
+  quick.appendChild(jump('Yesterday', yday, day === yday));
   quick.appendChild(jump('Today', todayKey(), isToday));
   quick.appendChild(jump('Tomorrow', tomorrowKey(), isTomorrow));
-  const dayIn = el(`<input type="date" value="${esc(day)}" min="${esc(todayKey())}" style="flex:1;min-width:0;background:#ffffff;color:#15202e;border:1px solid #d8e0ea;border-radius:8px;padding:7px 9px;font-size:13px">`);
+  const dayIn = el(`<input type="date" value="${esc(day)}" min="${esc(shiftDay(workToday(), -120))}" style="flex:1;min-width:0;background:#ffffff;color:#15202e;border:1px solid #d8e0ea;border-radius:8px;padding:7px 9px;font-size:13px">`);
   dayIn.onchange = (e) => { planDay = e.target.value || null; render(); };
   quick.appendChild(dayIn);
   wrap.appendChild(quick);
