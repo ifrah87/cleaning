@@ -1077,6 +1077,25 @@ function applyRemote(saved) {
     if (mergedPlans[d] || !Object.keys(localPlans[d] || {}).length) return;
     mergedPlans[d] = localPlans[d]; rescued += 1;
   });
+  // A ROOM ONLY THIS DEVICE HAS SEEN SURVIVES THE PULL, for the same reason a plan
+  // does: the whole state is one blob and the last writer wins, so adding rooms on
+  // one device and then opening another was enough to lose them. A room the other
+  // side deleted on purpose stays deleted — that is what the tombstones are for.
+  const gone = { ...(saved.removedUnits || {}), ...(state.removedUnits || {}) };
+  const remoteUnits = Array.isArray(saved.servicedUnits) ? saved.servicedUnits : null;
+  let unitsKept = 0, mergedUnits = remoteUnits;
+  if (remoteUnits) {
+    const haveId = new Set(remoteUnits.map((u) => u.id));
+    const extra = (state.servicedUnits || []).filter((u) => u && !haveId.has(u.id) && !gone[u.id]);
+    mergedUnits = remoteUnits.concat(extra);
+    unitsKept = extra.length;
+    // A tombstone has to bite in BOTH directions, or a delete simply travels back
+    // from whichever device had not heard about it yet and the room reappears.
+    const before = mergedUnits.length;
+    mergedUnits = mergedUnits.filter((u) => !gone[u.id]);
+    if (mergedUnits.length !== before) unitsKept = Math.max(unitsKept, 1);
+  }
+
   const localSeeded = state.planSeeded || {};
   const mergedSeeded = { ...(saved.planSeeded || {}) };
   Object.keys(localSeeded).forEach((d) => { if (mergedPlans[d]) mergedSeeded[d] = mergedSeeded[d] || localSeeded[d]; });
@@ -1084,12 +1103,14 @@ function applyRemote(saved) {
   state = { ...state, ...saved, tab: keepTab, pendingCover: null, editingUnit: null, editingArea: null, editingEmp: null };
   state.plans = mergedPlans;
   state.planSeeded = mergedSeeded;
-  if (rescued && !TV_MODE) markDirty();   // ours to deliver — the server has not got these yet
+  state.removedUnits = gone;
+  if (mergedUnits) state.servicedUnits = mergedUnits;
+  if ((rescued || unitsKept) && !TV_MODE) markDirty();   // ours to deliver — the server has not got these
   if (state.coverageDay !== todayKey()) { state.coverage = {}; state.unitCover = {}; state.pendingCover = null; state.coverageDay = todayKey(); }
   finalizeState();
   try { localStorage.setItem(STORE, JSON.stringify(state)); } catch (e) {}
   tvLastData = Date.now();   // the TV board dates itself off the last thing it heard
-  if (rescued && !TV_MODE) remotePush();  // get the rescued days up before anything overwrites them
+  if ((rescued || unitsKept) && !TV_MODE) remotePush();  // get them up before anything overwrites them
   route();
 }
 
@@ -1500,6 +1521,11 @@ function addServicedUnit(unit, guest, freq, type, time) {
 function removeServicedUnit(id) {
   showConfirm('Remove this unit?', 'This unit will be removed from cleaning service.', () => {
     state.servicedUnits = state.servicedUnits.filter(u => u.id !== id);
+    // Write down that it was removed ON PURPOSE. Rooms only one device has seen are
+    // now kept when another device's copy arrives without them, and without this a
+    // deletion would simply come back from whichever device had not heard about it.
+    if (!state.removedUnits) state.removedUnits = {};
+    state.removedUnits[id] = todayKey();
     save(); render();
   });
 }
