@@ -200,7 +200,8 @@
   .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: flex; align-items: flex-end; justify-content: center; z-index: 100; padding: 16px; }
   .modal { background: #ffffff; border: 1px solid #d8e0ea; border-radius: 16px 16px 0 0; width: 100%; max-width: 480px; padding: 20px 18px calc(20px + env(safe-area-inset-bottom,0)); }
   .modal-title { font-size: 18px; font-weight: 800; color: #0f1a27; }
-  .modal-sub { font-size: 13px; color: #5f7189; margin-top: 6px; line-height: 1.5; }
+  /* pre-line so an explanation can have paragraphs; single-line messages are unaffected */
+  .modal-sub { font-size: 13px; color: #5f7189; margin-top: 6px; line-height: 1.5; white-space: pre-line; }
   .modal-label { font-size: 11px; letter-spacing: 0.1em; color: #5b6a7f; font-weight: 700; text-transform: uppercase; margin: 16px 0 8px; }
   .cover-picker { display: flex; flex-direction: column; gap: 6px; max-height: 220px; overflow-y: auto; }
   .cover-opt { display: flex; justify-content: space-between; align-items: center; padding: 13px 14px; border-radius: 10px; background: #eef2f8; border: 1px solid #d8e0ea; color: #15202e; font-size: 14px; font-weight: 600; }
@@ -392,8 +393,12 @@ const AWAY = ['noshow', 'sick'];
 const isAway = (pid) => AWAY.includes(state.attendance[pid] || 'present');
 
 // Areas live in state (editable). Helpers to read them:
-function areasInterior() { return (state.areas || []).filter(a => a.kind === 'interior'); }
-function areasExterior() { return (state.areas || []).filter(a => a.kind === 'exterior'); }
+// Alphabetical, like the teams and the staff. Areas were kept in the order they were
+// typed in, so removing one and adding it back sent it to the bottom of every list it
+// appears in and there was no way to get the order back except retyping the lot.
+const byLabel = (a, b) => String(a.label).localeCompare(String(b.label), undefined, { numeric: true, sensitivity: 'base' });
+function areasInterior() { return (state.areas || []).filter(a => a.kind === 'interior').sort(byLabel); }
+function areasExterior() { return (state.areas || []).filter(a => a.kind === 'exterior').sort(byLabel); }
 
 // --- Communal areas as work --------------------------------------------------
 // The interior areas are a job somebody has to be given, the same as a room. They
@@ -473,7 +478,11 @@ const FREQ_DAYS = { nightly: 1, daily: 1, eod: 2, weekly: 7, monthly: 30 };
 // a quiet roll call reads as "everyone is late" when half the crew is simply off,
 // and Hik's Time Card filling in through the morning makes that worse.
 // worksOn absent or null = every day, so an untouched roster behaves as it always has.
-const WEEKDAYS = [['Mon', 1], ['Tue', 2], ['Wed', 3], ['Thu', 4], ['Fri', 5], ['Sat', 6], ['Sun', 0]];
+// SATURDAY STARTS THE WEEK. The room pickers already knew this (DOW_PICK_ORDER),
+// but the staff rota still read Mon→Sun, so the same week was laid out two different
+// ways on two screens and "every other day from the start of the week" landed on
+// whichever one you happened to be looking at.
+const WEEKDAYS = [['Sat', 6], ['Sun', 0], ['Mon', 1], ['Tue', 2], ['Wed', 3], ['Thu', 4], ['Fri', 5]];
 
 // Some days are worked every OTHER week — the Friday rest day is shared out, so
 // half the crew is in one week and the other half the next. A weekly on/off can't
@@ -897,7 +906,19 @@ let state = {
 function finalizeState() {
   if (!Array.isArray(state.staff)) state.staff = DEFAULT_STAFF.map(p => ({ ...p }));
   if (!Array.isArray(state.areas)) state.areas = DEFAULT_AREAS.map(a => ({ ...a }));
+  // Headstones only have to outlive the devices that might still be carrying the old
+  // tick. Three weeks is far longer than that, and stops the map growing for ever.
+  if (state.untick) {
+    const cutoff = shiftDay(todayKey(), -21);
+    Object.keys(state.untick).forEach((k) => { if (String(state.untick[k]) < cutoff) delete state.untick[k]; });
+  }
+  // Write the normalised kind back, so what is stored matches what is read.
+  (state.servicedUnits || []).forEach((u) => {
+    const raw = String(u.type || '').trim().toLowerCase();
+    if (UNIT_TYPES[raw] && u.type !== raw) u.type = raw;
+  });
   if (!Array.isArray(state.teams)) state.teams = DEFAULT_TEAMS.map(t => ({ ...t }));
+  state.teams.sort((a, b) => String(a.name).localeCompare(String(b.name), undefined, { numeric: true, sensitivity: 'base' }));
   if (typeof state.floors !== 'number' || state.floors < 1) state.floors = DEFAULT_FLOORS;
   if (!state.plans || typeof state.plans !== 'object') state.plans = {};
   if (!state.planSeeded || typeof state.planSeeded !== 'object') state.planSeeded = {};
@@ -1096,6 +1117,45 @@ function applyRemote(saved) {
     if (mergedUnits.length !== before) unitsKept = Math.max(unitsKept, 1);
   }
 
+  // A TICK IS A FACT, AND FACTS MERGE. The whole state travels as one blob and the
+  // last writer wins, so `completions` — the ticks themselves — were taken wholesale
+  // from whichever device pushed most recently. Two people ticking rooms off on two
+  // phones was enough to wipe one of them, with no error and nothing on screen: the
+  // room simply came back as due, and it read as the crew forgetting to tick.
+  // A tick is now never removed because the other copy had not heard of it. Only a
+  // deliberate un-tick removes one, and that leaves a headstone in `untick` which
+  // travels the same way — so an un-tick is not undone by a stale copy either.
+  const untick = { ...(saved.untick || {}), ...(state.untick || {}) };
+  const mergedDone = { ...(saved.completions || {}) };
+  let ticksKept = 0;
+  Object.keys(state.completions || {}).forEach((k) => {
+    if (!state.completions[k] || mergedDone[k]) return;
+    mergedDone[k] = true; ticksKept += 1;
+  });
+  Object.keys(untick).forEach((k) => { if (mergedDone[k]) { delete mergedDone[k]; ticksKept += 1; } });
+
+  // The same rule for the date stamped on the room itself, which is the other half of
+  // "was this cleaned today" — otherwise a stale copy hands the tick back but reverts
+  // the room's own record, and the room reads as due anyway.
+  if (mergedUnits) {
+    const mineById = {};
+    (state.servicedUnits || []).forEach((u) => { mineById[u.id] = u; });
+    mergedUnits = mergedUnits.map((u) => {
+      const mine = mineById[u.id];
+      if (!mine) return u;
+      const stamp = (src) => ({ ...u,
+        lastCleaned: src.lastCleaned || null,
+        lastCleanedBy: src.lastCleanedBy || null,
+        lastCleanedByName: src.lastCleanedByName || null });
+      // Un-ticked here, and the incoming copy has not heard: keep our reverted date.
+      if (u.lastCleaned && untick['su:' + u.id + '::' + u.lastCleaned]) return stamp(mine);
+      // Otherwise the later clean wins. A clean that happened cannot be undone by a
+      // copy that predates it.
+      if (mine.lastCleaned && (!u.lastCleaned || String(mine.lastCleaned) > String(u.lastCleaned))) return stamp(mine);
+      return u;
+    });
+  }
+
   const localSeeded = state.planSeeded || {};
   const mergedSeeded = { ...(saved.planSeeded || {}) };
   Object.keys(localSeeded).forEach((d) => { if (mergedPlans[d]) mergedSeeded[d] = mergedSeeded[d] || localSeeded[d]; });
@@ -1104,13 +1164,15 @@ function applyRemote(saved) {
   state.plans = mergedPlans;
   state.planSeeded = mergedSeeded;
   state.removedUnits = gone;
+  state.completions = mergedDone;
+  state.untick = untick;
   if (mergedUnits) state.servicedUnits = mergedUnits;
-  if ((rescued || unitsKept) && !TV_MODE) markDirty();   // ours to deliver — the server has not got these
+  if ((rescued || unitsKept || ticksKept) && !TV_MODE) markDirty();   // ours to deliver — the server has not got these
   if (state.coverageDay !== todayKey()) { state.coverage = {}; state.unitCover = {}; state.pendingCover = null; state.coverageDay = todayKey(); }
   finalizeState();
   try { localStorage.setItem(STORE, JSON.stringify(state)); } catch (e) {}
   tvLastData = Date.now();   // the TV board dates itself off the last thing it heard
-  if ((rescued || unitsKept) && !TV_MODE) remotePush();  // get them up before anything overwrites them
+  if ((rescued || unitsKept || ticksKept) && !TV_MODE) remotePush();  // get them up before anything overwrites them
   route();
 }
 
@@ -1496,7 +1558,15 @@ function toggleRollCallType(typeKey) {
   state.rollCallTypes = next.length === UNIT_TYPE_ORDER.length ? null : next;
   save(); render();
 }
-const unitType = (u) => UNIT_TYPES[u && u.type] ? u.type : 'building';
+// A ROOM'S KIND, READ FORGIVINGLY. Anything unrecognised used to fall through to
+// "building", so a room saved as "Office" with a capital O — or one that never got a
+// kind at all — quietly moved to the Buildings tab and could not be found on Offices
+// where it was expected. Trim and lower-case first, so only a genuinely unknown kind
+// takes the fallback.
+const unitType = (u) => {
+  const raw = String((u && u.type) || '').trim().toLowerCase();
+  return UNIT_TYPES[raw] ? raw : 'building';
+};
 
 function addServicedUnit(unit, guest, freq, type, time) {
   if (!unit) return;
@@ -1601,7 +1671,12 @@ function setUnitsDaysBulk(ids, days, groupLabel) {
 // Every-other-day rooms go onto one of the two alternating sets. Splitting them
 // between the two is what keeps the week even: put them all on one and half the
 // week is empty while the other half is unworkable.
-const EOD_SETS = [[1, 3, 5, 6], [0, 2, 4]];   // Mon/Wed/Fri/Sat and Sun/Tue/Thu
+// EVERY OTHER DAY, COUNTED FROM SATURDAY. Start on Saturday and step two at a time
+// and you get Sat, Mon, Wed, Fri; everything else falls on Sun, Tue, Thu. The two
+// sets between them cover the week exactly once, so a room is on one or the other and
+// the estate splits evenly. Written Saturday-first because that is the order the week
+// is worked in — the days themselves are unchanged, so nothing already pinned moves.
+const EOD_SETS = [[6, 1, 3, 5], [0, 2, 4]];   // Sat/Mon/Wed/Fri and Sun/Tue/Thu
 function suggestDaysFromFreq() {
   const rooms = (state.servicedUnits || []).filter((u) => !u.paused && onRollCall(u));
   const load = [0, 0, 0, 0, 0, 0, 0];
@@ -1627,8 +1702,11 @@ function suggestDaysFromFreq() {
       if (f === 'eod') {
         days = flatter(after(EOD_SETS[0]), after(EOD_SETS[1])) <= 0 ? EOD_SETS[0] : EOD_SETS[1];
       } else if (f === 'weekly') {
-        let best = 0;
-        for (let d = 1; d < 7; d += 1) if (load[d] < load[best]) best = d;
+        // Walk the week in working order from Saturday, and consider all seven days.
+        // The old loop started at 1 and stopped before 7, so Sunday was never even
+        // looked at — a weekly room could not be put on a Sunday however light it was.
+        let best = DOW_PICK_ORDER[0];
+        DOW_PICK_ORDER.forEach((d) => { if (load[d] < load[best]) best = d; });
         days = [best];
       } else {
         // Daily and nightly are due every day, so they cannot drift and pinning them
@@ -2249,7 +2327,21 @@ function runAutoAssign(rooms, people, inIds, load, slotSeed) {
   for (const s of (state.staff || [])) staffById[s.id] = s;
   // Nobody gets handed a kind of room they aren't cleared for — a trainee kept off
   // offices must stay off them however the room reaches them.
-  const ableFor = (u) => order.filter((id) => canCleanUnit(staffById[id], u));
+  // A LEADER IS NOT A FULL CLEANING ROUND. Leaders run their floor and answer for it,
+  // so they carry at most four rooms, and two of those should be the early ones the
+  // customer asked for — the round they have to be on the floor for anyway. Enforced
+  // as a preference with a hard stop: anyone under their limit always wins the room,
+  // and a leader only goes past four when nobody else in today is cleared for it at
+  // all. When that happens the hand-out says so instead of quietly overloading them.
+  const LEADER_ROOMS = 4, LEADER_EARLY = 2;
+  const isLeader = (id) => !!(staffById[id] && staffById[id].isLeader);
+  const capOf = (id) => isLeader(id) ? LEADER_ROOMS : Infinity;
+  const underCap = (id) => (load[id] || 0) < capOf(id);
+  const ableFor = (u) => {
+    const all = order.filter((id) => canCleanUnit(staffById[id], u));
+    const spare = all.filter(underCap);
+    return spare.length ? spare : all;      // nobody spare — the room still gets cleaned
+  };
   // Rotation: don't hand a room straight back to whoever cleaned it last time, so
   // nobody spends every morning on the same patch. Kept as a TIE-BREAK, never ahead
   // of load — an even split is the thing that was actually asked for, and rotation
@@ -2278,8 +2370,12 @@ function runAutoAssign(rooms, people, inIds, load, slotSeed) {
   });
   const spreadSlot = (slot) => {
     rooms.filter((u) => !u.assignedTo && timeSlot(u) === slot).forEach((u) => {
+      // A leader still short of their two early rooms takes the next one going. Every
+      // early room is dealt in this pass, so it is the only place the quota can be met.
+      const owed = (id) => (slot === 'early' && isLeader(id) && slotLoad.early[id] < LEADER_EARLY) ? 0 : 1;
       const pick = ableFor(u).sort((a, b) =>
-        (slotLoad[slot][a] - slotLoad[slot][b])          // nobody carries them all
+        (owed(a) - owed(b))                               // a leader owed their early rooms first
+        || (slotLoad[slot][a] - slotLoad[slot][b])        // nobody carries them all
         || (load[a] - load[b])                            // then whoever has least overall
         || (repeats(a, u) - repeats(b, u))                // then not the same person as last time
         || (order.indexOf(a) - order.indexOf(b)))[0];     // then whoever got here first
@@ -2291,7 +2387,8 @@ function runAutoAssign(rooms, people, inIds, load, slotSeed) {
   // Pass 2: remaining rooms keep their usual cleaner if that person clocked in.
   let kept = 0;
   rooms.forEach((u) => {
-    if (!u.assignedTo && u.usualTo && inIds.has(u.usualTo) && canCleanUnit(staffById[u.usualTo], u)) {
+    if (!u.assignedTo && u.usualTo && inIds.has(u.usualTo) && canCleanUnit(staffById[u.usualTo], u)
+        && underCap(u.usualTo)) {
       u.assignedTo = u.usualTo; load[u.usualTo]++; kept++;
     }
   });
@@ -2302,7 +2399,9 @@ function runAutoAssign(rooms, people, inIds, load, slotSeed) {
   rooms.forEach((u) => {
     if (u.assignedTo) return;
     const owner = ownerOfFloor(floorOfUnit(u.unit));
-    if (owner && inIds.has(owner.id) && canCleanUnit(owner, u)) { u.assignedTo = owner.id; load[owner.id]++; onFloor++; }
+    if (owner && inIds.has(owner.id) && canCleanUnit(owner, u) && underCap(owner.id)) {
+      u.assignedTo = owner.id; load[owner.id]++; onFloor++;
+    }
   });
   // Pass 4: rooms on a floor a TEAM owns go to that team, spread across whichever
   // of its members clocked in. The leader answers for the zone; the app just keeps
@@ -2312,7 +2411,9 @@ function runAutoAssign(rooms, people, inIds, load, slotSeed) {
     if (u.assignedTo) return;
     const t = teamOfFloor(floorOfUnit(u.unit));
     if (!t) return;
-    const mates = teamMembers(t.name).filter((p) => inIds.has(p.id) && canCleanUnit(p, u));
+    const allMates = teamMembers(t.name).filter((p) => inIds.has(p.id) && canCleanUnit(p, u));
+    const spareMates = allMates.filter((p) => underCap(p.id));
+    const mates = spareMates.length ? spareMates : allMates;
     if (!mates.length) return;                    // nobody from that team in today who can take it
     const pick = mates.slice().sort((a, b) =>
       ((load[a.id] || 0) - (load[b.id] || 0))
@@ -2333,28 +2434,41 @@ function runAutoAssign(rooms, people, inIds, load, slotSeed) {
   // lopsided gets moved: rooms with a permanent cleaner stay put, and so do rooms the
   // customer asked a time for, since both were somebody's deliberate decision.
   // A room the customer asked a time for never moves — that is the customer's call,
-  // not a load-balancing decision. A room with a permanent cleaner moves only as a
-  // last resort, once nothing else can close the gap: most rooms here have picked up
-  // a permanent cleaner simply by being assigned by hand once, and left absolute they
-  // freeze the whole morning into whatever shape it drifted into.
-  const freeToMove = (u) => !u.usualTo && timeSlot(u) === 'any';
-  const pinnedButMovable = (u) => !!u.usualTo && timeSlot(u) === 'any';
-  let moved = 0, unpinned = 0;
+  // not a load-balancing decision.
+  // A PERMANENT CLEANER IS NOW ABSOLUTE. It used to be broken as a last resort when
+  // nothing else could close the gap, on the reasoning that most pins were accidents
+  // of having been assigned by hand once. That is no longer how they are set: rooms
+  // are pinned deliberately, so the same person has the same rooms and knows them.
+  // A hand-out that quietly moved them was undoing the decision every morning. The
+  // cost is real and accepted — a day whose pins fall unevenly now STAYS uneven, and
+  // the only fix is to re-pin, which is a decision for the office rather than the app.
+  // A ROOM SITTING WITH ITS FLOOR'S OWNER STAYS THERE. Floors are how the building
+  // is divided up, and a cleaner working one floor walks a fraction of what one
+  // chasing rooms across eleven of them does. Levelling used to treat that as a
+  // preference and move the room anyway, which put people back on the stairs every
+  // morning. Only a room whose floor owner is not in today — so it never reached
+  // them in the first place — is still free to move.
+  const withFloorOwner = (u) => {
+    const owner = ownerOfFloor(floorOfUnit(u.unit));
+    return !!owner && u.assignedTo === owner.id;
+  };
+  const freeToMove = (u) => !u.usualTo && timeSlot(u) === 'any' && !withFloorOwner(u);
+  let moved = 0;
   for (let guard = rooms.length * 4; guard > 0; guard -= 1) {
     const ranked = order.slice().sort((a, b) => load[a] - load[b]);
     const hi = ranked[ranked.length - 1];
     if (load[hi] - load[ranked[0]] <= 1) break;             // as even as it can get
     let done = false;
     // Unpinned rooms first, everywhere they can help, before disturbing any pin.
-    for (const pass of [freeToMove, pinnedButMovable]) {
+    for (const pass of [freeToMove]) {
       for (const lo of ranked) {
         if (load[hi] - load[lo] <= 1) break;
+        if (!underCap(lo)) continue;   // never level a room ONTO a leader who is full
         const cands = rooms.filter((u) => u.assignedTo === hi && pass(u) && canCleanUnit(staffById[lo], u));
         // Of the rooms that could move, shift one this person didn't clean last time.
         const move = cands.find((u) => !repeats(lo, u)) || cands[0];
         if (!move) continue;
         move.assignedTo = lo; load[hi] -= 1; load[lo] += 1; moved += 1;
-        if (pass === pinnedButMovable) unpinned += 1;
         done = true; break;
       }
       if (done) break;
@@ -2363,12 +2477,44 @@ function runAutoAssign(rooms, people, inIds, load, slotSeed) {
   }
 
   const notes = [];
-  if (moved) notes.push(`${moved} moved to even it out${unpinned ? ` (${unpinned} off their usual cleaner)` : ''}`);
+  if (moved) notes.push(`${moved} moved to even it out`);
+  // Pinned rooms do not move, so the split can end lopsided and the office needs to
+  // know it did — a silent gap reads as an even morning that simply went wrong.
+  {
+    const counts = order.map((id) => load[id]);
+    const gap = counts.length ? Math.max(...counts) - Math.min(...counts) : 0;
+    if (gap > 1) notes.push(`still ${gap} apart — the rest are pinned to a cleaner or a floor`);
+  }
   if (kept) notes.push(`${kept} kept with their usual crew`);
   if (onFloor) notes.push(`${onFloor} kept on their own floor`);
   if (onTeam) notes.push(`${onTeam} kept in their team's zone`);
   if (unstaffed) notes.push(`${unstaffed} left unassigned — nobody in today is cleared for them`);
-  hikSyncMsg = { text: `Suggested ${rooms.length} rooms for ${people.length} cleaners${notes.length ? ` (${notes.join(', ')})` : ''} — check each one below.` };
+  // THE RULES, CHECKED OUT LOUD. A leader over four rooms, or short of their two
+  // early ones, is a day that needs a human decision — so it is said with the name
+  // and the number rather than left for somebody to spot on the board.
+  const breaches = [];
+  const leaders = order.filter(isLeader);
+  // Only hold the early quota against the deal when there were actually enough early
+  // rooms to meet it. With six leaders on and three early rooms in the building, "everyone
+  // is short of two" is not a fault in the hand-out — it is arithmetic, and reporting it
+  // every morning would turn the one warning that matters into noise nobody reads.
+  const earlyGoing = rooms.filter((u) => timeSlot(u) === 'early').length;
+  const earlyEnough = earlyGoing >= leaders.length * LEADER_EARLY;
+  leaders.forEach((id) => {
+    const nm = String((staffById[id] || {}).name || '').split(' ')[0];
+    if (load[id] > LEADER_ROOMS) breaches.push(`${nm} has ${load[id]} rooms, limit is ${LEADER_ROOMS}`);
+    else if (earlyEnough && slotLoad.early[id] < LEADER_EARLY) breaches.push(`${nm} has ${slotLoad.early[id]} early of ${LEADER_EARLY}`);
+  });
+  // Everybody a leader means everybody capped, and the building can quietly stop fitting
+  // in the people who are on. Say it once, here, rather than as a room nobody was given.
+  if (leaders.length === order.length && rooms.length > order.length * LEADER_ROOMS) {
+    breaches.push(`everyone on is tagged Leader, so the whole crew is capped at ${LEADER_ROOMS} — `
+      + `${rooms.length} rooms will not fit into ${order.length * LEADER_ROOMS}`);
+  }
+  hikSyncMsg = breaches.length
+    ? { err: true, text: `Handed out ${rooms.length} rooms, but the leader rules could not be met: `
+        + `${breaches.join('; ')}. Tap a room to move it, or bring someone else in.` }
+    : { text: `Suggested ${rooms.length} rooms for ${people.length} cleaners${notes.length ? ` (${notes.join(', ')})` : ''} — check each one below.` };
   save(); render();
 }
 
@@ -2666,9 +2812,10 @@ async function importAttendance(file) {
     render();
   }
 }
-function editServicedUnit(id, newUnit, newGuest, lastCleaned, note) {
+function editServicedUnit(id, newUnit, newGuest, lastCleaned, note, newType) {
   const u = state.servicedUnits.find(x => x.id === id);
   if (!u) return;
+  if (newType && UNIT_TYPES[newType]) u.type = newType;   // re-file it onto the right tab
   if (newUnit != null && newUnit.trim()) {
     const label = newUnit.trim();
     // Block renaming onto a room number that already exists (would create a duplicate).
@@ -2700,9 +2847,14 @@ function toggleServicedDone(id) {
   const unit = state.servicedUnits.find(u => u.id === id);
   if (!state.logRefs) state.logRefs = {};
   if (!state.lastCleanUndo) state.lastCleanUndo = {};
+  if (!state.untick) state.untick = {};
   if (state.completions[k]) {
     // Un-mark: clear the checkmark and remove the history entry we created for it.
     delete state.completions[k];
+    // AND LEAVE A HEADSTONE. Ticks now merge across devices rather than being
+    // overwritten, so without a record of the un-tick it would simply travel back
+    // from the next phone whose copy still had it.
+    state.untick[k] = todayKey();
     const ref = state.logRefs[k];
     if (ref) { unlogClean(ref); delete state.logRefs[k]; }
     // Put the room's own record back to what it was before this tick — otherwise
@@ -2718,6 +2870,7 @@ function toggleServicedDone(id) {
   } else {
     // Mark clean: check it off now, then log who + when to history.
     state.completions[k] = true;
+    delete state.untick[k];          // ticked again — the headstone no longer applies
     if (unit) {
       // Stamp the room itself, not just the history log. The log holds only the
       // newest 1000 rows for the whole building, so a room cleaned rarely drops out
@@ -2748,13 +2901,16 @@ function toggleAreaDone(id) {
   if (!a) return;
   const k = areaDoneKey(a);
   if (!state.logRefs) state.logRefs = {};
+  if (!state.untick) state.untick = {};
   if (state.completions[k]) {
     delete state.completions[k];
+    state.untick[k] = todayKey();
     const ref = state.logRefs[k];
     if (ref) { unlogClean(ref); delete state.logRefs[k]; }
     save(); render();
   } else {
     state.completions[k] = true;
+    delete state.untick[k];
     save(); render();
     // An area has no floor to fall back on, so an unassigned one is logged as Office
     // rather than being credited to whoever happens to own the floor it sits on.
@@ -2815,6 +2971,61 @@ function plannedRoomsToday() {
   });
   return (rooms.length || areas.length) ? { rooms, areas } : null;
 }
+// PLANNED FOR TODAY, BUT DELIBERATELY NOT ON THE ROLL CALL. Airbnb is run as its
+// own job — its own pair, after the offices — and it belongs off the morning board.
+// But dropping those rooms in silence is indistinguishable from a plan that never
+// saved: the banner says "from the plan you made for today" while part of that plan
+// is nowhere on screen. So they are named instead of vanishing, and handed out from
+// the roll call once the morning's own rooms are done.
+function plannedOffRollCall() {
+  const day = workToday();
+  const plan = (state.plans || {})[day];
+  if (!plan) return [];
+  const byId = {};
+  (state.servicedUnits || []).forEach((u) => { byId[u.id] = u; });
+  const seen = new Set();
+  return Object.values(plan)
+    .filter((j) => j.kind === 'unit')
+    .map((j) => byId[j.refId])
+    .filter((u) => u && !onRollCall(u) && !u.paused && !seen.has(u.id) && seen.add(u.id))
+    .sort((a, b) => String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }));
+}
+
+// WHY IS THIS ROOM HERE? The commonest question asked of this screen, and until now
+// the only way to answer it was to open the room, read its frequency, read its last
+// clean, and do the arithmetic. The rule that put it on the list is known exactly —
+// it is the same rule dueOnDayFrom applies — so it is simply said.
+function dueReason(u) {
+  const day = workToday();
+  const last = lastCleanDate(u);
+  const lastTxt = last ? 'Last cleaned ' + fmtDay(last) : 'No cleaning has ever been recorded';
+  if (u.paused) return 'This room is paused, so it should not be on any list at all. ' + lastTxt + '.';
+  if (extraCleanDue(u, day)) return 'An extra clean was asked for today (' + fmtDay(day) + '). ' + lastTxt + '.';
+  if (heldBack(u, day)) return 'It is held back until ' + fmtDay(u.holdUntil) + ', so it should not be here. ' + lastTxt + '.';
+  const days = fixedDays(u);
+  if (days) {
+    const named = DOW_PICK_ORDER.filter((d) => days.indexOf(d) >= 0).map((d) => DOW_LABEL[d]).join(', ');
+    return 'It is pinned to fixed days: ' + named + '. Today is ' + DOW_LABEL[dowOf(day)] + ', so it is on.\n\n'
+      + 'A pinned room goes by its days and nothing else — ' + lastTxt.toLowerCase()
+      + ', and changing that date will not take it off today. Clear its days if you want it back on a cycle.';
+  }
+  if (!last) {
+    return 'No cleaning has ever been recorded for this room, so it counts as due — the app cannot tell '
+      + 'a room nobody has cleaned from one nobody has told it about.\n\n'
+      + 'Set "Last cleaned" on it and it drops into its ' + String(FREQ_LABEL[u.freq] || 'Daily').toLowerCase() + ' cycle.';
+  }
+  if (cleanedToday(u)) {
+    return 'It was cleaned today, and cleaned rooms stay on the list with a ✓ so the morning does not '
+      + 'shrink as the crew works through it.\n\n' + lastTxt + ' · ' + (FREQ_LABEL[u.freq] || 'Daily') + '.';
+  }
+  const nd = nextDueDate(u);
+  return (FREQ_LABEL[u.freq] || 'Daily') + '. ' + lastTxt
+    + (nd ? ', which brought it due on ' + fmtDay(nd) + '.' : ', so it is due now.');
+}
+function showDueReason(u) {
+  showInfo('Unit ' + u.unit + ' — why it is on today', dueReason(u));
+}
+
 // Today's rooms, planned or derived — the one answer both the panel and the
 // close-out read, so they can no longer disagree.
 // EVERYTHING DUE, PLUS EVERYTHING PLANNED. It used to be one or the other: a plan
@@ -2908,6 +3119,7 @@ function markTonightAllDone() {
 async function runBulkMarkDone(rooms, areas) {
   if (!state.logRefs) state.logRefs = {};
   if (!state.lastCleanUndo) state.lastCleanUndo = {};
+  if (!state.untick) state.untick = {};
   // Same work day the single tick uses, so a close-out after midnight lands on the
   // round the crew is still on rather than the morning that has just started.
   const day = workToday();
@@ -2921,6 +3133,7 @@ async function runBulkMarkDone(rooms, areas) {
     };
     const who = resolveCleanerFor(u, null);
     state.completions[k] = true;
+    delete state.untick[k];
     u.lastCleaned = day;
     u.lastCleanedBy = who.id;
     u.lastCleanedByName = who.name;
@@ -2928,6 +3141,7 @@ async function runBulkMarkDone(rooms, areas) {
   });
   areas.forEach((a) => {
     state.completions[areaDoneKey(a)] = true;
+    delete state.untick[areaDoneKey(a)];
     entries.push({ key: areaDoneKey(a), u: areaAsUnit(a), who: a.assignedTo || 'office' });
   });
   // Show it done straight away — the write follows, and a failure surfaces its own
@@ -3036,7 +3250,14 @@ const DEFAULT_TEAMS = [
   { name: 'Lead',   color: '#b45309' },
 ];
 const TEAM_PALETTE = ['#0284c7','#15803d','#7c3aed','#b45309','#dc2626','#ea580c','#a21caf','#0284c7','#15803d','#d97706'];
-function getTeams() { return state.teams || DEFAULT_TEAMS; }
+// ALWAYS ALPHABETICAL, from the one place every screen reads teams through.
+// Teams were kept in the order they happened to be typed in, so deleting one and
+// adding it back put it at the bottom of the list for good — Settings, the Team tab
+// and the employee form each showed the same jumble, and the only way to get a
+// sensible order back was to delete every team and re-add them in order.
+// Numeric collation so Team 10 sits after Team 2 rather than after Team 1.
+const byTeamName = (a, b) => String(a.name).localeCompare(String(b.name), undefined, { numeric: true, sensitivity: 'base' });
+function getTeams() { return (state.teams || DEFAULT_TEAMS).slice().sort(byTeamName); }
 function teamColor(name) { const t = getTeams().find(t => t.name === name); return t ? t.color : '#5b6a7f'; }
 function addTeam(name) {
   if (!name || !name.trim()) return;
@@ -3102,6 +3323,26 @@ function editEmployee(id, name, crew, floorsStr) {
 }
 function startEditEmp(id) { state.editingEmp = id; render(); }
 function cancelEditEmp() { state.editingEmp = null; render(); }
+// ONE ROLE PER PERSON. "Cleaner" and "Leader" were two independent switches, so a
+// person could be a leader who was not a cleaner, both could be off with no word for
+// what that meant, and the card never said "assistant" — which is the word the office
+// actually uses. One picker, three states, and the rules hang off it.
+// The star is how a leader is picked out everywhere else in the app — the roll call,
+// the plan, the team list — so it belongs on the role too. One mark, one meaning.
+const ROLES = {
+  leader:    { label: 'Leader',      icon: '★ ', color: '#b45309', hint: 'Runs the floor · at most 4 rooms, 2 of them early' },
+  assistant: { label: 'Assistant',   icon: '',   color: '#0369a1', hint: 'Cleans a full round' },
+  none:      { label: 'Not cleaning', icon: '',  color: '#5f7189', hint: 'No rooms handed out' },
+};
+const ROLE_ORDER = ['leader', 'assistant', 'none'];
+const roleOf = (p) => (!p || !p.isCleaner) ? 'none' : (p.isLeader ? 'leader' : 'assistant');
+function setRole(id, role) {
+  const p = (state.staff || []).find((s) => s.id === id);
+  if (!p) return;
+  p.isCleaner = role !== 'none';
+  p.isLeader = role === 'leader';
+  save(); render();
+}
 function toggleCleaner(id) {
   const p = state.staff.find((s) => s.id === id);
   if (p) p.isCleaner = !p.isCleaner;
@@ -3336,20 +3577,109 @@ function unitGroups(wrap, typeKeys, emptyMsg) {
     wrap.appendChild(el(`<div class="empty" style="text-align:center;padding:30px 0">${emptyMsg || 'No units yet — add one above.'}</div>`));
     return;
   }
+
+  // FIND A ROOM BY TYPING ITS NUMBER. These tabs are the reference list — you come
+  // here to look one room up, and with sixty-six of them that meant scrolling. The
+  // filter runs over the cards already on screen rather than re-drawing the page,
+  // so the box keeps the cursor while you type.
+  const rows = [];
+  let q = '', freqPick = '';
+  const search = el(`<input type="search" placeholder="Search a room, guest or note…" `
+    + `style="width:100%;margin:6px 0 6px;background:#ffffff;color:#15202e;border:1px solid #d8e0ea;`
+    + `border-radius:10px;padding:11px 13px;font-size:15px">`);
+  // FILTER BY HOW OFTEN IT IS CLEANED. "Which rooms are weekly?" and "what is still
+  // on a frequency rather than fixed days?" are the two questions this list is read
+  // for, and both meant opening rooms one at a time to find out.
+  const FREQ_FILTERS = [['', 'All'], ['pinned', 'On set days'], ['nightly', 'Nightly'], ['daily', 'Daily'],
+    ['eod', 'Every other day'], ['weekly', 'Weekly'], ['monthly', 'Monthly']];
+  const freqRow = el(`<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:6px"></div>`);
+  const freqBtns = {};
+  const hits = el(`<div style="font-size:11px;color:#5f7189;font-weight:600;min-height:15px;margin-bottom:6px"></div>`);
+  const apply = () => {
+    let shown = 0;
+    rows.forEach((g) => {
+      let n = 0;
+      g.cards.forEach(({ card, hay, freq, pinned }) => {
+        const okText = !q || hay.includes(q);
+        const okFreq = !freqPick || (freqPick === 'pinned' ? pinned : (!pinned && freq === freqPick));
+        const on = okText && okFreq;
+        card.style.display = on ? '' : 'none';
+        if (on) n += 1;
+      });
+      g.head.style.display = n ? '' : 'none';
+      g.count.textContent = (q || freqPick) ? n + ' of ' + g.cards.length : String(g.cards.length);
+      shown += n;
+    });
+    Object.keys(freqBtns).forEach((k) => freqBtns[k].classList.toggle('on', k === freqPick));
+    // A frequency with nothing in it is worth saying — it is usually the answer to
+    // "why is nothing weekly?" (because every room got pinned to set days instead).
+    if (!q && freqPick) {
+      const lbl = (FREQ_FILTERS.find(([k]) => k === freqPick) || ['', ''])[1];
+      hits.style.color = shown ? '#5f7189' : '#b45309';
+      hits.textContent = shown ? shown + ' ' + lbl.toLowerCase() : 'No rooms are set to ' + lbl.toLowerCase() + '.';
+      return;
+    }
+    hits.textContent = '';
+    hits.style.color = '#5f7189';
+    if (!q) return;
+    const shownNow = shown;
+    if (shownNow) { hits.textContent = shownNow + ' match' + (shownNow === 1 ? '' : 'es'); return; }
+    // NOTHING HERE — BUT IS IT ON ANOTHER TAB? Rooms are split across Offices,
+    // Buildings and Airbnb by type, and each tab only ever searched its own. Look for
+    // 605 on Offices when it is filed as a building room and the answer was a blank
+    // screen, which reads as "the room is gone" rather than "you are on the wrong tab".
+    const TAB_OF = { office: 'offices', building: 'buildings', airbnb: 'airbnb' };
+    const elsewhere = (state.servicedUnits || []).filter((u) =>
+      !typeKeys.includes(unitType(u))
+      && [u.unit, u.guest, u.note].filter(Boolean).join(' ').toLowerCase().includes(q));
+    if (!elsewhere.length) { hits.textContent = 'No room matches “' + search.value.trim() + '”.'; return; }
+    hits.style.color = '#b45309';
+    const first = elsewhere[0];
+    const tabName = UNIT_TYPES[unitType(first)].label;
+    hits.textContent = elsewhere.length === 1
+      ? 'Unit ' + first.unit + ' is filed as a ' + tabName + ' room — it is on the ' + tabName + ' tab.'
+      : elsewhere.length + ' matching rooms are on other tabs (' + [...new Set(elsewhere.map((u) => UNIT_TYPES[unitType(u)].label))].join(', ') + ').';
+    const go = el(`<button class="freqmini" style="margin-left:8px;padding:4px 10px;font-size:11px">`
+      + `Go to ${esc(tabName)} →</button>`);
+    go.onclick = () => setTab(TAB_OF[unitType(first)] || 'rooms');
+    hits.appendChild(go);
+  };
+  search.oninput = () => { q = search.value.trim().toLowerCase(); apply(); };
+  FREQ_FILTERS.forEach(([key, label]) => {
+    const b = el(`<button class="freqmini${key === '' ? ' on' : ''}" style="flex:0 0 auto;padding:6px 10px;font-size:11px">${esc(label)}</button>`);
+    b.onclick = () => { freqPick = (freqPick === key) ? '' : key; apply(); };
+    freqBtns[key] = b;
+    freqRow.appendChild(b);
+  });
+  // ABOVE EVERYTHING, INCLUDING THE ADD FORM. Appended in place it landed under a
+  // full "add a unit" form, so finding a room meant scrolling past the thing you use
+  // once a month to reach the thing you use every day — and it read as missing.
+  wrap.insertBefore(hits, wrap.firstChild);
+  wrap.insertBefore(freqRow, wrap.firstChild);
+  wrap.insertBefore(search, wrap.firstChild);
+
   typeKeys.forEach(tk => {
     const t = UNIT_TYPES[tk];
-    const group = relevant.filter(u => unitType(u) === tk).sort((a, b) =>
-      (slotRank(a) - slotRank(b))                           // 🌅 early first
-      || (b.priority ? 1 : 0) - (a.priority ? 1 : 0)                              // then priority ⭐
-      || String(a.time || '~').localeCompare(String(b.time || '~'))               // then earliest time
-      || String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }));
+    // UNIT ORDER, PLAINLY. This is the reference list, not a round to be worked, so
+    // it reads 101, 102, 103 — an early or priority room jumping the queue here is
+    // just a room you cannot find. The working order lives on the roll call and the
+    // plan, which is where the order is an instruction.
+    const group = relevant.filter(u => unitType(u) === tk)
+      .sort((a, b) => String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }));
     if (!group.length) return;
     const head = el(`<div class="crew-head" style="margin-top:18px"></div>`);
     head.appendChild(el(`<div class="crew-dot" style="background:${t.color}"></div>`));
     head.appendChild(el(`<div class="crew-name">${t.label}</div>`));
-    head.appendChild(el(`<div class="crew-sub">${group.length}</div>`));
+    const count = el(`<div class="crew-sub">${group.length}</div>`);
+    head.appendChild(count);
     wrap.appendChild(head);
-    group.forEach(u => wrap.appendChild(servicedCard(u, onTodaysList(u))));
+    const cards = group.map((u) => {
+      const card = servicedCard(u, onTodaysList(u));
+      wrap.appendChild(card);
+      return { card, freq: u.freq || 'daily', pinned: !!fixedDays(u),
+        hay: [u.unit, u.guest, u.note, u.time].filter(Boolean).join(' ').toLowerCase() };
+    });
+    rows.push({ head, count, cards });
   });
 }
 
@@ -3508,15 +3838,26 @@ function autoPlanDay(day) {
   const load = {}, slotLoad = { early: {}, late: {} };
   order.forEach((id) => { load[id] = 0; slotLoad.early[id] = 0; slotLoad.late[id] = 0; });
   const roomOf = (k) => unitById[plan[k].refId];
-  const ableFor = (u) => order.filter((id) => canCleanUnit(staffById[id], u));
+  // The same leader rules the morning hand-out works to — a plan that ignored them
+  // would simply hand the breach to the morning to discover.
+  const LEADER_ROOMS = 4, LEADER_EARLY = 2;
+  const isLeader = (id) => !!(staffById[id] && staffById[id].isLeader);
+  const underCap = (id) => (load[id] || 0) < (isLeader(id) ? LEADER_ROOMS : Infinity);
+  const ableFor = (u) => {
+    const all = order.filter((id) => canCleanUnit(staffById[id], u));
+    const spare = all.filter(underCap);
+    return spare.length ? spare : all;
+  };
   const repeats = (id, u) => (u.lastCleanedBy && id === u.lastCleanedBy) ? 1 : 0;
 
   keys.forEach((k) => { plan[k].assignedTo = null; });
   const deal = (slot) => {
     keys.filter((k) => !plan[k].assignedTo && (slot ? timeSlot(roomOf(k)) === slot : true)).forEach((k) => {
       const u = roomOf(k);
+      const owed = (id) => (slot === 'early' && isLeader(id) && slotLoad.early[id] < LEADER_EARLY) ? 0 : 1;
       const pick = ableFor(u).slice().sort((a, b) =>
-        (slot ? slotLoad[slot][a] - slotLoad[slot][b] : 0)
+        (owed(a) - owed(b))
+        || (slot ? slotLoad[slot][a] - slotLoad[slot][b] : 0)
         || (load[a] - load[b])
         || (repeats(a, u) - repeats(b, u))
         || (order.indexOf(a) - order.indexOf(b)))[0];
@@ -3810,7 +4151,19 @@ function resyncPlanDay(day, addOnly) {
   let removed = 0;
   if (!addOnly) Object.keys(plan).forEach((k) => {
     if (plan[k].kind !== 'unit') return;        // an area on a day was somebody's call
-    if (wantKeys.has(k) || plan[k].assignedTo || !plan[k].auto) return;
+    if (wantKeys.has(k)) return;                // still due on this day — it stays
+    if (!plan[k].auto) return;                  // somebody put this room on the day by hand
+    // A NAME ON A ROOM IS NOT A REASON TO KEEP IT. This used to skip anything with an
+    // assignee at all, and seeding a future day hands every room out immediately — so
+    // every auto-added room had a name from the moment it existed and could never be
+    // removed again. Clean an every-other-day room today and its next due moves past
+    // tomorrow, the re-sync correctly drops it from what is wanted, and then refused
+    // to delete it: 701 and 704 sat on today AND tomorrow, and the day's own warning
+    // ("on both days without being daily") was the app noticing its own bug.
+    // Only a hand-out somebody actually made is protected now. Rooms dealt by the
+    // machine have no such claim, and jobs from before this flag existed carry no
+    // mark — which is what lets the days already wrong put themselves right.
+    if (plan[k].byHand) return;
     delete plan[k]; removed += 1;
   });
 
@@ -4033,7 +4386,13 @@ function unmarkPlanDropped(day, k) {
 }
 function setPlanAssignee(day, k, pid) {
   const plan = getPlan(day);
-  if (plan[k]) plan[k].assignedTo = pid || null;
+  // MARK IT AS A HUMAN DECISION. Every hand move — the drag, the move sheet, the
+  // dropdown — comes through here, and the re-sync needs to tell a room somebody
+  // deliberately gave to a person from one the machine dealt out on its own.
+  if (plan[k]) {
+    plan[k].assignedTo = pid || null;
+    if (pid) plan[k].byHand = true; else delete plan[k].byHand;
+  }
   mirrorPlanToBoard(day, k);
   save(); render();
 }
@@ -4104,7 +4463,12 @@ function viewPlan() {
   const wrap = el('<div class="body"></div>');
   const day = curPlanDay();
   const isTomorrow = day === tomorrowKey();
-  const isToday = day === todayKey();
+  // "Today" means the WORK day, the same day Roll Call, the close-out and the
+  // automatic planning pass all use. It used to mean the calendar day here alone, so
+  // a plan made between midnight and the 3am cutoff was filed one date FORWARD of the
+  // one Roll Call reads — the plan was made, saved, and simply never appeared on the
+  // morning it was made for. Daytime the two dates are identical and nothing changes.
+  const isToday = day === workToday() || day === todayKey();
   const dt = new Date(day + 'T00:00:00');
 
   // Fill the day from the schedule before drawing it, so the list is already
@@ -4125,7 +4489,7 @@ function viewPlan() {
   // worth being able to answer, and the day picker used to refuse to go behind today.
   const yday = shiftDay(workToday(), -1);
   quick.appendChild(jump('Yesterday', yday, day === yday));
-  quick.appendChild(jump('Today', todayKey(), isToday));
+  quick.appendChild(jump('Today', workToday(), isToday));
   quick.appendChild(jump('Tomorrow', tomorrowKey(), isTomorrow));
   const dayIn = el(`<input type="date" value="${esc(day)}" min="${esc(shiftDay(workToday(), -120))}" style="flex:1;min-width:0;background:#ffffff;color:#15202e;border:1px solid #d8e0ea;border-radius:8px;padding:7px 9px;font-size:13px">`);
   dayIn.onchange = (e) => { planDay = e.target.value || null; render(); };
@@ -4775,12 +5139,31 @@ function servicedCard(u, isDue) {
     card.appendChild(el(`<div style="font-size:11px;color:#5b6a7f;font-weight:600;margin-bottom:4px">Last cleaned on (optional — sets the schedule)</div>`));
     const eL = el(`<input id="edLast_${u.id}" type="date" value="${esc(u.lastCleaned||'')}" max="${esc(todayKey())}" style="margin-bottom:10px;width:100%">`);
     card.appendChild(eL);
+    // WHICH TAB THIS ROOM LIVES ON. A room's kind was fixed at the moment it was
+    // added and could never be changed, so one filed wrong — or filed nowhere, which
+    // silently means "building" — could only be corrected by deleting it and adding
+    // it again, losing its history with it.
+    card.appendChild(el(`<div style="font-size:11px;color:#5b6a7f;font-weight:600;margin-bottom:4px">Kind of room (which tab it appears on)</div>`));
+    let chosenType = unitType(u);
+    const typeRow = el(`<div style="display:flex;gap:6px;margin-bottom:10px"></div>`);
+    const typeBtns = {};
+    UNIT_TYPE_ORDER.forEach((tk) => {
+      const b = el(`<button class="freqmini ${chosenType === tk ? 'on' : ''}" style="flex:1 1 0;padding:8px 6px">${esc(UNIT_TYPES[tk].label)}</button>`);
+      b.onclick = () => {
+        chosenType = tk;
+        Object.values(typeBtns).forEach((x) => x.classList.remove('on'));
+        b.classList.add('on');
+      };
+      typeBtns[tk] = b;
+      typeRow.appendChild(b);
+    });
+    card.appendChild(typeRow);
     card.appendChild(el(`<div style="font-size:11px;color:#5b6a7f;font-weight:600;margin-bottom:4px">Note (e.g. guest preference)</div>`));
     const eN = el(`<input id="edNote_${u.id}" value="${esc(u.note||'')}" placeholder="e.g. Guest leaves by 9am — clean first" style="margin-bottom:10px;width:100%">`);
     card.appendChild(eN);
     const row = el(`<div style="display:flex;gap:8px"></div>`);
     const saveB = el(`<button class="add-btn" style="flex:1">Save</button>`);
-    saveB.onclick = () => editServicedUnit(u.id, document.getElementById('edUnit_'+u.id).value, document.getElementById('edGuest_'+u.id).value, document.getElementById('edLast_'+u.id).value, document.getElementById('edNote_'+u.id).value);
+    saveB.onclick = () => editServicedUnit(u.id, document.getElementById('edUnit_'+u.id).value, document.getElementById('edGuest_'+u.id).value, document.getElementById('edLast_'+u.id).value, document.getElementById('edNote_'+u.id).value, chosenType);
     const cancelB = el(`<button class="modal-skip">Cancel</button>`);
     cancelB.onclick = () => cancelEditUnit();
     row.appendChild(saveB); row.appendChild(cancelB);
@@ -4911,6 +5294,14 @@ function viewRollCall() {
   const s = statsBar();
   const wrap = el('<div></div>');
   const body = el('<div class="body"></div>');
+  // SET-UP LIVES AT THE BOTTOM, SHUT. This screen is opened every morning by whoever
+  // is on, and it had twenty-six buttons on it — most of them one-off jobs that will
+  // never be pressed twice: sync the roster, import a file, work out the days, free
+  // up the pinned rooms, empty the board. They pushed the actual morning — the rooms,
+  // the hand-out, the close-out — down the page and made the screen unreadable to
+  // anyone who had not been shown it. Anything that is not part of today goes in
+  // here, collapsed, and the morning is what is left.
+  const setupBox = el('<div style="display:flex;flex-direction:column;gap:8px"></div>');
 
   // CLOSE OUT THE MORNING — first thing on the page, because at hand-over the
   // answer is nearly always "all of it" and it should not need scrolling for.
@@ -4979,16 +5370,22 @@ function viewRollCall() {
   syncBox.appendChild(quick);
   // When was attendance last read? Without this, "nobody clocked in" and "we haven't
   // looked since you opened the page" are indistinguishable.
-  const pullRow = el('<div style="display:flex;align-items:center;gap:8px;margin-top:10px"></div>');
+  const pullRow = el('<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px"></div>');
   pullRow.appendChild(el(`<div id="lastPull" style="flex:1;min-width:0;font-size:11px;color:#5b6a7f;font-weight:600">${esc(lastPullLabel())}</div>`));
   const refreshBtn = el('<button class="freqmini" style="flex:0 0 auto;padding:6px 12px">↻ Check now</button>');
   refreshBtn.onclick = async () => { refreshBtn.textContent = '…'; await loadHikArrivals(); render(); };
   pullRow.appendChild(refreshBtn);
-  syncBox.appendChild(pullRow);
+  // STAYS ON THE MORNING SCREEN. "Nobody has clocked in" and "we have not looked
+  // since you opened the page" are different problems with the same empty board, and
+  // this line is the only thing that tells them apart — so it does not go in the
+  // drawer with the roster sync and the file import, which are set-up jobs.
+  body.appendChild(pullRow);
+  setupBox.appendChild(syncBox);
+  // What the last hand-out actually did stays on the morning screen, not in the
+  // drawer with the thing that triggered it — it is the answer to "did that work?".
   if (hikSyncMsg) {
-    syncBox.appendChild(el(`<div style="font-size:12px;margin-top:8px;font-weight:600;color:${hikSyncMsg.err ? '#dc2626' : '#15803d'}">${esc(hikSyncMsg.text)}</div>`));
+    body.appendChild(el(`<div style="font-size:13px;margin-bottom:14px;font-weight:700;color:${hikSyncMsg.err ? '#dc2626' : '#15803d'}">${esc(hikSyncMsg.text)}</div>`));
   }
-  body.appendChild(syncBox);
 
   // Unknown-staff alert: badged in but not in the staff list
   if (hikUnknown.length) {
@@ -5037,8 +5434,11 @@ function viewRollCall() {
             + (ahead.length ? ` You have a plan for ${esc(ahead.slice(0, 3).join(', '))}.` : '')
             + `</div>`));
     }
-    const noRec = openR.filter((u) => !lastCleanDate(u)).length;
+    // The early round gets its own number. It is the part of the morning with a
+    // deadline on it, and a count is the only way to see it is not all on one person.
+    const earlyOpen = openR.filter((u) => timeSlot(u) === 'early').length;
     box.appendChild(el(`<div style="font-size:12px;color:#5f7189;font-weight:600;margin:-6px 0 10px">`
+      + (earlyOpen ? `<b style="color:#b91c1c">${earlyOpen} early</b> · ` : '')
       + `${openR.length - unass.length} handed out`
       + ` · <b style="color:${unass.length ? '#b45309' : '#15803d'}">${unass.length} still to hand out</b>`
       + (toCheck.length ? ` · <b style="color:#b45309">${toCheck.length} to check</b>` : '')
@@ -5048,25 +5448,57 @@ function viewRollCall() {
     todaysRooms.forEach((u) => {
       const done = cleanedToday(u);
       const who = (state.staff || []).find((p) => p.id === u.assignedTo);
+      // A room the customer asked for first thing reads RED here, the same red the
+      // Plan chips and the TV board already use for it — one colour for one fact, so
+      // the early round is seen at a glance instead of being a 🌅 to hunt for.
+      // Done still wins: a room that is cleaned is finished, however early it was due.
+      const early = !done && timeSlot(u) === 'early';
       const tone = done ? 'background:#eaf7ee;border-color:#bfe3ca;color:#15803d'
+        : early ? 'background:#fee2e2;border-color:#dc2626;color:#b91c1c;font-weight:800'
         : who ? 'background:#eef6fd;border-color:#cfe8fb;color:#0369a1'
         : 'background:#fff7ed;border-color:#fcd9a8;color:#b45309';
       const signed = who && assignConfirmedToday(u);
       const noRecord = !lastCleanDate(u);
-      const tip = done ? 'Cleaned today'
+      const tip = (early ? 'Wanted first thing — ' : '')
+        + (done ? 'Cleaned today'
         : noRecord ? 'No record of this room ever being cleaned'
         : who ? (signed ? 'Confirmed for ' + who.name : 'Suggested for ' + who.name + ' — not checked yet')
-        : 'Not assigned yet';
-      chips.appendChild(el(`<div class="freqmini" style="flex:0 0 auto;padding:6px 10px;${tone}" title="${esc(tip)}">`
+        : 'Not assigned yet');
+      const chip = el(`<button class="freqmini" style="flex:0 0 auto;padding:6px 10px;${tone}" title="${esc(tip)} — tap to see why it is on today">`
         + `${flags(u)}${esc(u.unit)}`
-        + `${done ? ' ✓' : who ? ' · ' + esc(who.name.split(' ')[0]) + (signed ? '' : ' ?') : ''}</div>`));
+        + `${done ? ' ✓' : who ? ' · ' + esc(who.name.split(' ')[0]) + (signed ? '' : ' ?') : ''}</button>`);
+      chip.onclick = () => showDueReason(u);
+      chips.appendChild(chip);
     });
     box.appendChild(chips);
     // Sits under the chips so the counts above stay the first thing read.
-    if (noRec) {
-      box.appendChild(el(`<div style="font-size:11px;color:#b45309;font-weight:600;margin-top:8px">`
-        + `⚠ ${noRec} of these have never been recorded as cleaned — they may not actually be dirty. `
-        + `Set "Last cleaned" on them in All Rooms and this list gets shorter.</div>`));
+    // WHY THE LIST IS THIS LONG, NAMED. "Why is 102 coming up?" was being asked room
+    // by room, and the answer was only ever available by opening each one. Every room
+    // here is on the list for one of three reasons, so the list says which — and names
+    // the rooms in the one category that is actually a mistake.
+    {
+      const never = openR.filter((u) => !lastCleanDate(u));
+      const pinned = openR.filter((u) => lastCleanDate(u) && fixedDays(u));
+      const cycle = openR.filter((u) => lastCleanDate(u) && !fixedDays(u));
+      const nums = (list) => list.slice(0, 14).map((u) => u.unit).join(', ')
+        + (list.length > 14 ? ' +' + (list.length - 14) + ' more' : '');
+      const line = (txt, colour) => el(`<div style="font-size:11px;color:${colour};font-weight:600;margin-top:6px">${txt}</div>`);
+      if (pinned.length) box.appendChild(line(`${pinned.length} pinned to ${DOW_LABEL[dowOf(workToday())]}: ${esc(nums(pinned))}`, '#5f7189'));
+      if (cycle.length) box.appendChild(line(`${cycle.length} due on their cycle: ${esc(nums(cycle))}`, '#5f7189'));
+      if (never.length) {
+        box.appendChild(line(`⚠ ${never.length} never recorded as cleaned, so ${never.length === 1 ? 'it shows' : 'they show'} `
+          + `every day: <b>${esc(nums(never))}</b>`, '#b45309'));
+        box.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin-top:2px">`
+          + `The app cannot tell a room nobody has cleaned from one nobody has told it about. `
+          + `Give ${never.length === 1 ? 'it' : 'them'} a date and ${never.length === 1 ? 'it drops' : 'they drop'} into ${never.length === 1 ? 'its' : 'their'} cycle. `
+          + `If you no longer clean one, remove it on its own tab.</div>`));
+        const fix = el(`<button class="freqmini" style="width:100%;padding:9px;margin-top:6px;border-color:#b45309;color:#b45309">`
+          + `Set the ${never.length} never-recorded room${never.length === 1 ? '' : 's'} as cleaned today</button>`);
+        fix.onclick = () => setUnitsLastCleanedBulk(never.map((u) => u.id), workToday(), 'the rooms with no cleaning on record');
+        box.appendChild(fix);
+      }
+      // Tapping any room still gives the full reason for that one room.
+      box.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin-top:6px">Tap a room above for the reason it is on today.</div>`));
     }
 
     // The button that hands rooms out belongs above the list it produces.
@@ -5077,27 +5509,31 @@ function viewRollCall() {
     }
     // Tying rooms one at a time is why hardly any are tied. The log already knows who
     // has been doing what, so offer to read it — but only when it has something to say.
-    {
+    // ONLY WHEN THE DRAWER IS OPEN. Both of these walk every room — one of them the
+    // whole history log as well — and they existed to decide whether a button that is
+    // now inside the drawer is worth showing. Run on every render they were most of
+    // the cost of opening the morning screen, for an answer nobody was looking at.
+    if (state.rcSetupOpen) {
       const lu = learnUsualPlan(LEARN_DAYS);
       if (lu.proposals.length) {
         const learnBtn = el(`<button class="freqmini" style="width:100%;padding:9px;margin-bottom:4px;border-color:#7c3aed;color:#7c3aed">`
           + `★ Keep ${lu.proposals.length} room${lu.proposals.length === 1 ? '' : 's'} with whoever has been doing them</button>`);
         learnBtn.onclick = () => learnUsualCleaners();
-        box.appendChild(learnBtn);
-        box.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin:-2px 0 8px">`
+        setupBox.appendChild(learnBtn);
+        setupBox.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin:-2px 0 8px">`
           + `From the last ${LEARN_DAYS} days of the log. Rooms without a clear regular keep rotating.</div>`));
       }
     }
     // Turning frequencies into actual days is the one-off that stops the schedule
     // drifting. Only offered while there are rooms it would still change.
-    {
+    if (state.rcSetupOpen) {
       const sd = suggestDaysFromFreq();
       if (sd.proposals.length) {
         const dBtn = el(`<button class="freqmini" style="width:100%;padding:9px;margin-bottom:4px;border-color:#0284c7;color:#0284c7">`
           + `🗓 Work out the days for ${sd.proposals.length} room${sd.proposals.length === 1 ? '' : 's'}</button>`);
         dBtn.onclick = () => suggestDaysFromFreqConfirm();
-        box.appendChild(dBtn);
-        box.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin:-2px 0 8px">`
+        setupBox.appendChild(dBtn);
+        setupBox.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin:-2px 0 8px">`
           + `From the frequency each is already set to, split so the week comes out even. `
           + `Rooms then come round on the same days instead of sliding.</div>`));
       }
@@ -5109,16 +5545,17 @@ function viewRollCall() {
     if (pinnedCount && pinnedCount >= rollTotal / 3) {
       const pinBtn = el(`<button class="freqmini" style="width:100%;padding:9px;margin-bottom:4px;border-color:#7c3aed;color:#7c3aed">⟲ Free up ${pinnedCount} room${pinnedCount === 1 ? '' : 's'} tied to one cleaner</button>`);
       pinBtn.onclick = () => clearAllUsualCleaners();
-      box.appendChild(pinBtn);
-      box.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin:-2px 0 8px">`
-        + `${pinnedCount} of ${rollTotal} go to the same person every day, so they can't rotate.</div>`));
+      setupBox.appendChild(pinBtn);
+      setupBox.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin:-2px 0 8px">`
+        + `${pinnedCount} of ${rollTotal} go to the same person every day. That is the point now — `
+        + `this is only here to undo it.</div>`));
     }
     // Clearing the board only makes sense when something is actually on it.
     const heldNow = openR.filter((u) => u.assignedTo && !u.usualTo);
     if (heldNow.length) {
       const clearBtn = el(`<button class="freqmini" style="width:100%;padding:9px;margin-bottom:4px;border-color:#b45309;color:#b45309">✕ Put all ${heldNow.length} room${heldNow.length === 1 ? '' : 's'} back in the pool</button>`);
       clearBtn.onclick = () => unassignAllRooms();
-      box.appendChild(clearBtn);
+      setupBox.appendChild(clearBtn);
     }
     // Reversible while today's shuffle is still the last thing that happened.
     if (state.lastAutoAssign && String(state.lastAutoAssign.at).slice(0, 10) === todayKey()) {
@@ -5174,6 +5611,54 @@ function viewRollCall() {
       box.appendChild(el(`<div style="font-size:12px;color:#15803d;font-weight:700;margin-top:12px">✓ All ${okCount} assignment${okCount === 1 ? '' : 's'} confirmed</div>`));
     }
     body.appendChild(box);
+  }
+
+  // THE SEPARATE JOB. Rooms planned for today that the roll call is not about —
+  // Airbnb, cleaned after the offices by its own pair. Off the board, as it should
+  // be, but SAID rather than silently dropped. It stays quiet while the morning's own
+  // rooms are still open, then turns into the hand-out, so nobody has to remember to
+  // go and deal it once the offices are finished.
+  {
+    const off = plannedOffRollCall();
+    if (off.length) {
+      const kinds = [...new Set(off.map((u) => UNIT_TYPES[unitType(u)].label))].join(' + ');
+      const openNow = todaysRoomList().filter((u) => !cleanedToday(u)).length;
+      const offOpen = off.filter((u) => !cleanedToday(u));
+      const oBox = el('<div style="margin-bottom:18px"></div>');
+      oBox.appendChild(el(`<div class="section-label">${esc(kinds)} — a separate job (${off.length})</div>`));
+      oBox.appendChild(el(`<div style="font-size:12px;color:#5f7189;font-weight:600;margin:-6px 0 8px">`
+        + `Planned for today and kept off the roll call on purpose. Cleaned after the offices, by its own crew.</div>`));
+      const oChips = el('<div style="display:flex;flex-wrap:wrap;gap:6px"></div>');
+      off.forEach((u) => {
+        const done = cleanedToday(u);
+        const who = (state.staff || []).find((p) => p.id === u.assignedTo);
+        const tone = done ? 'background:#eaf7ee;border-color:#bfe3ca;color:#15803d'
+          : who ? 'background:#eef6fd;border-color:#cfe8fb;color:#0369a1'
+          : 'background:#fff7ed;border-color:#fcd9a8;color:#b45309';
+        oChips.appendChild(el(`<div class="freqmini" style="flex:0 0 auto;padding:6px 10px;${tone}" `
+          + `title="${esc(done ? 'Cleaned today' : who ? 'With ' + who.name : 'Not handed out yet')}">`
+          + `${esc(u.unit)}${done ? ' ✓' : who ? ' · ' + esc(who.name.split(' ')[0]) : ''}</div>`));
+      });
+      oBox.appendChild(oChips);
+      if (!offOpen.length) {
+        oBox.appendChild(el(`<div style="font-size:12px;color:#15803d;font-weight:700;margin-top:8px">`
+          + `✓ All ${off.length} done.</div>`));
+      } else if (openNow === 0 && arrIds.length) {
+        const hand = el(`<button class="add-btn" style="background:#15803d;color:#ffffff;margin-top:10px">`
+          + `⚡ Hand out the ${offOpen.length} ${esc(kinds)} room${offOpen.length === 1 ? '' : 's'}</button>`);
+        hand.onclick = () => autoAssignRooms(offOpen);
+        oBox.appendChild(hand);
+        oBox.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin-top:6px">`
+          + `The morning's rooms are all done — this is the job that follows them. `
+          + `Tick these off on the ${esc(kinds)} tab.</div>`));
+      } else {
+        oBox.appendChild(el(`<div style="font-size:12px;color:#b45309;font-weight:700;margin-top:8px">`
+          + (openNow === 0 ? `Nobody is clocked in to hand these to yet.`
+                           : `Handed out once the morning's rooms are done — ${openNow} still open.`)
+          + `</div>`));
+      }
+      body.appendChild(oBox);
+    }
   }
 
   // NOT DUE TODAY — every-other-day and weekly rooms vanish from the roll call on
@@ -5517,6 +6002,24 @@ function viewRollCall() {
     overlay.appendChild(modal);
     overlay.onclick = (e) => { if (e.target === overlay) dismissAssignPicker(); };
     wrap.appendChild(overlay);
+  }
+
+  // THE DRAWER. Shut unless you go looking, and it says how many things are inside
+  // so nothing that used to be on the screen has simply disappeared.
+  {
+    const open = !!state.rcSetupOpen;
+    // No count while it is shut: the two scans that decide what goes in there are
+    // skipped when nobody is looking, so a number now would be a guess.
+    const toggle = el(`<button class="reset-btn" style="margin:22px 0 0">`
+      + (open ? `▾ Set-up &amp; tools (${setupBox.querySelectorAll('button').length})` : `▸ Set-up &amp; tools`)
+      + `</button>`);
+    toggle.onclick = () => { state.rcSetupOpen = !open; save(); render(); };
+    body.appendChild(toggle);
+    if (open) {
+      body.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin:-8px 0 10px">`
+        + `Roster, attendance file, and the one-off jobs. Nothing here is part of the morning.</div>`));
+      body.appendChild(setupBox);
+    }
   }
 
   return wrap;
@@ -5952,19 +6455,47 @@ function employeeCard(p) {
     return card;
   }
 
+  const role = roleOf(p);
   const top = el(`<div style="display:flex;align-items:center;gap:10px"></div>`);
   const info = el(`<div class="person-info"></div>`);
-  const leadBadge = p.isLeader ? ` <span style="color:#d97706;font-size:12px;font-weight:700">★ Leader</span>` : '';
-  info.appendChild(el(`<div class="person-name">${esc(p.name)}${leadBadge}</div>`));
-  info.appendChild(el(`<div class="person-floors">${esc(personFloors(p))}</div>`));
+  // The role is the first thing about a person, so it is on the name line — as a
+  // word, not a star somebody has to be told the meaning of.
+  info.appendChild(el(`<div class="person-name">${esc(p.name)}`
+    + ` <span style="color:${ROLES[role].color};font-size:12px;font-weight:700">`
+    + `${ROLES[role].icon}${ROLES[role].label}</span></div>`));
+  info.appendChild(el(`<div class="person-floors">${esc(p.crew || 'No team')} · ${esc(personFloors(p))}</div>`));
   top.appendChild(info);
   card.appendChild(top);
 
+  // ROLE: one picker, three states. Two independent toggles meant a leader who was
+  // not a cleaner was possible and meaningless, and nothing ever said "assistant".
+  const roleRow = el(`<div style="display:flex;gap:6px"></div>`);
+  ROLE_ORDER.forEach((rk) => {
+    const on = role === rk;
+    const b = el(`<button class="freqmini ${on ? 'on' : ''}" title="${esc(ROLES[rk].hint)}" `
+      + `style="flex:1 1 0;padding:8px 6px;font-size:12px`
+      + (on ? `;border-color:${ROLES[rk].color};color:${ROLES[rk].color};font-weight:800` : '') + `">`
+      + `${ROLES[rk].icon}${esc(ROLES[rk].label)}</button>`);
+    b.onclick = () => setRole(p.id, rk);
+    roleRow.appendChild(b);
+  });
+  card.appendChild(roleRow);
+  card.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin-top:-4px">${esc(ROLES[role].hint)}</div>`));
+
+  // TEAM: changed here, not three taps away inside Edit.
+  const teamRow = el(`<div style="display:flex;align-items:center;gap:8px"></div>`);
+  teamRow.appendChild(el(`<div style="font-size:11px;color:#5f7189;font-weight:700;flex:0 0 auto">Team</div>`));
+  const teamSel = el(`<select style="flex:1;min-width:0;background:#ffffff;color:#15202e;`
+    + `border:1px solid #d8e0ea;border-radius:8px;padding:8px 10px;font-size:14px"></select>`);
+  getTeams().forEach((t) => {
+    const o = el(`<option value="${esc(t.name)}"${t.name === p.crew ? ' selected' : ''}>${esc(t.name)}</option>`);
+    teamSel.appendChild(o);
+  });
+  teamSel.onchange = (e) => editEmployee(p.id, p.name, e.target.value, (p.floors || []).join(', '));
+  teamRow.appendChild(teamSel);
+  card.appendChild(teamRow);
+
   const ctl = el(`<div class="su-ctl" style="border-top:none;padding-top:0;margin-top:0;flex-wrap:wrap"></div>`);
-  const clean = el(`<button class="freqmini ${p.isCleaner ? 'on' : ''}" style="flex:0 0 auto;padding:7px 14px">${p.isCleaner ? '✓ Cleaner' : '+ Cleaner'}</button>`);
-  clean.onclick = () => toggleCleaner(p.id);
-  const lead = el(`<button class="freqmini ${p.isLeader ? 'on' : ''}" style="flex:0 0 auto;padding:7px 14px">${p.isLeader ? '★ Leader' : '+ Leader'}</button>`);
-  lead.onclick = () => toggleLeader(p.id);
   const sh = shiftOf(p);
   const shift = el(`<button class="freqmini" title="Tap to change shift" style="flex:0 0 auto;padding:7px 12px;color:${SHIFTS[sh].color};border-color:${SHIFTS[sh].color}">${SHIFTS[sh].icon} ${SHIFTS[sh].label}</button>`);
   shift.onclick = () => cycleShift(p.id);
@@ -5975,15 +6506,29 @@ function employeeCard(p) {
   ed.onclick = () => startEditEmp(p.id);
   const rm = el(`<button class="su-rm">Remove</button>`);
   rm.onclick = () => removeEmployee(p.id);
-  ctl.appendChild(clean); ctl.appendChild(lead); ctl.appendChild(shift); ctl.appendChild(ctype); ctl.appendChild(ed); ctl.appendChild(rm);
+  ctl.appendChild(shift); ctl.appendChild(ctype); ctl.appendChild(ed); ctl.appendChild(rm);
   card.appendChild(ctl);
 
   // WORKS ON — only worth the room for cleaners; nobody is handing rooms to the
   // rest, so a rota for them is noise. All seven lit is the default and means
   // "every day", which is why nothing here needs setting up before it works.
   if (p.isCleaner) {
-    const wRow = el('<div class="su-ctl" style="border-top:none;padding-top:6px;margin-top:2px;flex-wrap:wrap;align-items:center"></div>');
+    // FOLDED AWAY UNLESS IT SAYS SOMETHING. Seven buttons on every card is most of
+    // the height of the Team tab, and for almost everyone they all read "in". The
+    // line states the rota; tap it to change it.
     const offCount = Array.isArray(p.worksOn) ? 7 - p.worksOn.length : 0;
+    const rotaOpen = (state.expandedRota || {})[p.id];
+    if (!rotaOpen) {
+      const sum = el(`<button class="freqmini" style="width:100%;padding:7px;font-size:11px;text-align:left">`
+        + `Works ${offCount ? WEEKDAYS.filter(([, d]) => worksStateOf(p, d) !== 'off').map(([l]) => l).join(' ') : 'every day'} · change</button>`);
+      sum.onclick = () => { state.expandedRota = { ...(state.expandedRota || {}), [p.id]: true }; save(); render(); };
+      card.appendChild(sum);
+      return card;
+    }
+    const wRow = el('<div class="su-ctl" style="border-top:none;padding-top:6px;margin-top:2px;flex-wrap:wrap;align-items:center"></div>');
+    const hide = el(`<button class="freqmini" style="flex:0 0 auto;padding:6px 9px;font-size:11px">▾</button>`);
+    hide.onclick = () => { state.expandedRota = { ...(state.expandedRota || {}), [p.id]: false }; save(); render(); };
+    wRow.appendChild(hide);
     wRow.appendChild(el(`<div style="flex:0 0 auto;font-size:11px;color:#5f7189;font-weight:700;margin-right:2px" `
       + `title="Which days this person is expected in">Works on${offCount ? '' : ' · every day'}</div>`));
     WEEKDAYS.forEach(([lbl, dow]) => {
@@ -6022,7 +6567,10 @@ function employeeGroups(wrap) {
   const crews = [...new Set(list.map(p => p.crew))];
   crews.forEach(crewName => {
     const members = list.filter(p => p.crew===crewName)
-      .sort((a, b) => (b.isLeader?1:0) - (a.isLeader?1:0));   // team leader first
+      // Leader first, then by name. Without the name tie-break the crew appeared in
+      // whatever order people were added, so a rehired cleaner sat at the bottom.
+      .sort((a, b) => (b.isLeader?1:0) - (a.isLeader?1:0)
+        || String(a.name).localeCompare(String(b.name), undefined, { numeric: true, sensitivity: 'base' }));
     const color = members[0].color;
     const group = el(`<div class="crew-group"></div>`);
     const head = el(`<div class="crew-head"></div>`);
@@ -6030,6 +6578,23 @@ function employeeGroups(wrap) {
     head.appendChild(el(`<div class="crew-name">${esc(crewName)}</div>`));
     head.appendChild(el(`<div class="crew-sub">${members.length}</div>`));
     group.appendChild(head);
+
+    // WHO ANSWERS FOR THIS TEAM, AND WHO IS WITH THEM. A flat stack of identical
+    // cards says nothing about how the team is actually shaped — you had to read
+    // every card and remember which ones carried a star. The leader is named, and the
+    // assistants read straight off the same line, so the team is one glance.
+    const leaders = members.filter((x) => x.isLeader);
+    const assistants = members.filter((x) => !x.isLeader && x.isCleaner);
+    const first = (n) => String(n).split(' ')[0];
+    const shape = el(`<div style="font-size:12px;font-weight:600;margin:-4px 0 8px;line-height:1.5"></div>`);
+    shape.appendChild(el(leaders.length
+      ? `<span style="color:#b45309">${leaders.map((l) => '★ ' + esc(l.name)).join(' · ')}</span>`
+      : `<span style="color:#b45309">No leader yet</span>`));
+    shape.appendChild(el(assistants.length
+      ? `<span style="color:#5f7189"> with ${esc(assistants.map((a) => first(a.name)).join(', '))}</span>`
+      : `<span style="color:#5f7189"> — no assistants</span>`));
+    group.appendChild(shape);
+
     members.forEach(p => group.appendChild(employeeCard(p)));
     wrap.appendChild(group);
   });
@@ -6197,9 +6762,14 @@ function viewTeam() {
 let _confirmState = null;
 // okLabel/okTone let a non-destructive confirm (e.g. changing a schedule) avoid the
 // red "Remove" button, which reads as "you're about to delete something".
-function showConfirm(title, message, onConfirm, okLabel, okTone) {
-  _confirmState = { title, message, onConfirm, okLabel, okTone };
+function showConfirm(title, message, onConfirm, okLabel, okTone, infoOnly) {
+  _confirmState = { title, message, onConfirm, okLabel, okTone, infoOnly };
   renderConfirmModal();
+}
+// Something to read, not something to decide. One way out, so nobody has to work out
+// what the difference between "Cancel" and "Close" is meant to be.
+function showInfo(title, message) {
+  showConfirm(title, message, () => {}, 'Close', 'safe', true);
 }
 function dismissConfirmModal() { _confirmState = null; const e = document.getElementById('confirmModal'); if (e) e.remove(); }
 function renderConfirmModal() {
@@ -6213,6 +6783,7 @@ function renderConfirmModal() {
   const btnRow = el(`<div class="modal-btns"></div>`);
   const cancelBtn = el(`<button class="modal-skip">Cancel</button>`);
   cancelBtn.onclick = () => dismissConfirmModal();
+  if (_confirmState.infoOnly) cancelBtn.style.display = 'none';
   const confirmBtn = el(`<button class="${_confirmState.okTone === 'safe' ? 'modal-confirm' : 'modal-danger'}">${esc(_confirmState.okLabel || 'Remove')}</button>`);
   confirmBtn.onclick = () => { const cb = _confirmState.onConfirm; dismissConfirmModal(); cb(); };
   btnRow.appendChild(cancelBtn);
@@ -6609,8 +7180,10 @@ function render() {
   if (state.tab === 'plan') {
     const pd = curPlanDay();
     const pretty = new Date(pd + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
-    const rel = pd === todayKey() ? 'TODAY' : pd === tomorrowKey() ? 'TOMORROW' : null;
-    const isToday = pd === todayKey();
+    // Same work-day notion the Plan screen and Roll Call use, so the header cannot
+    // call a day "not today" that the tab below it is treating as today.
+    const isToday = pd === workToday() || pd === todayKey();
+    const rel = isToday ? 'TODAY' : pd === tomorrowKey() ? 'TOMORROW' : null;
     header.appendChild(el(`<div class="h-date" style="font-size:13px;font-weight:800;color:${isToday ? '#15803d' : '#b45309'}">`
       + `Planning ${rel ? rel + ' · ' : ''}${esc(pretty)}</div>`));
     if (!isToday) header.appendChild(el(`<div class="h-date" style="color:#b45309">`
