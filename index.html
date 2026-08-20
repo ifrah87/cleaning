@@ -2635,6 +2635,9 @@ async function arrivalsForDay(day) {
 // window to mean anything, and only a clear result counts — anything in between is
 // left alone rather than guessed at, because the office can see its own crew and a
 // wrong rest day is worse than no rest day.
+// Six weeks: long enough for an alternating Friday to show up as a pattern rather
+// than a coincidence, and inside the 45 days the scrapes are kept for.
+const ROTA_WINDOW_DAYS = 42;
 const ROTA_MIN_SAMPLES = 3;      // fewer than this of a given weekday says nothing
 const ROTA_OFF_AT = 0.2;         // in 20% of them or less → a rest day
 const ROTA_ON_AT = 0.5;          // half or more → a working day
@@ -6747,6 +6750,47 @@ function viewTeam() {
         ? `${onRota.length} of ${crew.length} are on a Friday rota — <b>${crew.filter((p) => worksOnDay(p, nextDowKey(fri))).length}</b> in this coming Friday.`
         : `Nobody is on a Friday rota yet — everyone is down as working every one.`)
       + `</div>`));
+    wrap.appendChild(box);
+  }
+
+  // WORK THE ROTA OUT FROM WHO ACTUALLY TURNS UP. The machinery for this has been
+  // here all along — it reads six weeks of clock-ins and tells a rest day from a
+  // sick day — but nothing ever called it, so the rota stayed hand-typed and drifted
+  // out of step with the crew. It proposes; you see exactly what changes before it
+  // is applied, and any one person can still be set by hand afterwards.
+  if (cleaners) {
+    const box = el('<div style="margin-bottom:14px"></div>');
+    box.appendChild(el(`<div class="section-label">Work out the rota</div>`));
+    box.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin:-6px 0 8px">`
+      + `From the last ${ROTA_WINDOW_DAYS} days of clock-ins. A day somebody is in on `
+      + `${Math.round(ROTA_OFF_AT * 100)}% of occasions or fewer reads as a rest day; anyone too `
+      + `irregular to call is left alone rather than guessed at.</div>`));
+    const btn = el(`<button class="add-btn" style="background:#0284c7;color:#ffffff">🗓 Work out the rota from the clock-ins</button>`);
+    btn.onclick = async () => {
+      btn.disabled = true; btn.textContent = 'Reading the clock-ins…';
+      const r = await inferRotasFromAttendance(ROTA_WINDOW_DAYS);
+      btn.disabled = false; btn.textContent = '🗓 Work out the rota from the clock-ins';
+      if (!r) { showInfo('Could not read the clock-ins', 'The server did not answer. Check the connection and try again.'); return; }
+      if (!r.days) { showInfo('No clock-ins to read', 'Nothing has been recorded in the last ' + ROTA_WINDOW_DAYS + ' days, so there is nothing to work a rota out from.'); return; }
+      if (!r.proposals.length) {
+        showInfo('Nothing to change', 'Across ' + r.days + ' days of clock-ins, everybody reads as working every day they are already down for.'
+          + (r.skipped.length ? '\n\nToo irregular to call: ' + r.skipped.map((x) => x.name.split(' ')[0] + ' (' + x.reason + ')').join(', ') : ''));
+        return;
+      }
+      const lines = r.proposals.map((x) =>
+        x.name.split(' ')[0] + ' — off ' + x.off.map((d) => DOW_LABEL[d]).join(', ')
+        + (x.unclear.length ? ' (' + x.unclear.map((d) => DOW_LABEL[d]).join(', ') + ' left on, too few to judge)' : ''));
+      showConfirm(
+        'Set the rota for ' + r.proposals.length + ' ' + (r.proposals.length === 1 ? 'person' : 'people') + '?',
+        'From ' + r.days + ' days of clock-ins:\n\n' + lines.join('\n')
+          + (r.skipped.length ? '\n\nLeft alone, too irregular to read: ' + r.skipped.map((x) => x.name.split(' ')[0]).join(', ') : '')
+          + '\n\nA rest day set here only stops rooms being handed out on it. Anyone who turns up anyway still shows on the roll call and can be given rooms.',
+        () => applyRotas(r.proposals),
+        'Set the rota',
+        'safe'
+      );
+    };
+    box.appendChild(btn);
     wrap.appendChild(box);
   }
 
