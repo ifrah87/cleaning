@@ -580,7 +580,11 @@ function cycleWorksOn(pid, dow) {
 //
 // Sorted by name so the same crew always produces the same rota: re-running it never
 // reshuffles who is in alongside whom.
-function buildDayRota(dow, perWeek) {
+// offset shifts which calendar week each group falls on. The week slot is worked out
+// from a fixed epoch, so who lands on the NEXT Friday is decided by the date rather
+// than by who was in on the last one — set a rota without looking and the same half
+// can end up working two Fridays running. The offset is how you put that right.
+function buildDayRota(dow, perWeek, offset) {
   const crew = cleaningStaff().slice().sort((a, b) => String(a.name).localeCompare(String(b.name)));
   const n = crew.length;
   const per = Math.max(1, Math.min(perWeek || 3, n));
@@ -594,7 +598,7 @@ function buildDayRota(dow, perWeek) {
       const p = crew[(w * per + k) % n];
       if (inThisWeek.some((x) => x.id === p.id)) continue;   // tiny crews can wrap onto themselves
       inThisWeek.push(p);
-      byPerson[p.id].weeks.push(w);
+      byPerson[p.id].weeks.push(((w + (offset || 0)) % cycle + cycle) % cycle);
     }
     weeks.push(inThisWeek);
   }
@@ -1310,7 +1314,8 @@ let lastCleanedByUnit = {};      // unit_id -> newest row (drives the "last clea
 let historyFilter = 'all';       // History view room filter (per-device UI state)
 let historyDay = '';             // History view day filter ('' = all days)
 let teamShowAll = false;         // Team tab: false = cleaners only (default once any tagged)
-let teamFridayPer = 3;           // how many are in on each Friday, chosen in Team
+let teamFridayPer = 3;
+let teamFridayShift = 0;   // rotates which group lands on the coming Friday           // how many are in on each Friday, chosen in Team
 const dayKeyLocal = (ts) => { const d = new Date(ts); return isNaN(d) ? '' : d.toLocaleDateString('en-CA'); }; // local YYYY-MM-DD
 
 // dayKey lets a clean be recorded against the day it happened rather than the
@@ -6778,13 +6783,23 @@ function viewTeam() {
     box.appendChild(pickRow);
     const btn = el(`<button class="add-btn" style="background:#7c3aed;color:#ffffff">⚖ Share the Friday rota out evenly</button>`);
     btn.onclick = () => {
-      const rota = buildDayRota(fri, teamFridayPer);
+      const rota = buildDayRota(fri, teamFridayPer, teamFridayShift);
       const each = rota.byPerson[Object.keys(rota.byPerson)[0]];
+      // WHICH OF THESE IS TOMORROW. "Friday 1, Friday 2" is unanswerable on its own —
+      // the whole question is who is in on the one coming up.
+      const nextFri = nextDowKey(fri);
+      const slot = weekIndex(nextFri, rota.cycle);
+      const onNext = Object.keys(rota.byPerson)
+        .filter((pid) => rota.byPerson[pid].weeks.indexOf(slot) >= 0)
+        .map((pid) => rota.byPerson[pid].name.split(' ')[0]);
       const preview = rota.weeks.slice(0, 4)
         .map((wk, i) => 'Friday ' + (i + 1) + ': ' + wk.map((p) => p.name.split(' ')[0]).join(', ')).join('\n');
       showConfirm(
         rota.perWeek + ' in every Friday?',
-        preview + (rota.cycle > 4 ? '\n… and so on' : '')
+        'This coming Friday (' + fmtDay(nextFri) + '): ' + (onNext.join(', ') || 'nobody')
+          + '\n\nIf that is the same lot who were in last Friday, close this and tap '
+          + '"↻ Put the other group on first", then set it.\n\n'
+          + preview + (rota.cycle > 4 ? '\n… and so on' : '')
           + '\n\nIt comes round every ' + rota.cycle + ' weeks, so each of the ' + rota.crew.length
           + ' works ' + (each ? each.weeks.length : 0) + ' Fridays out of ' + rota.cycle
           + ' — the same for everybody. You can still change any one person by hand afterwards.',
@@ -6794,6 +6809,10 @@ function viewTeam() {
       );
     };
     box.appendChild(btn);
+    const shift = el(`<button class="freqmini" style="width:100%;padding:9px;margin-top:6px">`
+      + `↻ Put the other group on first</button>`);
+    shift.onclick = () => { teamFridayShift = (teamFridayShift + 1) % Math.max(2, cleaningStaff().length); render(); };
+    box.appendChild(shift);
     box.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin-top:6px">`
       + (onRota.length
         ? `${onRota.length} of ${crew.length} are on a Friday rota — <b>${crew.filter((p) => worksOnDay(p, nextDowKey(fri))).length}</b> in this coming Friday.`
