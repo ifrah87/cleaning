@@ -7248,6 +7248,25 @@ function renderTV() {
 // tick, turn the page on its own, and re-pull in case realtime quietly died.
 function startTVLoop() {
   const pages = () => Math.max(1, Math.ceil(tvColumns().length / TV_COLS_PER_PAGE));
+  // PICK UP NEW CODE WITHOUT ANYBODY WALKING TO THE TV. The board pulls fresh DATA
+  // all day, but the JavaScript it is running is whatever it downloaded when the page
+  // was opened — and this screen is opened once and left for weeks. Every fix shipped
+  // since then simply never arrives, and the one screen nobody touches is the one
+  // running the oldest code.
+  //
+  // So it reloads itself once a night, in the half hour after the work day rolls over
+  // at 3am: the previous round has closed out, the crew is hours from arriving, and a
+  // blink of a page load costs nothing. Only after six hours up, so a reload cannot
+  // loop, and never while something is still waiting to be delivered.
+  const bootedAt = Date.now();
+  setInterval(() => {
+    const h = new Date().getHours(), m = new Date().getMinutes();
+    const quiet = h === WORKDAY_CUTOFF_HOUR && m >= 30 && m < 40;
+    if (!quiet) return;
+    if (Date.now() - bootedAt < 6 * 3600e3) return;
+    if (isDirty()) return;                    // something of ours is still owed
+    location.reload();
+  }, 60000);
   setInterval(() => renderTV(), TV_TICK_MS);
   setInterval(() => { tvPage = (tvPage + 1) % pages(); renderTV(); }, TV_PAGE_MS);
   setInterval(() => {
