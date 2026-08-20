@@ -6,6 +6,10 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="theme-color" content="#f4f7fb">
+<meta name="apple-mobile-web-app-title" content="Cleaning">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<link rel="icon" href="/icons/icon-192.png">
 <title>Cleaning Ops</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
@@ -7688,6 +7692,19 @@ async function startup() {
   renderLogin();
 }
 startup();
+
+// INSTALLABLE, AND OPENABLE WITH NO NETWORK. Registering the worker is what lets the
+// app be added to a home screen and, more importantly, what lets it start at all when
+// the connection is gone — the offline board is no use if the page cannot load to
+// reach it. Registered after startup so it never delays the first paint.
+// isSecureContext, not a protocol check: it is true for https AND for localhost, so
+// the worker can be exercised in testing exactly as it runs in production, and still
+// never registers from a file:// copy where the scope would be meaningless.
+if ('serviceWorker' in navigator && window.isSecureContext) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  });
+}
 </script>
 </body>
 </html>
