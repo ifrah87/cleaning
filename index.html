@@ -1024,6 +1024,7 @@ async function pushNow() {
       .upsert({ building: BUILDING, data: JSON.parse(snapshot), updated_at: new Date().toISOString() });
     if (error) throw error;
     _lastRemoteJSON = snapshot;   // only now is it genuinely our own write echoing back
+    stampSynced();                // so an offline session can say how old the board is
     clearDirty();
     _retryDelay = 0;
     hideStorageWarn();
@@ -1171,6 +1172,7 @@ function applyRemote(saved) {
   if (state.coverageDay !== todayKey()) { state.coverage = {}; state.unitCover = {}; state.pendingCover = null; state.coverageDay = todayKey(); }
   finalizeState();
   try { localStorage.setItem(STORE, JSON.stringify(state)); } catch (e) {}
+  stampSynced();             // fresh from the server counts as in sync, same as a push
   tvLastData = Date.now();   // the TV board dates itself off the last thing it heard
   if ((rescued || unitsKept || ticksKept) && !TV_MODE) remotePush();  // get them up before anything overwrites them
   route();
@@ -7276,7 +7278,20 @@ function render() {
   else if (state.tab==='team') app.appendChild(viewTeam());
   else if (state.tab==='settings') app.appendChild(viewSettings());
 
-  app.appendChild(el(`<div class="footer">Changes save on this device · Daily tasks reset each day</div>`));
+  // NOBODY SHOULD MISTAKE A STALE BOARD FOR A LIVE ONE. Says what it is, how old it
+  // is, and that the work is not lost — the three things somebody needs to decide
+  // whether to trust what they are looking at.
+  if (offlineMode) {
+    const bar = el(`<div style="background:#fdf3e6;border:1px solid #f0d9b5;border-radius:10px;`
+      + `padding:10px 12px;margin:0 14px 12px;font-size:12px;color:#8a5a12;font-weight:600">`
+      + `⚠ Offline — the server cannot be reached. Showing the board as saved ${esc(lastSyncLabel())}. `
+      + `Ticks and hand-outs are kept on this device and go up as soon as it is back.</div>`);
+    app.insertBefore(bar, app.firstChild ? app.firstChild.nextSibling : null);
+  }
+  app.appendChild(el(`<div class="footer">`
+    + (offlineMode ? 'Offline — changes are held on this device until the server is back'
+                   : 'Changes save on this device · Daily tasks reset each day')
+    + `</div>`));
 
   // --- Cover confirmation popup ---
   if (state.pendingCover) {
@@ -7352,13 +7367,65 @@ const AUTH_KEY = 'cleaning_app_auth';                              // legacy fal
 const CREDENTIALS = { username: 'admin', password: 'admin123' };   // fallback only (no server)
 let authed = false;                                                // true when a real Supabase session exists
 
+// ============================================================
+// WORKING WHEN THE SERVER IS NOT
+//
+// The whole board is written to localStorage on every save, and yet the app
+// refused to open without a live Supabase session — db is always truthy, so the
+// gate always demanded the server. On 19 Aug 2026 Supabase restricted the project
+// over an Edge Function quota and returned 402 to everything, including auth. The
+// crew met a login screen that could never accept their PIN, with a perfectly good
+// copy of the morning's board sitting unused on the device.
+//
+// A backend will go down sometime — this one, or whichever replaces it. So the
+// server being reachable is no longer what decides whether anyone can work.
+//
+// The gate is KEPT, not dropped: on a successful sign-in the PIN is hashed and the
+// hash stored, so offline it can still be checked. Only a device that has signed in
+// for real can fall back; a fresh device stays locked out exactly as before.
+// ============================================================
+const PIN_HASH_KEY = 'cleaning_pin_hash';    // sha-256 of the PIN, never the PIN
+const CACHE_STAMP_KEY = 'cleaning_last_sync';
+let offlineMode = false;                     // running from the local copy
+
+async function pinHash(pin) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('orfane:' + pin));
+  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+const canWorkOffline = () => {
+  try { return !!localStorage.getItem(PIN_HASH_KEY) && !!localStorage.getItem(STORE); }
+  catch (e) { return false; }
+};
+// A refusal that is about the SERVER, not about the PIN. A wrong PIN must never
+// open the offline door — only an unreachable or broken back end does.
+const isServerDown = (e) => {
+  const msg = String((e && (e.message || e.error_description || e)) || '').toLowerCase();
+  const status = e && (e.status || e.statusCode);
+  if (status && (status === 402 || status === 403 || status >= 500)) return true;
+  return /restricted|quota|failed to fetch|networkerror|load failed|timeout|502|503|504/.test(msg);
+};
+function stampSynced() { try { localStorage.setItem(CACHE_STAMP_KEY, new Date().toISOString()); } catch (e) {} }
+function lastSyncLabel() {
+  try {
+    const v = localStorage.getItem(CACHE_STAMP_KEY);
+    if (!v) return 'an earlier session';
+    const d = new Date(v);
+    return isNaN(d) ? 'an earlier session'
+      : d.toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+  } catch (e) { return 'an earlier session'; }
+}
+
 // Synchronous "is someone signed in?" used by route()/boot().
-function isLoggedIn() { return db ? authed : (localStorage.getItem(AUTH_KEY) === 'true'); }
+function isLoggedIn() { return db ? (authed || offlineMode) : (localStorage.getItem(AUTH_KEY) === 'true'); }
 
 async function logout() {
   try { if (db) await db.auth.signOut(); } catch (e) {}
   authed = false;
+  offlineMode = false;
   localStorage.removeItem(AUTH_KEY);
+  // Signing out closes the offline door as well, or "log out" would leave the device
+  // still openable by the same PIN with no way to revoke it.
+  try { localStorage.removeItem(PIN_HASH_KEY); } catch (e) {}
   renderLogin();
 }
 
@@ -7378,11 +7445,23 @@ async function attemptLogin() {
       const { error } = await db.auth.signInWithPassword({ email, password });
       if (error) throw error;
       authed = true;
+      offlineMode = false;
+      // Keep a hash of the PIN that just worked, so this device can check it again
+      // when the server cannot be asked. Never the PIN itself.
+      try { localStorage.setItem(PIN_HASH_KEY, await pinHash(pin)); } catch (e2) {}
       boot();
     } catch (e) {
       if (btn) { btn.disabled = false; btn.textContent = 'Sign In'; }
+      // THE SERVER IS DOWN, NOT THE PIN WRONG. Check it against the hash this device
+      // stored the last time it signed in for real, and open the local copy.
+      if (isServerDown(e) && canWorkOffline() && (await pinHash(pin)) === localStorage.getItem(PIN_HASH_KEY)) {
+        offlineMode = true;
+        authed = false;
+        bootOffline();
+        return;
+      }
       pinEl.value = '';
-      fail('Wrong PIN');
+      fail(isServerDown(e) ? 'Server unavailable — try again' : 'Wrong PIN');
     }
     return;
   }
@@ -7465,6 +7544,37 @@ async function boot() {
   if (TV_MODE) startTVLoop();
 }
 
+// Boot from the copy on the device. Everything that needs the server is left out —
+// no pull, no realtime, no arrival polling — but the day still plans itself and the
+// board is fully usable. Writes go to localStorage and are marked as owed, so the
+// retry that already exists delivers them the moment the server answers again.
+function bootOffline() {
+  load();
+  offlineMode = true;
+  route();
+  _plannedForDay = workToday();
+  planningPass();
+  startDayWatch();
+  // Keep knocking. When the server comes back this promotes itself to a real session
+  // without anybody reloading — and the first push carries everything done offline.
+  clearInterval(_offlineWatch);
+  _offlineWatch = setInterval(async () => {
+    if (!db || !offlineMode) return;
+    try {
+      const { error } = await db.from('app_state').select('building').limit(1);
+      if (error) throw error;
+      offlineMode = false;
+      clearInterval(_offlineWatch);
+      // A session may still be live even though the project was refusing requests.
+      let ok = false;
+      try { const { data } = await db.auth.getSession(); ok = !!(data && data.session); } catch (e2) {}
+      if (ok) { authed = true; boot(); }
+      else renderLogin();
+    } catch (e) { /* still down — keep the board up and try again */ }
+  }, 60000);
+}
+let _offlineWatch = null;
+
 // Startup: restore any existing Supabase session, then show the right screen.
 async function startup() {
   if (!db) { if (isLoggedIn()) boot(); else renderLogin(); return; }
@@ -7477,7 +7587,20 @@ async function startup() {
     authed = !!session;
     if (!authed && was) renderLogin();   // signed out / session expired → back to login
   });
-  if (authed) boot(); else renderLogin();
+  if (authed) {
+    // A stored session proves somebody signed in once, not that the server will
+    // answer now. Ask it something cheap first: if the project is restricted or
+    // unreachable, open the local copy rather than an app that cannot load anything.
+    try {
+      const { error } = await db.from('app_state').select('building').limit(1);
+      if (error) throw error;
+      boot();
+    } catch (e) {
+      if (isServerDown(e) && canWorkOffline()) bootOffline(); else boot();
+    }
+    return;
+  }
+  renderLogin();
 }
 startup();
 </script>
