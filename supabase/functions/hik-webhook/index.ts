@@ -1,3 +1,24 @@
+// RETIRED — NOT DEPLOYED. Do not turn this back on without reading this first.
+//
+// This function took one Edge Function invocation for EVERY event Hik-Connect
+// pushed — every badge and every alarm, all day, with no filter — and on
+// 19 Aug 2026 it exhausted the project's Edge Function quota. Supabase then
+// restricted the WHOLE project: HTTP 402 on every request, so nobody could
+// even sign in. The app was down, and the cause was this file.
+//
+// Nothing needed it. hik_events has three writers and this was only one:
+// scraper/scrape.js (GitHub Actions Time Card scrape) and the manual
+// attendance import both POST straight to /rest/v1/hik_events, which is
+// database quota, not Edge Function quota. Attendance arrives the same as it
+// always did. What was lost is the live push feed, which nothing reads.
+//
+// If the live feed is ever wanted back, do NOT redeploy this here — put it on
+// a Cloudflare Worker (the site is already on Cloudflare) and have it write to
+// /rest/v1/hik_events with the service-role key. The logic below ports as-is.
+//
+// The other function, hik-sync, is fine and stays: it runs only when somebody
+// presses "⟳ Sync Staff", which is a handful of invocations a month.
+//
 // hik-webhook — receives access/alarm event pushes from Hik-Connect for Teams
 // and stores them. Keeps the FULL raw payload (so we can see the real field
 // names on the first live event) plus a best-effort extraction of the fields
