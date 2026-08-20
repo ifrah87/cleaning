@@ -204,7 +204,7 @@ function serve() {
     if (await page.locator('#confirmModal').count()) {
       await page.locator('#confirmModal .modal-btns button').last().click();
     }
-    await page.waitForTimeout(700);
+    await page.waitForTimeout(1800);
   };
 
   console.log('\n\x1b[1mBOOT\x1b[0m');
@@ -267,7 +267,7 @@ function serve() {
   console.log('\n\x1b[1mROLL CALL — assigning a room persists + updates the panel\x1b[0m');
   writes.length = 0;
   await sel.selectOption('u101');
-  await page.waitForTimeout(700);   // debounced remote push is 250ms
+  await page.waitForTimeout(1800);  // debounced remote push is 1200ms
   const afterAssign = await page.locator('.section-label', { hasText: 'Rooms to clean today' }).first()
     .evaluate((e) => e.nextElementSibling.textContent);
   contains('panel now shows 2 handed out', afterAssign, '2 handed out');
@@ -301,7 +301,7 @@ function serve() {
   const firstRow = page.locator('.su-card').filter({ hasText: '→' }).first();
   writes.length = 0;
   await firstRow.locator('button', { hasText: 'Yes' }).click();
-  await page.waitForTimeout(700);
+  await page.waitForTimeout(1800);
   const afterYes = await page.locator('.section-label', { hasText: 'Check these assignments' }).textContent();
   contains('confirming removes it from the check list', afterYes, 'Check these assignments (2)');
   const wYes = writes[writes.length - 1];
@@ -327,7 +327,7 @@ function serve() {
   const otherName = (await other.textContent()).replace(/\d+ rooms?.*$/, '').trim();
   writes.length = 0;
   await other.click();
-  await page.waitForTimeout(700);
+  await page.waitForTimeout(1800);
   check('picker closes after choosing', (await page.locator('#assignPicker').count()) === 0, 'picker still open');
   const wNo = writes[writes.length - 1];
   const moved = wNo && (wNo.data.servicedUnits || []).find((u) => u.unit === room2);
@@ -349,7 +349,7 @@ function serve() {
   contains('confirm mentions it can be undone', reSub, 'undo');
   await page.locator('#confirmModal .modal-skip').click();
   const kept = writes.length;
-  await page.waitForTimeout(400);
+  await page.waitForTimeout(1800);
   check('cancelling changes nothing', writes.length === kept, 'a write happened after cancel');
 
   // Auto-assign discards a morning of manual work and sits one mis-tap away.
@@ -364,7 +364,7 @@ function serve() {
   eq('the snapshot holds the pre-shuffle owners, not the new ones', JSON.stringify(Object.keys(snap.who).reduce((m, k) => { m[k] = beforeUndo[k]; return m; }, {})), JSON.stringify(snap.who));
   writes.length = 0;
   await page.locator('button', { hasText: 'Undo auto-assign' }).click();
-  await page.waitForTimeout(700);
+  await page.waitForTimeout(1800);
   const restored = writes[writes.length - 1].data.servicedUnits
     .reduce((m, u) => { m[u.id] = u.assignedTo || null; return m; }, {});
   eq('undo puts every room back exactly as it was', JSON.stringify(restored), JSON.stringify(beforeUndo));
@@ -390,7 +390,7 @@ function serve() {
   writes.length = 0;
   const card103 = page.locator('.su-card').filter({ hasText: '103' }).first();
   await card103.locator('button', { hasText: 'Weekly' }).first().click();
-  await page.waitForTimeout(700);
+  await page.waitForTimeout(1800);
   const w103 = writes[writes.length - 1];
   const saved103 = w103 && (w103.data.servicedUnits || []).find((u) => u.id === 'u103');
   eq('single-room flip saves the new schedule', saved103 && saved103.freq, 'weekly');
@@ -405,7 +405,7 @@ function serve() {
   eq('confirm button is labelled for the action, not "Remove"', await okBtn.textContent(), 'Set Daily');
   eq('a schedule change is not styled as destructive', await okBtn.getAttribute('class'), 'modal-confirm');
   await okBtn.click();
-  await page.waitForTimeout(700);
+  await page.waitForTimeout(1800);
   const wBulk = writes[writes.length - 1];
   const airbnbFreqs = wBulk ? (wBulk.data.servicedUnits || []).filter((u) => u.type === 'airbnb').map((u) => u.freq) : [];
   check('every Airbnb room is now daily', airbnbFreqs.length === 5 && airbnbFreqs.every((f) => f === 'daily'), 'freqs: ' + JSON.stringify(airbnbFreqs));
@@ -418,11 +418,11 @@ function serve() {
   // the room's last-cleaned line vanishes and it goes back to looking never-cleaned.
   console.log('\n\x1b[1mLAST CLEANED — stamped on the room, not just the log\x1b[0m');
   await page.locator('.nav button', { hasText: 'Airbnb' }).click();
-  await page.waitForTimeout(600);
+  await page.waitForTimeout(1800);
   const room101 = page.locator('.su-card').filter({ has: page.locator('.su-unit', { hasText: '101' }) }).first();
   writes.length = 0;
   await room101.locator('button.su-mark').first().click();
-  await page.waitForTimeout(900);
+  await page.waitForTimeout(1800);
   const wTick = writes[writes.length - 1];
   const u101 = wTick && (wTick.data.servicedUnits || []).find((u) => u.id === 'u101');
   eq('ticking a room stamps its own last-cleaned date', u101 && u101.lastCleaned, TODAY);
@@ -432,7 +432,7 @@ function serve() {
   writes.length = 0;
   await page.locator('.su-card').filter({ has: page.locator('.su-unit', { hasText: '101' }) }).first()
     .locator('button.su-mark').first().click();
-  await page.waitForTimeout(900);
+  await page.waitForTimeout(1800);
   const wUntick = writes[writes.length - 1];
   const u101back = wUntick && (wUntick.data.servicedUnits || []).find((u) => u.id === 'u101');
   eq('un-ticking restores the previous date', u101back && u101back.lastCleaned, YESTERDAY);
@@ -456,7 +456,7 @@ function serve() {
   await page.waitForSelector('#confirmModal');
   contains('confirm skips rooms already marked', await page.locator('#confirmModal .modal-title').textContent(), 'Mark 4 rooms cleaned today?');
   await page.locator('#confirmModal .modal-btns button').last().click();
-  await page.waitForTimeout(700);
+  await page.waitForTimeout(1800);
   const wMark = writes[writes.length - 1];
   const airbnbCleaned = wMark ? (wMark.data.servicedUnits || []).filter((u) => u.type === 'airbnb') : [];
   check('every room in the group is dated today', airbnbCleaned.length === 5 && airbnbCleaned.every((u) => u.lastCleaned === TODAY), JSON.stringify(airbnbCleaned.map((u) => [u.unit, u.lastCleaned])));
@@ -478,7 +478,7 @@ function serve() {
     .locator('button', { hasText: 'A past day' }).click();
   const sheet = page.locator('.modal-overlay').last();
   await sheet.locator('.modal-title', { hasText: 'Record a past day' }).waitFor();
-  await page.waitForTimeout(900);            // the chosen day's badge-ins are fetched
+  await page.waitForTimeout(1800);            // the chosen day's badge-ins are fetched
   const crewLine = await sheet.locator('text=/\\d+ badged in —/').first().textContent();
   contains('the sheet reads the chosen day, not this morning', crewLine, 'Hodan');
   check('today\'s crew is not offered for last night', !/Amina|Fatima/.test(crewLine), crewLine);
@@ -488,22 +488,22 @@ function serve() {
 
   // A day nobody badged in for cannot be silently credited to "Office".
   await sheet.locator('input[type=date]').fill(TWO_DAYS_AGO);
-  await page.waitForTimeout(900);
+  await page.waitForTimeout(1800);
   contains('a day with no badge-ins says so', await sheet.textContent(), 'Nobody badged in');
   await sheet.locator('button', { hasText: 'Tick all' }).click();
   await sheet.locator('.modal-confirm').click();
-  await page.waitForTimeout(500);
+  await page.waitForTimeout(1800);
   contains('an unnamed room is refused, not credited to nobody', await sheet.textContent(), 'still need a name');
   check('nothing is written until every room has a name', logged.length === 0, logged.length + ' rows written');
 
   // Back to last night, and record it.
   await sheet.locator('button', { hasText: 'Yesterday' }).click();
-  await page.waitForTimeout(900);
+  await page.waitForTimeout(1800);
   await sheet.locator('button', { hasText: 'Tick all' }).click();
   writes.length = 0;
   logged.length = 0;
   await sheet.locator('.modal-confirm').click();
-  await page.waitForTimeout(1200);
+  await page.waitForTimeout(1800);
   check('the night is written in one go', logged.length === 5, logged.length + ' rows written');
   check('every row carries the crew who badged in that night', logged.every((l) => l.cleaner_name === 'Hodan Omar'), JSON.stringify(logged.map((l) => l.cleaner_name)));
   check('every row is dated that night', logged.every((l) => String(l.cleaned_at).slice(0, 10) === YESTERDAY), JSON.stringify(logged.map((l) => l.cleaned_at)));
@@ -526,13 +526,13 @@ function serve() {
   await airbnbBulk.locator('button', { hasText: 'Every other day' }).click();
   await page.waitForSelector('#confirmModal');
   await page.locator('#confirmModal .modal-btns button').last().click();
-  await page.waitForTimeout(700);
+  await page.waitForTimeout(1800);
   const warn = await page.locator('text=/land on|on one day vs/').first().textContent();
   contains('a whole group landing on one day is flagged', warn, 'all 5 land on');
   // "Even out the days" is the leveller now — it applies straight away and reports
   // what it did, rather than proposing a set of one-day delays.
   await page.locator('button', { hasText: 'Even out the days' }).first().click();
-  await page.waitForTimeout(700);
+  await page.waitForTimeout(1800);
   const wBal = writes[writes.length - 1];
   const eod = wBal ? (wBal.data.servicedUnits || []).filter((u) => u.type === 'airbnb') : [];
   check('no room has a lastCleaned date in the future', eod.every((u) => !u.lastCleaned || u.lastCleaned <= TODAY),
@@ -549,7 +549,7 @@ function serve() {
   await airbnbBulk.locator('button', { hasText: 'Daily' }).first().click();
   await page.waitForSelector('#confirmModal');
   await page.locator('#confirmModal .modal-btns button').last().click();
-  await page.waitForTimeout(700);
+  await page.waitForTimeout(1800);
 
   // Flipping 103 to daily must put it on today's list.
   await page.locator('.nav button', { hasText: 'Roll Call' }).click();
@@ -571,14 +571,14 @@ function serve() {
   const zoneInputs = teamBox.locator('input[placeholder="e.g. 10, 11"]');
   await zoneInputs.first().fill('2');
   await zoneInputs.first().dispatchEvent('change');
-  await page.waitForTimeout(700);
+  await page.waitForTimeout(1800);
 
   // Make the floor-2 room due so auto-assign has something to route.
   await page.locator('.nav button', { hasText: 'More' }).click();
   await page.locator('.su-unit', { hasText: 'All Rooms' }).click();
   await page.waitForSelector('text=/Set all:/');
   await page.locator('.su-card').filter({ hasText: '201' }).first().locator('button', { hasText: 'Daily' }).first().click();
-  await page.waitForTimeout(700);
+  await page.waitForTimeout(1800);
 
   await page.locator('.nav button', { hasText: 'Roll Call' }).click();
   await page.waitForSelector('text=/Rooms to clean today/');
@@ -599,7 +599,7 @@ function serve() {
   await page.waitForSelector('text=/Cleared to clean/');
   const editing = page.locator('.person').filter({ hasText: 'Cleared to clean' }).first();
   await editing.locator('button', { hasText: 'Office' }).click();
-  await page.waitForTimeout(700);
+  await page.waitForTimeout(1800);
   const wClear = writes[writes.length - 1].data.staff.find((p) => p.id === 'p1');
   check('clearing someone off a room type is saved', wClear && Array.isArray(wClear.canClean) && !wClear.canClean.includes('office'), 'canClean: ' + JSON.stringify(wClear && wClear.canClean));
 
@@ -617,7 +617,7 @@ function serve() {
   await page.waitForSelector('text=/Roll Call covers/');
   const rcBox = page.locator('.addbox').filter({ hasText: 'Kinds of room' }).first();
   await rcBox.locator('button', { hasText: 'Airbnb' }).click();
-  await page.waitForTimeout(700);
+  await page.waitForTimeout(1800);
   await page.locator('.nav button', { hasText: 'Roll Call' }).click();
   await page.waitForSelector('text=/Rooms to clean today/');
   const chipsNow = await page.locator('.section-label', { hasText: 'Rooms to clean today' }).first()
@@ -674,7 +674,7 @@ function serve() {
   console.log('\n\x1b[1mTONIGHT — what is still outstanding on this round\x1b[0m');
   await page.locator('.nav button', { hasText: 'More' }).click();
   await page.locator('.su-unit', { hasText: 'Tonight' }).click();
-  await page.waitForTimeout(800);
+  await page.waitForTimeout(1800);
   const tonightText = await page.locator('.body').first().textContent();
   contains('the round lists what is still outstanding', tonightText, 'to clean tonight');
   check('a room already cleaned today has dropped off', !/Unit 102/.test(tonightText), 'unit 102 was cleaned today and must not be listed');
@@ -696,7 +696,7 @@ function serve() {
 
   writes.length = 0;
   await lobby.locator('select').selectOption('p1');
-  await page.waitForTimeout(700);
+  await page.waitForTimeout(1800);
   const wArea = writes[writes.length - 1];
   const lobbyRow = wArea && (wArea.data.areas || []).find((a) => a.id === 'lobby');
   eq('an area handed to someone is remembered', lobbyRow && lobbyRow.assignedTo, 'p1');
@@ -704,7 +704,7 @@ function serve() {
   logged.length = 0;
   await page.locator('.area-item').filter({ has: page.locator('.su-unit', { hasText: 'Main Lobby' }) }).first()
     .locator('button[title="Mark clean"]').click();
-  await page.waitForTimeout(900);
+  await page.waitForTimeout(1800);
   check('cleaning an area reaches History', logged.length === 1, logged.length + ' rows written');
   const aLog = logged[0] || {};
   eq('the area is logged under its own name', aLog.unit_label, 'Main Lobby');
@@ -720,7 +720,7 @@ function serve() {
 
   // The Buildings tab is where building work is read; areas belong there too.
   await page.locator('.nav button', { hasText: 'Buildings' }).click();
-  await page.waitForTimeout(400);
+  await page.waitForTimeout(1800);
   check('the Buildings tab shows the communal areas', (await page.locator('.section-label', { hasText: 'Communal areas' }).count()) > 0, 'no areas section on Buildings');
 
   // The list has to be buildable where it's read — not three taps away in Settings.
@@ -728,7 +728,7 @@ function serve() {
   await page.locator('button', { hasText: '＋ Add a communal area' }).click();
   await page.fill('#newBldArea', 'Lift Lobby');
   await page.locator('button', { hasText: '+ Add communal area' }).click();
-  await page.waitForTimeout(700);
+  await page.waitForTimeout(1800);
   const wNewArea = writes[writes.length - 1];
   const addedArea = wNewArea && (wNewArea.data.areas || []).find((a) => a.label === 'Lift Lobby');
   check('a communal area can be added from the Buildings tab', !!addedArea && addedArea.kind === 'interior' && addedArea.freq === 'daily', JSON.stringify(addedArea || null));
@@ -736,10 +736,10 @@ function serve() {
   const liftCard = page.locator('.area-item').filter({ has: page.locator('.su-unit', { hasText: 'Lift Lobby' }) }).first();
   check('the controls stay out of the way until wanted', (await liftCard.locator('button', { hasText: 'Rename' }).count()) === 0, 'rename control showing unasked');
   await liftCard.locator('button[title="Change or remove"]').click();
-  await page.waitForTimeout(400);
+  await page.waitForTimeout(1800);
   check('an area added there can be renamed and removed there', (await page.locator('.area-item').filter({ has: page.locator('.su-unit', { hasText: 'Lift Lobby' }) }).first().locator('button', { hasText: 'Rename' }).count()) > 0, 'no rename control');
   await page.locator('.nav button', { hasText: 'Roll Call' }).click();
-  await page.waitForTimeout(700);
+  await page.waitForTimeout(1800);
   check('a newly built area reaches the morning roll call', (await page.locator('.su-unit', { hasText: 'Lift Lobby' }).count()) > 0, 'not on Roll Call');
 
   // ------------------------------------------------------------- AUTOMATIC
@@ -773,7 +773,7 @@ function serve() {
   const ap = await auto.newPage();
   await ap.goto(`http://127.0.0.1:${port}/index.html`, { waitUntil: 'domcontentloaded' });
   await ap.waitForSelector('.nav');
-  await ap.waitForTimeout(1500);
+  await ap.waitForTimeout(1800);
   const autoState = autoWrites.length ? autoWrites[autoWrites.length - 1].data : null;
   const handed = autoState ? autoState.servicedUnits.filter((u) => u.assignedTo) : [];
   check('a fresh morning hands itself out with nobody pressing anything', handed.length > 0, 'nothing was assigned automatically');
@@ -1107,7 +1107,7 @@ function serve() {
 
   console.log('\n\x1b[1mPUT THE BOARD BACK — unassign the whole morning at once\x1b[0m');
   await page.locator('.nav button', { hasText: 'Roll Call' }).click();
-  await page.waitForTimeout(400);
+  await page.waitForTimeout(1800);
   await autoAssign();                                   // give the board something to clear
   const heldBefore = await page.evaluate(() => (state.servicedUnits || [])
     .filter((u) => onRollCall(u) && onTodaysList(u) && u.assignedTo && !u.usualTo).map((u) => u.unit));
@@ -1117,7 +1117,7 @@ function serve() {
   contains('it says how many it will clear', await clearBtn.textContent(), String(heldBefore.length));
   await clearBtn.click();
   await page.locator('#confirmModal .modal-btns button').last().click();
-  await page.waitForTimeout(600);
+  await page.waitForTimeout(1800);
   const heldAfter = await page.evaluate(() => (state.servicedUnits || [])
     .filter((u) => onRollCall(u) && onTodaysList(u) && u.assignedTo && !u.usualTo).map((u) => u.unit));
   eq('every hand-out is back in the pool', heldAfter.length, 0);
@@ -1131,7 +1131,7 @@ function serve() {
   const undoLabel = await page.locator('button', { hasText: 'Undo' }).first().textContent();
   contains('undo names the change it will reverse', undoLabel, 'Undo putting them back');
   await page.locator('button', { hasText: 'Undo' }).first().click();
-  await page.waitForTimeout(600);
+  await page.waitForTimeout(1800);
   const heldRestored = await page.evaluate(() => (state.servicedUnits || [])
     .filter((u) => onRollCall(u) && onTodaysList(u) && u.assignedTo && !u.usualTo).map((u) => u.unit));
   eq('undo puts the whole board back', heldRestored.sort().join(','), heldBefore.sort().join(','));
@@ -1154,7 +1154,7 @@ function serve() {
     return { unit: u.unit, last: lastCleanDate(u), cycleLen: cycleLen(u),
       due: unitDueToday(u), cleaned: cleanedToday(u), onList: onTodaysList(u), onRoll: onRollCall(u) };
   });
-  await page.waitForTimeout(400);
+  await page.waitForTimeout(1800);
   const notDue = await page.evaluate(() => (state.servicedUnits || [])
     .filter((u) => onRollCall(u) && !onTodaysList(u) && !u.paused).map((u) => u.unit));
   check('there are off-day rooms to show', notDue.length > 0, 'set-up room: ' + JSON.stringify(ndDiag));
@@ -1202,7 +1202,7 @@ function serve() {
   const postsBefore = logPosts;
   await allBtn.click();
   await page.locator('#confirmModal .modal-btns button').last().click();   // it asks first
-  await page.waitForTimeout(900);
+  await page.waitForTimeout(1800);
 
   const after = await page.evaluate(() => {
     const o = rollCallOutstanding();
@@ -1251,7 +1251,7 @@ function serve() {
   });
   await page.locator('.nav button', { hasText: 'More' }).click();
   await page.locator('.su-card', { hasText: 'Tonight' }).first().click();
-  await page.waitForTimeout(400);
+  await page.waitForTimeout(1800);
   const offRollCall = await page.evaluate(() => tonightOutstanding().rooms
     .filter((u) => !onRollCall(u)).map((u) => u.unit));
   check('tonight still lists the jobs roll call leaves out', offRollCall.length > 0,
@@ -1269,7 +1269,7 @@ function serve() {
   const nightLogged = logged.length, nightPosts = logPosts;
   await nightBtn.click();
   await page.locator('#confirmModal .modal-btns button').last().click();
-  await page.waitForTimeout(900);
+  await page.waitForTimeout(1800);
 
   const nightAfter = await page.evaluate(() => tonightOutstanding().jobs.length);
   eq('the whole round is closed out', nightAfter, 0);
@@ -1448,7 +1448,7 @@ function serve() {
     if (state.planDropped) delete state.planDropped[d];
     planDay = null; state.tab = 'rollcall'; render();
   });
-  await page.waitForTimeout(400);
+  await page.waitForTimeout(1800);
   const rcEmpty = await page.locator('.section-label', { hasText: 'Tomorrow (' }).count();
   check('the roll call has a Tomorrow panel', rcEmpty > 0, 'no Tomorrow section on the roll call');
   check('it says when nothing is laid out yet',
@@ -1474,7 +1474,7 @@ function serve() {
     state.tab = 'rollcall'; render();
     return { flagged: rooms[1].unit, daily: rooms[0].unit, split: rooms[2].unit };
   });
-  await page.waitForTimeout(400);
+  await page.waitForTimeout(1800);
   const cmpText = await page.locator('.section-label', { hasText: 'Tomorrow (' }).first()
     .evaluate((e) => e.parentElement.textContent);
   contains('the panel puts today and tomorrow side by side', cmpText, 'Today ');
@@ -1491,7 +1491,7 @@ function serve() {
   const rcBtn = page.locator('button', { hasText: "Plan tomorrow's rooms" }).first();
   check('and offers the one button right there', await rcBtn.count() > 0, 'no plan button on the roll call');
   await rcBtn.click();
-  await page.waitForTimeout(500);
+  await page.waitForTimeout(1800);
   const afterRc = await page.evaluate(() => {
     const d = tomorrowKey();
     const rooms = Object.values(state.plans[d] || {}).filter((v) => v.kind === 'unit');
@@ -1502,7 +1502,7 @@ function serve() {
 
   // Back on the roll call it must now report the hand-out rather than the empty state.
   await page.evaluate(() => { state.tab = 'rollcall'; render(); });
-  await page.waitForTimeout(400);
+  await page.waitForTimeout(1800);
   const rcLabel = await page.locator('.section-label', { hasText: 'Tomorrow (' }).first().textContent();
   contains('the panel counts the rooms it planned', rcLabel, String(afterRc.rooms));
   check('and no longer says nothing is laid out',
@@ -1698,7 +1698,7 @@ function serve() {
   // and read as a rota. It used to be two rows and a full-width dropdown per room.
   console.log('\n\x1b[1mPLAN A DAY — the day fits on a screen\x1b[0m');
   await page.evaluate(() => { planDay = tomorrowKey(); planMore = false; state.tab = 'plan'; render(); });
-  await page.waitForTimeout(400);
+  await page.waitForTimeout(1800);
   const shape = await page.evaluate(() => {
     const d = tomorrowKey();
     const rooms = Object.values(state.plans[d] || {}).filter((v) => v.kind === 'unit');
@@ -1760,7 +1760,7 @@ function serve() {
     const bb = await chip.boundingBox();
     await page.mouse.move(bb.x + bb.width / 2, bb.y + bb.height / 2);
     await page.mouse.down();
-    await page.waitForTimeout(450);                     // hold past the threshold
+    await page.waitForTimeout(1800);                     // hold past the threshold
     await page.mouse.up();
     await page.waitForTimeout(300);
     check('holding a room asks who should have it', (await page.locator('.modal-title').count()) > 0,
@@ -1775,7 +1775,7 @@ function serve() {
 
   // Show more brings the rest back without it living on the main screen.
   await page.locator('button', { hasText: 'Show more' }).first().click();
-  await page.waitForTimeout(500);
+  await page.waitForTimeout(1800);
   const expanded = await page.evaluate(() => document.body.innerText.toLowerCase());
   contains('Show more reveals the week chart', expanded, 'the week ahead');
   contains('and the jobs you can add', expanded, 'add jobs to this day');
@@ -1790,12 +1790,12 @@ function serve() {
     if (state.planDropped) delete state.planDropped[d];
     planDay = null; state.tab = 'plan'; render();
   });
-  await page.waitForTimeout(400);
+  await page.waitForTimeout(1800);
   const tomBtn = page.locator('button', { hasText: "Plan tomorrow's rooms" }).first();
   check('the Plan tab leads with one button for tomorrow', await tomBtn.count() > 0,
     'no "Plan tomorrow" button on the tab');
   await tomBtn.click();
-  await page.waitForTimeout(500);
+  await page.waitForTimeout(1800);
   const tom = await page.evaluate(() => {
     const d = tomorrowKey();
     const plan = state.plans[d] || {};
@@ -1833,7 +1833,7 @@ function serve() {
   // day that has not happened is nobody — so it just failed.
   console.log('\n\x1b[1mPLAN A DAY — auto-assign fits the day it is on\x1b[0m');
   await page.evaluate(() => { planDay = tomorrowKey(); state.tab = 'plan'; render(); });
-  await page.waitForTimeout(400);
+  await page.waitForTimeout(1800);
   const planBtn = page.locator('button', { hasText: 'Auto-assign' }).first();
   check('the Plan tab offers an auto-assign', await planBtn.count() > 0, 'no auto-assign button on Plan a Day');
   contains('and on a future day it goes by the rota, not the door reader',
@@ -1846,7 +1846,7 @@ function serve() {
     return { before: Object.values(plan).filter((v) => v.kind === 'unit' && v.assignedTo).length };
   });
   await planBtn.click();
-  await page.waitForTimeout(400);
+  await page.waitForTimeout(1800);
   const afterDeal = await page.evaluate(() => {
     const plan = state.plans[tomorrowKey()] || {};
     const rooms = Object.values(plan).filter((v) => v.kind === 'unit');
@@ -2056,7 +2056,7 @@ function serve() {
     Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
     document.dispatchEvent(new Event('visibilitychange'));
   });
-  await page.waitForTimeout(400);
+  await page.waitForTimeout(1800);
   check('a change survives the screen being locked before the debounce fires',
     writes.length > 0, 'nothing was sent to the server');
   check('and it is the change that was actually made',
@@ -2073,7 +2073,7 @@ function serve() {
   failWrites = true;
   writes.length = 0;
   await markUnitPriority(false);
-  await page.waitForTimeout(600);
+  await page.waitForTimeout(1800);
   eq('a rejected write leaves the device marked dirty', await dirtyFlag(), '1');
   eq('nothing was recorded as written', writes.length, 0);
   contains('the crew is told it has not saved yet',
@@ -2090,7 +2090,7 @@ function serve() {
   failWrites = false;
   writes.length = 0;
   await page.evaluate(() => window.dispatchEvent(new Event('online')));
-  await page.waitForTimeout(600);
+  await page.waitForTimeout(1800);
   check('the held change is sent as soon as the connection returns',
     writes.length > 0, 'came back online and still sent nothing');
   check('the server gets the edit, not a stale copy',

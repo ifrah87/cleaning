@@ -906,6 +906,47 @@ let state = {
 function finalizeState() {
   if (!Array.isArray(state.staff)) state.staff = DEFAULT_STAFF.map(p => ({ ...p }));
   if (!Array.isArray(state.areas)) state.areas = DEFAULT_AREAS.map(a => ({ ...a }));
+  // ============================================================
+  // KEEP THE STATE SMALL. The whole of it travels as one blob on every save AND is
+  // broadcast to every other device by realtime — so anything that grows for ever
+  // grows the cost of every single change. Nothing was ever pruned: completions,
+  // logRefs and lastCleanUndo each gain a key PER ROOM PER DAY, so thirty rooms is
+  // some thirty thousand keys a year, moving back and forth all day, for records
+  // nothing reads. History lives in cleaning_log, which is the right place for it.
+  //
+  // Only keys that genuinely end in a date are pruned. A completion key can also end
+  // in 'perm', a week ('2026-W33') or a month ('2026-08') — those are how permanent
+  // and weekly/monthly jobs are marked, they do not accumulate daily, and deleting
+  // one would un-tick a job that was done.
+  // ============================================================
+  const DAY_RE = /(\d{4}-\d{2}-\d{2})$/;
+  const pruneByDaySuffix = (map, cutoff) => {
+    if (!map || typeof map !== 'object') return;
+    Object.keys(map).forEach((k) => {
+      const m = DAY_RE.exec(k);
+      if (m && m[1] < cutoff) delete map[k];
+    });
+  };
+  const pruneByDayKey = (map, cutoff) => {
+    if (!map || typeof map !== 'object') return;
+    Object.keys(map).forEach((k) => { if (DAY_RE.test(k) && k < cutoff) delete map[k]; });
+  };
+
+  // Ticks: 45 days is far longer than anything reads them — only today's decide
+  // whether a room shows as done — and it leaves room to look back over a month.
+  const tickCutoff = shiftDay(todayKey(), -45);
+  pruneByDaySuffix(state.completions, tickCutoff);
+  pruneByDaySuffix(state.logRefs, tickCutoff);
+  pruneByDaySuffix(state.lastCleanUndo, tickCutoff);
+  pruneByDayKey(state.manualArrivals, tickCutoff);
+
+  // Plans: the day picker will go back 120 days, so a plan stays readable for as long
+  // as the screen offers to show it, and no longer.
+  const planCutoff = shiftDay(todayKey(), -120);
+  pruneByDayKey(state.plans, planCutoff);
+  pruneByDayKey(state.planSeeded, planCutoff);
+  pruneByDayKey(state.planDropped, planCutoff);
+
   // Headstones only have to outlive the devices that might still be carrying the old
   // tick. Three weeks is far longer than that, and stops the map growing for ever.
   if (state.untick) {
@@ -1006,10 +1047,16 @@ function markDirty() { try { localStorage.setItem(DIRTY_KEY, '1'); } catch (e) {
 function clearDirty() { try { localStorage.removeItem(DIRTY_KEY); } catch (e) {} }
 
 // Debounced push: collapses a burst of saves into one network write.
+// COALESCE THE RUSH. Every save sends the WHOLE state and realtime then broadcasts it
+// to every other device, so a quarter-second debounce meant a morning of ticking rooms
+// off was a push — and a broadcast to every phone and the TV — per tap. A second and a
+// bit gathers a burst into one write without anybody feeling it: the screen has already
+// updated locally, and nothing waits on the push. A change still in the window is not
+// at risk — it is marked owed, flushed when the page is hidden, and retried on failure.
 function remotePush() {
   if (!db) return;             // not configured yet → local-only (unchanged behavior)
   clearTimeout(_pushTimer);
-  _pushTimer = setTimeout(() => { pushNow(); }, 250);
+  _pushTimer = setTimeout(() => { pushNow(); }, 1200);
 }
 
 // Send the current state to the server. Resolves true only when the row is written.
