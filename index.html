@@ -863,6 +863,11 @@ function schedLabel(u) {
 // A room is due on `day` once its next-due date has arrived, and stays after that:
 // work nobody got to doesn't stop needing doing. `base` is the last clean to reckon
 // from — the room's real one normally, or a projected one when looking ahead.
+// Is `day` a day this room's own cycle lands on, counting from `from`?
+const onBeatFrom = (u, from, day) => {
+  const n = Math.round((new Date(day + 'T00:00:00') - new Date(from + 'T00:00:00')) / 864e5);
+  return n >= 0 && n % Math.max(1, cycleLen(u)) === 0;   // daily is cycle 1, so every day
+};
 function dueOnDayFrom(u, day, base) {
   if (extraCleanDue(u, day)) return true;
   if (heldBack(u, day)) return false;
@@ -875,9 +880,22 @@ function dueOnDayFrom(u, day, base) {
     // genuinely skipped room not announcing itself. The gap audit is where that shows.
     return days.indexOf(dowOf(day)) >= 0;
   }
-  if (!base) return true;                  // never recorded → due now
+  const today = workToday();
+  // AN EVERY-OTHER-DAY ROOM WAS DUE ON EVERY DAY OF THE WEEK AHEAD. Work nobody got
+  // to has to keep showing, so once the next-due date passed the room stayed due —
+  // for ever, including on every FUTURE day. Each day's plan is built from this, and
+  // the roll call shows what the plan holds, so a room a day behind then appeared
+  // every single morning and the whole idea of "every other day" quietly stopped
+  // meaning anything.
+  //
+  // Up to and including today the carry-forward stands: outstanding work is
+  // outstanding and must not vanish. Beyond today the room can only be due on days
+  // its own cycle actually lands on.
+  if (!base) return day <= today || onBeatFrom(u, today, day);   // never recorded → due now
   const nd = nextDueFrom(u, base);
-  return !!nd && nd <= day;
+  if (!nd) return false;
+  if (day <= today) return nd <= day;
+  return nd <= day && onBeatFrom(u, nd, day);
 }
 function dueOnDay(u, day) {
   return dueOnDayFrom(u, day, lastCleanDate(u));

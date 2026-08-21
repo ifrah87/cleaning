@@ -130,6 +130,29 @@ for (const [label,vp] of [['PHONE',{width:420,height:900}],['DESKTOP',{width:144
  await page.locator('.grp-head').first().click(); await page.waitForTimeout(500);
  check('and unfolds them again', (await page.locator('.su-card').count())===beforeFold);
 
+ // AN EVERY-OTHER-DAY ROOM MUST NOT BE DUE EVERY DAY. Once its next-due date passed
+ // it stayed due for ever, including on every future day — which put it on every
+ // day's plan, and the roll call shows what the plan holds.
+ const beat=await page.evaluate(()=>{
+   const days=Array.from({length:7},(_,i)=>shiftDay(workToday(),i));
+   const mk=(u)=>days.map(d=>dueOnDay(u,d)?'X':'.').join('');
+   const y=shiftDay(workToday(),-1), old=shiftDay(workToday(),-3);
+   return {
+     cleanedYesterday: mk({id:'t1',unit:'T1',type:'building',freq:'eod',lastCleaned:y}),
+     overdue:          mk({id:'t2',unit:'T2',type:'building',freq:'eod',lastCleaned:old}),
+     neverRecorded:    mk({id:'t3',unit:'T3',type:'building',freq:'eod'}),
+     daily:            mk({id:'t4',unit:'T4',type:'building',freq:'daily',lastCleaned:y}),
+   };
+ });
+ const alternates=(s)=>!/XX/.test(s.slice(1));   // no two due days in a row after today
+ check('an every-other-day room cleaned yesterday is due every OTHER day',
+   beat.cleanedYesterday==='.X.X.X.', beat.cleanedYesterday);
+ check('an overdue every-other-day room shows today, then on its own beat',
+   beat.overdue[0]==='X'&&alternates(beat.overdue), beat.overdue);
+ check('a never-recorded room shows today, then on its own beat',
+   beat.neverRecorded[0]==='X'&&alternates(beat.neverRecorded), beat.neverRecorded);
+ check('a daily room is still due every day', beat.daily==='XXXXXXX', beat.daily);
+
  const pinnedDays=await page.evaluate(()=>(state.servicedUnits||[]).filter(u=>u.freq==='eod').map(u=>u.unit+':'+(u.days||[]).join('')));
  check('rooms cleaned today go on Sun/Tue/Thu (next turn Sunday)', pinnedDays.every(x=>x.endsWith(':024')), pinnedDays.join(' '));
 
