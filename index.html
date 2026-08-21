@@ -1838,7 +1838,7 @@ function setUnitsDaysBulk(ids, days, groupLabel) {
     what ? `Put ${list.length} room${list.length === 1 ? '' : 's'} on ${what}?`
          : `Take ${list.length} room${list.length === 1 ? '' : 's'} off fixed days?`,
     what
-      ? `Applies to ${groupLabel} only. They come round on those days from now on, whatever day they were last done — so the schedule stops drifting. Any room can still be changed on its own.`
+      ? `${groupLabel} only. They come round on those days from now on. Any room can still be changed on its own.`
       : `They go back to coming round on their frequency, counted from the last clean.`,
     () => {
       list.forEach((u) => { u.days = what ? days.slice() : null; });
@@ -1970,11 +1970,9 @@ function suggestDaysFromFreqConfirm() {
   const week = DOW_PICK_ORDER.map((d) => DOW_SHORT[d] + ' ' + plan.load[d]).join(', ');
   showConfirm(
     'Put ' + plan.proposals.length + ' room' + (plan.proposals.length === 1 ? '' : 's') + ' on fixed days?',
-    summary + '. Worked out from the frequency each room is already set to, and split so the week comes out even — '
-      + 'rooms per day after this: ' + week + '. '
-      + 'They come round on those days from now on whatever day they were last done, so the schedule stops sliding. '
-      + (plan.skipped.length ? plan.skipped.length + ' room(s) left alone: daily rooms are due every day anyway. ' : '')
-      + 'Rooms already on days are untouched, and any room can still be changed on its own.',
+    summary + '.\n\nRooms per day after this: ' + week + '.'
+      + (plan.skipped.length ? '\n\n' + plan.skipped.length + ' left alone — daily rooms are due every day anyway.' : '')
+      + '\n\nRooms already on days are untouched.',
     () => { applySuggestedDays(plan); render(); },
     'Set the days',
     'safe'
@@ -2479,9 +2477,7 @@ function clearAllUsualCleaners() {
   if (!pinned.length) return;
   showConfirm(
     'Clear ' + pinned.length + ' permanent cleaner' + (pinned.length === 1 ? '' : 's') + '?',
-    'Those rooms stop belonging to one person and go back into the general pool, so auto-assign '
-      + 'can rotate them. Today\'s hand-out is left exactly as it is — this only changes what happens '
-      + 'next time rooms are dealt out. You can always make a room permanent again by picking its cleaner by hand.',
+    'They go back into the pool so the work rotates. Today\'s hand-out is untouched — this changes the next one.',
     () => {
       (state.servicedUnits || []).forEach((u) => { u.usualTo = null; });
       hikSyncMsg = { text: pinned.length + ' rooms are no longer tied to one cleaner.' };
@@ -2577,7 +2573,7 @@ function autoAssignRooms(onlyRooms, loadSeed, slotSeed, silent) {
       `Reassign all ${rooms.length} rooms?`,
       `${held.length} ${held.length === 1 ? 'is' : 'are'} already handed out`
         + (signed ? `, ${signed} of them checked` : '')
-        + `. This shuffles them all again — rooms with a permanent cleaner stay with that person. You can undo it afterwards.`,
+        + `. Rooms with a permanent cleaner stay with that person. You can undo it.`,
       () => runAutoAssign(rooms, people, inIds, load, slotSeed, silent),
       'Reassign',
       'safe'
@@ -3632,8 +3628,7 @@ function floorAllocationBox() {
   const unowned = allFloors().filter((f) => !ownerOfFloor(f)).length;
   box.appendChild(el(`<div class="section-label">Who cleans which floor</div>`));
   box.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin:-6px 0 8px">`
-    + `A floor belongs to one person — giving it to somebody takes it off whoever had it. `
-    + `${unowned ? `<b>${unowned}</b> floor${unowned === 1 ? ' has' : 's have'} nobody on ${unowned === 1 ? 'it' : 'them'}.` : 'Every floor has somebody.'}</div>`));
+    + `${unowned ? `<b>${unowned}</b> floor${unowned === 1 ? '' : 's'} with nobody on ${unowned === 1 ? 'it' : 'them'}.` : 'Every floor has somebody.'} One person per floor.</div>`));
   allFloors().forEach((f) => {
     const owner = ownerOfFloor(f);
     const row = el(`<div class="sr-row" style="cursor:default"></div>`);
@@ -4182,7 +4177,7 @@ function viewBuildings() {
   const areas = areasInterior();
   const left = areasOutstanding().length;
   wrap.appendChild(el(`<div class="section-label">Communal areas · ${left} to do</div>`));
-  wrap.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin:-6px 0 10px">Build the list here — every one of these also shows on Roll Call each morning, so it gets handed to someone.</div>`));
+  wrap.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin:-6px 0 10px">These also show on Roll Call each morning.</div>`));
 
   // Building the list belongs on the tab where the work is read, not three taps away
   // in Settings. Interior only: exterior areas are their own job on their own tab.
@@ -4597,11 +4592,9 @@ function planAhead() {
       + (extras ? ' (' + extras + ' get one extra clean to break up the clump)' : '')
       + '. Nothing waits longer than its frequency.');
   }
-  bits.push(pv.toPlan
-    ? 'Lays out the next ' + pv.span + ' days — about ' + pv.toPlan + ' more job'
-      + (pv.toPlan === 1 ? '' : 's') + ' from the schedule — and hands each day to whoever is rostered on it.'
-    : 'Lays out the next ' + pv.span + ' days and hands each one to whoever is rostered on it.');
-  bits.push('Anything already handed out stays where it is.');
+  bits.push('Lays out the next ' + pv.span + ' days'
+    + (pv.toPlan ? ' — about ' + pv.toPlan + ' more job' + (pv.toPlan === 1 ? '' : 's') : '')
+    + ', handed to whoever is rostered on. Anything already handed out stays.');
   showConfirm(
     'Get the next ' + pv.span + ' days ready?',
     bits.join(' '),
@@ -5311,7 +5304,7 @@ function viewRooms() {
   const wrap = el('<div class="body"></div>');
   const units = (state.servicedUnits || []).slice()
     .sort((a, b) => String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }));
-  wrap.appendChild(el(`<div class="note">Every room on the cleaning list — <b>${units.length}</b> total. Tap <b>Daily</b> / <b>Every other day</b> / <b>Weekly</b> on any room to change how often it&rsquo;s cleaned, or use <b>Set all</b> to flip a whole group.</div>`));
+  wrap.appendChild(el(`<div class="note"><b>${units.length}</b> rooms. Tap a frequency on any room to change it, or <b>Set all</b> for a whole group.</div>`));
   const pastBtn = el(`<button class="add-btn" style="width:100%;margin-bottom:14px">＋ Record a past day</button>`);
   pastBtn.onclick = () => openBackdate(yesterdayKey());
   wrap.appendChild(pastBtn);
@@ -5370,9 +5363,8 @@ function viewRooms() {
       showConfirm(
         'Split ' + dueNow.length + ' rooms over ' + span + ' days?',
         preview.groups.map((g, i) => (i === 0 ? 'Today, as normal' : 'Today AND again on ' + g.day) + ': ' + g.units.join(', ')).join('\n\n')
-          + '\n\nThey are all cleaned today. ' + extra + ' of them are then cleaned again the next day, '
-          + 'which puts them on the opposite day from then on. Nothing is delayed and nothing is skipped — '
-          + 'it costs ' + extra + ' extra cleans once, and the rhythm carries itself afterwards.',
+          + '\n\nAll cleaned today; ' + extra + ' cleaned again tomorrow to move them onto the opposite day. '
+          + 'Costs ' + extra + ' extra cleans once. Nothing is delayed or skipped.',
         () => { staggerFrequencyGroup(fk); },
         'Split them',
         'safe'
@@ -5579,7 +5571,7 @@ function viewTonight() {
   const jobs = outstanding.jobs;
 
   const dayLabel = new Date(day + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
-  wrap.appendChild(el(`<div class="note">Everything still outstanding for <b>${esc(dayLabel)}</b>. Rooms already cleaned today have dropped off. Tick them here as the round goes.</div>`));
+  wrap.appendChild(el(`<div class="note">Still outstanding for <b>${esc(dayLabel)}</b>. Tick them off as the round goes.</div>`));
 
   if (!jobs.length) {
     wrap.appendChild(el(`<div class="empty" style="text-align:center;padding:28px 0;color:#15803d;font-weight:700">✓ Nothing outstanding — the round is done.</div>`));
@@ -5672,9 +5664,9 @@ function offRollCallNote(typeKey) {
     && Array.isArray(p.canClean) && p.canClean.includes(typeKey));
   const box = el('<div class="alert" style="background:#eef6fd;border-color:#cfe8fb"></div>');
   box.appendChild(el(`<div class="alert-title" style="color:#0369a1">Not on the morning roll call</div>`));
-  box.appendChild(el(`<div class="alert-body">These rooms are a separate job, done after the main round. `
-    + (cleared.length ? `Assigned to <b>${esc(cleared.map((p) => p.name.split(' ')[0]).join(' and '))}</b>. ` : '')
-    + `Tick them off here as they're done — nothing on Roll Call will record them.</div>`));
+  box.appendChild(el(`<div class="alert-body">A separate job, after the main round. `
+    + (cleared.length ? `<b>${esc(cleared.map((p) => p.name.split(' ')[0]).join(' and '))}</b>. ` : '')
+    + `Tick them off here.</div>`));
   return box;
 }
 
@@ -5879,13 +5871,13 @@ function viewRollCall() {
       const allBox = el('<div style="margin-bottom:18px"></div>');
       const allBtn = el(`<button class="add-btn" style="background:#15803d;color:#ffffff">${esc(markAllLabel(open.rooms.length, open.areas.length))}</button>`);
       if (loose) allBox.appendChild(el(`<div style="font-size:11px;color:#b45309;font-weight:700;margin-top:4px">`
-        + `${loose} more nobody has been given — hand ${loose === 1 ? 'it' : 'them'} out, or tick ${loose === 1 ? 'it' : 'them'} one by one.</div>`));
+        + `${loose} more nobody has been given.</div>`));
       allBtn.onclick = () => markRollCallAllDone();
       allBox.appendChild(allBtn);
       allBox.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin-top:6px">`
         + `${open.rooms.length} room${open.rooms.length === 1 ? '' : 's'}`
         + (open.areas.length ? ` · ${open.areas.length} communal area${open.areas.length === 1 ? '' : 's'}` : '')
-        + ` — goes straight to History, and you can un-tick any of them one by one.</div>`));
+        + ` — you can un-tick any of them after.</div>`));
       body.appendChild(allBox);
     }
   }
@@ -6046,9 +6038,7 @@ function viewRollCall() {
         box.appendChild(line(`⚠ ${never.length} never recorded as cleaned, so ${never.length === 1 ? 'it shows' : 'they show'} `
           + `every day: <b>${esc(nums(never))}</b>`, '#b45309'));
         box.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin-top:2px">`
-          + `The app cannot tell a room nobody has cleaned from one nobody has told it about. `
-          + `Give ${never.length === 1 ? 'it' : 'them'} a date and ${never.length === 1 ? 'it drops' : 'they drop'} into ${never.length === 1 ? 'its' : 'their'} cycle. `
-          + `If you no longer clean one, remove it on its own tab.</div>`));
+          + `Give ${never.length === 1 ? 'it a date and it drops' : 'them a date and they drop'} into the cycle.</div>`));
         const fix = el(`<button class="freqmini" style="width:100%;padding:9px;margin-top:6px;border-color:#b45309;color:#b45309">`
           + `Set the ${never.length} never-recorded room${never.length === 1 ? '' : 's'} as cleaned today</button>`);
         fix.onclick = () => setUnitsLastCleanedBulk(never.map((u) => u.id), workToday(), 'the rooms with no cleaning on record');
@@ -6078,7 +6068,7 @@ function viewRollCall() {
         learnBtn.onclick = () => learnUsualCleaners();
         setupBox.appendChild(learnBtn);
         setupBox.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin:-2px 0 8px">`
-          + `From the last ${LEARN_DAYS} days of the log. Rooms without a clear regular keep rotating.</div>`));
+          + `From the last ${LEARN_DAYS} days of the log.</div>`));
       }
     }
     // Turning frequencies into actual days is the one-off that stops the schedule
@@ -6091,8 +6081,7 @@ function viewRollCall() {
         dBtn.onclick = () => suggestDaysFromFreqConfirm();
         setupBox.appendChild(dBtn);
         setupBox.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin:-2px 0 8px">`
-          + `From the frequency each is already set to, split so the week comes out even. `
-          + `Rooms then come round on the same days instead of sliding.</div>`));
+          + `Split so the week comes out even.</div>`));
       }
     }
     // Pinned rooms go back to the same person every morning, so once there are a lot
@@ -6135,8 +6124,7 @@ function viewRollCall() {
       const always = el('<button class="freqmini" style="flex:0 0 auto;padding:9px 12px;border-color:#0284c7;color:#0284c7">✓ Always — stop asking</button>');
       always.onclick = () => showConfirm(
         'Hand the rooms out without asking?',
-        'Every morning the rooms are dealt from the rota and simply handed out — no list to check. '
-          + 'You can still move any room by tapping it, and you can switch this back off in Settings.',
+        'No list to check each morning. You can still move any room, and switch this back off in Settings.',
         () => { state.autoConfirm = true; save(); render(); },
         'Yes, run it automatically', 'safe');
       hdr.appendChild(always);
@@ -6330,8 +6318,7 @@ function viewRollCall() {
     addSel.onchange = (e) => { if (e.target.value) addManualArrival(e.target.value); };
     whoIn.appendChild(addSel);
     if (offRota.length) whoIn.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin:-8px 0 12px">`
-      + `${offRota.length} ${offRota.length === 1 ? 'person is' : 'people are'} down as off today. `
-      + `Adding one puts them on the board and they get rooms like anyone else.</div>`));
+      + `${offRota.length} down as off today — add one and they get rooms like anyone else.</div>`));
   }
   if (!arrIds.length) {
     whoIn.appendChild(el(`<div class="empty" style="text-align:center;padding:16px 0;color:#5b6a7f">No clock-ins for this day. Tap "Import Attendance File" and pick your Hik export.</div>`));
@@ -6609,13 +6596,13 @@ function viewSettings() {
   const autoBox = el(`<div class="addbox"></div>`);
   [
     ['autoAssign', 'Hand out rooms each morning',
-     'Today\'s rooms are shared out automatically as the crew badge in — and shared out again each time somebody new arrives, so whoever is in early is not left holding the whole board. A room you have checked off, or handed to someone yourself, stays where you put it.'],
+     'Shared out as the crew badge in, and again each time somebody new arrives. Rooms you handed out yourself stay put.'],
     ['autoConfirm', 'Hand them out without asking',
-     'Skips the morning list of assignments to check. The rooms were dealt from the rota and split evenly, so there is nothing to approve — they are simply handed out. You can still move any room by tapping it. Off by default, because it means the morning happens whether or not anyone looks at it.', false],
+     'No list to approve each morning. You can still move any room by tapping it.', false],
     ['autoDays', 'Put rooms on set days',
-     'Every-other-day and weekly rooms are given actual weekdays — split so no day comes out heavier than the rest, and keeping each room on the beat it is already on. Rooms then come round on the same days every week instead of sliding. A room you have put on days yourself is never changed.'],
+     'Every-other-day and weekly rooms get fixed weekdays, split so no day is heavier. Days you set yourself are never changed.'],
     ['autoBalance', 'Keep the week level',
-     'Stops the every-other-day rooms all falling due on the same morning — they are split across the cycle so the days stop swinging between a huge one and an empty one. Nothing is ever left longer than its frequency: a room takes its next turn earlier, or is cleaned once more to move it onto the opposite day.'],
+     'Spreads rooms that fall due together, so the days stop swinging between heavy and empty. Nothing waits longer than its frequency.'],
   ].forEach(([k, label, why, defOn]) => {
     // Most of these are on unless switched off; a couple are off unless switched on.
     const offByDefault = defOn === false;
@@ -6632,14 +6619,14 @@ function viewSettings() {
     autoBox.appendChild(row);
   });
   autoBox.appendChild(el(`<div style="font-size:11px;color:#5f7189;line-height:1.5;padding-top:10px;border-top:1px solid #e7ecf3;margin-top:4px">`
-    + `<b>Marking rooms cleaned is never automatic.</b> The app can plan the work, but only someone who saw it done can say it was done — guessing would fill your history with cleans that never happened.</div>`));
+    + `<b>Marking rooms cleaned is never automatic</b> — only someone who saw it done can say so.</div>`));
   wrap.appendChild(autoBox);
 
   // --- What the morning roll call is about ---
   wrap.appendChild(el(`<div style="height:22px"></div>`));
   wrap.appendChild(el(`<div class="section-label">Roll Call covers</div>`));
   const rcBox = el(`<div class="addbox"></div>`);
-  rcBox.appendChild(el(`<div style="font-size:13px;color:#5f7189;margin-bottom:10px">Kinds of room the morning roll call plans and auto-assigns. Switch one off and it disappears from Roll Call — it still has its own tab and schedule.</div>`));
+  rcBox.appendChild(el(`<div style="font-size:13px;color:#5f7189;margin-bottom:10px">Which rooms the morning roll call covers. One switched off keeps its own tab and schedule.</div>`));
   const rcRow = el(`<div style="display:flex;gap:6px"></div>`);
   UNIT_TYPE_ORDER.forEach(tk => {
     const on = !Array.isArray(state.rollCallTypes) || state.rollCallTypes.includes(tk);
@@ -6864,7 +6851,7 @@ function areaCard(a) {
 function viewBuilding() {
   const wrap = el('<div class="body"></div>');
   wrap.appendChild(el(`<div class="section-label">Building · top to bottom</div>`));
-  wrap.appendChild(el(`<div class="note">This is the daily checklist. To add, rename, remove or change areas (and set the number of floors), use Settings.</div>`));
+  wrap.appendChild(el(`<div class="note">The daily walk-through. Add or change areas in Settings.</div>`));
   const editBtn = el(`<button class="reset-btn" style="color:#0284c7;border-color:#cfe8fb">⚙ Edit areas & floors (Settings)</button>`);
   editBtn.onclick = () => setTab('settings');
   wrap.appendChild(editBtn);
@@ -7275,7 +7262,7 @@ function viewTeam() {
   const wrap = el('<div class="body"></div>');
   const total = (state.staff || []).length;
   const cleaners = (state.staff || []).filter((p) => p.isCleaner).length;
-  wrap.appendChild(el(`<div class="note">Tap <b>Cleaner</b> on a person to add them to the cleaning team — Roll Call and room assignments then show only cleaners. ${cleaners ? `<b>${cleaners}</b> of ${total} tagged.` : `None tagged yet, so all ${total} show for now.`}</div>`));
+  wrap.appendChild(el(`<div class="note">${cleaners ? `<b>${cleaners}</b> of ${total} tagged as cleaners.` : `None tagged as cleaners yet, so all ${total} show.`} Tap <b>Cleaner</b> on a person to add them.</div>`));
 
   // Filter: cleaners only (default) vs everyone. Lets you hide office/management after a sync.
   if (cleaners) {
@@ -7357,9 +7344,7 @@ function viewTeam() {
     const box = el('<div style="margin-bottom:14px"></div>');
     box.appendChild(el(`<div class="section-label">Work out the rota</div>`));
     box.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin:-6px 0 8px">`
-      + `From the last ${ROTA_WINDOW_DAYS} days of clock-ins. A day somebody is in on `
-      + `${Math.round(ROTA_OFF_AT * 100)}% of occasions or fewer reads as a rest day; anyone too `
-      + `irregular to call is left alone rather than guessed at.</div>`));
+      + `From the last ${ROTA_WINDOW_DAYS} days of clock-ins. Anyone too irregular to call is left alone.</div>`));
     const btn = el(`<button class="add-btn" style="background:#0284c7;color:#ffffff">🗓 Work out the rota from the clock-ins</button>`);
     btn.onclick = async () => {
       btn.disabled = true; btn.textContent = 'Reading the clock-ins…';
@@ -7441,7 +7426,7 @@ function backdateSheet() {
   const overlay = el(`<div class="modal-overlay"></div>`);
   const modal = el(`<div class="modal" style="max-height:88vh;overflow-y:auto"></div>`);
   modal.appendChild(el(`<div class="modal-title">Record a past day</div>`));
-  modal.appendChild(el(`<div class="modal-sub">Log work that was already done, on the day it happened. The names offered are the people who badged in that day.</div>`));
+  modal.appendChild(el(`<div class="modal-sub">Names offered are whoever badged in that day.</div>`));
 
   // --- which day ---
   modal.appendChild(el(`<div class="modal-label">Which day</div>`));
@@ -7908,8 +7893,8 @@ function render() {
   if (offlineMode) {
     const bar = el(`<div style="background:#fdf3e6;border:1px solid #f0d9b5;border-radius:10px;`
       + `padding:10px 12px;margin:0 14px 12px;font-size:12px;color:#8a5a12;font-weight:600">`
-      + `⚠ Offline — the server cannot be reached. Showing the board as saved ${esc(lastSyncLabel())}. `
-      + `Ticks and hand-outs are kept on this device and go up as soon as it is back.</div>`);
+      + `⚠ Offline — showing the board as saved ${esc(lastSyncLabel())}. `
+      + `Your ticks are kept and go up when it is back.</div>`);
     app.insertBefore(bar, app.firstChild ? app.firstChild.nextSibling : null);
   }
   app.appendChild(el(`<div class="footer">`
