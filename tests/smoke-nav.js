@@ -153,6 +153,37 @@ for (const [label,vp] of [['PHONE',{width:420,height:900}],['DESKTOP',{width:144
    beat.neverRecorded[0]==='X'&&alternates(beat.neverRecorded), beat.neverRecorded);
  check('a daily room is still due every day', beat.daily==='XXXXXXX', beat.daily);
 
+ // A DAILY ROOM COMES UP EVERY DAY, MARKED OR NOT.
+ const dailyBeat=await page.evaluate(()=>{
+   const days=Array.from({length:7},(_,i)=>shiftDay(workToday(),i));
+   const mk=(u)=>days.map(d=>dueOnDay(u,d)?'X':'.').join('');
+   return {
+     cleanedYesterday: mk({id:'d1',unit:'D1',type:'building',freq:'daily',lastCleaned:shiftDay(workToday(),-1)}),
+     notMarkedForAges: mk({id:'d2',unit:'D2',type:'building',freq:'daily',lastCleaned:shiftDay(workToday(),-9)}),
+     neverMarked:      mk({id:'d3',unit:'D3',type:'building',freq:'daily'}),
+     nightly:          mk({id:'d4',unit:'D4',type:'building',freq:'nightly',lastCleaned:shiftDay(workToday(),-4)}),
+   };
+ });
+ check('a daily room comes up every day, however long since it was marked',
+   Object.values(dailyBeat).every(v=>v==='XXXXXXX'), JSON.stringify(dailyBeat));
+
+ // SETTING THE FREQUENCY HAS TO STICK. A pinned room is its days and nothing else,
+ // so tapping a frequency used to light the chip up and change nothing.
+ const freqStick=await page.evaluate(()=>{
+   const u=(state.servicedUnits||[]).find(x=>x.freq==='eod');
+   const pinnedBefore=(u.days||[]).slice();
+   setUnitFreq(u.id,'daily');
+   const days=Array.from({length:7},(_,i)=>shiftDay(workToday(),i));
+   return {id:u.id, pinnedBefore, freq:u.freq, daysAfter:u.days, last:u.lastCleaned||null,
+           onList:onTodaysList(u), due:days.map(d=>dueOnDay(u,d)?'X':'.').join('')};
+ });
+ check('the room was on fixed days to begin with', freqStick.pinnedBefore.length>0, JSON.stringify(freqStick));
+ check('setting it to Daily takes it off its fixed days', !freqStick.daysAfter, JSON.stringify(freqStick));
+ // It was cleaned today, so today it reads as done rather than due — but it is on
+ // today's list, and every day after it is due again.
+ check('and it then actually comes up every day',
+   freqStick.onList && freqStick.due.slice(1)==='XXXXXX', JSON.stringify(freqStick));
+
  const pinnedDays=await page.evaluate(()=>(state.servicedUnits||[]).filter(u=>u.freq==='eod').map(u=>u.unit+':'+(u.days||[]).join('')));
  check('rooms cleaned today go on Sun/Tue/Thu (next turn Sunday)', pinnedDays.every(x=>x.endsWith(':024')), pinnedDays.join(' '));
 

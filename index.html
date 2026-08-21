@@ -1819,9 +1819,16 @@ function clearUnitDays(id) {
   if (!u) return;
   u.days = null; save(); render();
 }
+// SETTING THE FREQUENCY HAS TO ACTUALLY DO SOMETHING. A room pinned to weekdays is
+// its days and nothing else — dueOnDayFrom checks days before it ever looks at the
+// frequency — so tapping "Daily" on a pinned room lit the chip up, saved the value,
+// and changed nothing at all: the room carried on appearing on Sun/Tue/Thu. Now that
+// rooms are put on days automatically, almost every room is pinned, so almost every
+// frequency tap did nothing. Choosing a frequency by hand is a decision that the room
+// goes by that frequency, so it takes the room off its fixed days.
 function setUnitFreq(id, freq) {
   const u = state.servicedUnits.find(x => x.id === id);
-  if (u) { u.freq = freq; u.startDate = todayKey(); } // reset cycle anchor to today
+  if (u) { u.freq = freq; u.days = null; u.startDate = todayKey(); }  // reset cycle anchor to today
   save(); render();
 }
 // Flip a whole group of rooms onto one schedule at once — one-by-one is painful
@@ -1832,10 +1839,10 @@ function setUnitsFreqBulk(ids, freq, groupLabel) {
   if (!changing) return;
   showConfirm(
     `Set ${changing} room${changing === 1 ? '' : 's'} to ${FREQ_LABEL[freq]}?`,
-    `Applies to ${groupLabel} only. Any room can still be changed on its own afterwards.`,
+    `${groupLabel} only. Any set days come off, so the frequency is what they go by.`,
     () => {
       (state.servicedUnits || []).forEach(u => {
-        if (ids.includes(u.id)) { u.freq = freq; u.startDate = todayKey(); }
+        if (ids.includes(u.id)) { u.freq = freq; u.days = null; u.startDate = todayKey(); }
       });
       save(); render();
     },
