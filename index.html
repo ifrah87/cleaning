@@ -68,6 +68,64 @@
   .nav button.active { color: #0284c7; }
   .nav .ico { font-size: 19px; line-height: 1; }
 
+  /* Top bar: getting back, and finding things. Both sit above the title on every
+     screen so they are in the same place whatever you are looking at. */
+  .topbar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; min-height: 26px; }
+  .tb-btn {
+    font-size: 12px; font-weight: 700; color: #0284c7;
+    background: #eef6fd; border: 1px solid #cfe8fb; border-radius: 8px; padding: 5px 10px;
+  }
+  .tb-btn:active { background: #dceefb; }
+
+  /* THE SEARCH BOX SCROLLED AWAY WITH EVERYTHING ELSE. Sixty-six rooms is a long
+     list, and the one control that makes it short sat at the very top of it — so
+     finding a second room meant scrolling all the way back up to the box. It sticks
+     under the header now, which is itself sticky; --hdr is the header's real height,
+     measured after each render because it changes with the screen. */
+  .stickbar {
+    position: sticky; top: var(--hdr, 0px); z-index: 15;
+    background: #f4f7fb; padding: 8px 0 4px; margin: 0 -2px;
+  }
+  .grp-head { cursor: pointer; user-select: none; }
+  .grp-caret { font-size: 11px; color: #5b6a7f; width: 12px; }
+
+  /* Segmented filter — one row of room kinds in place of four tabs. */
+  .seg { display: flex; gap: 6px; margin-bottom: 14px; }
+  .segbtn {
+    flex: 1; padding: 9px 4px; border-radius: 9px; border: 1px solid #e7ecf3;
+    background: #fff; color: #5f7189; font-size: 12px; font-weight: 700;
+  }
+  .segbtn.on { background: #0284c7; border-color: #0284c7; color: #fff; }
+  .segn { display: block; font-size: 10px; font-weight: 600; opacity: 0.7; }
+
+  /* Search sheet */
+  .sheet-bg {
+    position: fixed; inset: 0; background: rgba(15,32,46,0.45); z-index: 60;
+    display: flex; flex-direction: column;
+  }
+  .sheet {
+    background: #f4f7fb; margin-top: auto; border-radius: 16px 16px 0 0;
+    max-height: 88vh; display: flex; flex-direction: column; overflow: hidden;
+  }
+  .sheet-head { padding: 14px 16px 10px; background: #fff; border-bottom: 1px solid #e7ecf3; }
+  .sheet-body { padding: 12px 16px 24px; overflow-y: auto; }
+  .sr-row {
+    display: flex; align-items: center; gap: 10px; background: #fff;
+    border: 1px solid #e7ecf3; border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; cursor: pointer;
+  }
+  .sr-main { flex: 1; min-width: 0; font-size: 14px; font-weight: 700; color: #0f1a27; }
+  .sr-sub { font-size: 11px; color: #5f7189; font-weight: 500; margin-top: 1px; }
+  .sr-kind { font-size: 9px; letter-spacing: 0.1em; font-weight: 700; color: #5b6a7f; }
+
+  /* Floor allocation — tap a floor on or off for a person. */
+  .fl-grid { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
+  .fl-btn {
+    min-width: 30px; padding: 5px 7px; border-radius: 7px; font-size: 12px; font-weight: 700;
+    border: 1px solid #e7ecf3; background: #fff; color: #5f7189;
+  }
+  .fl-btn.on { background: #0284c7; border-color: #0284c7; color: #fff; }
+  .fl-btn.taken { border-style: dashed; color: #b45309; }
+
   .body { padding: 16px; }
 
   /* Roll call */
@@ -267,6 +325,38 @@
      keeps the edges clear of the overscan a TV crops off its own picture.
      Dark ground: a white board on a screen left on all day is a lamp, and the
      one thing an office TV must not be is tiring to glance at. */
+  /* ============================================================
+     DESKTOP. The app is built thumb-first — full-bleed rows, 12px button padding,
+     16px inputs — which on a mouse-driven screen is a column of oversized controls
+     stretched across a metre of desk. Same layout, sized for a pointer, and capped
+     so a line of text is a readable length rather than the width of the monitor.
+     Scoped away from body.tv: the office TV is read from across the room and wants
+     everything BIGGER, not smaller.
+     ============================================================ */
+  @media (min-width: 900px) {
+    body:not(.tv) #app { max-width: 900px; margin: 0 auto; box-shadow: 0 0 0 1px #e7ecf3; background: #f4f7fb; }
+    body:not(.tv) .header { padding: 12px 20px 12px; }
+    body:not(.tv) .h-title { font-size: 18px; }
+    body:not(.tv) .body { padding: 14px 20px; }
+    body:not(.tv) .add-btn { width: auto; min-width: 180px; padding: 8px 16px; font-size: 12px; }
+    body:not(.tv) .freqpick { padding: 6px 8px; font-size: 11px; }
+    body:not(.tv) .freqmini { padding: 5px 8px; font-size: 10px; }
+    body:not(.tv) .segbtn { padding: 7px 6px; font-size: 12px; }
+    body:not(.tv) .su-card { padding: 10px 12px; margin-bottom: 6px; }
+    body:not(.tv) .su-mark { padding: 6px 12px; }
+    body:not(.tv) .su-card input,
+    body:not(.tv) .area-select { padding: 7px 9px; font-size: 13px; }
+    body:not(.tv) input { font-size: 14px; }
+    body:not(.tv) .stat { padding: 6px 10px; }
+    body:not(.tv) .stat .val { font-size: 17px; }
+    /* The bar is fixed to the bottom of the WINDOW on a phone, which on a monitor
+       leaves it stranded far below the content it belongs to. */
+    body:not(.tv) .nav { max-width: 900px; margin: 0 auto; }
+    body:not(.tv) .nav button { padding: 8px 4px 9px; font-size: 11px; }
+    body:not(.tv) .nav .ico { font-size: 16px; }
+    body:not(.tv) .sheet { max-width: 900px; margin: auto auto 0; width: 100%; }
+  }
+
   body.tv { background: #0a1220; color: #eaf1fb; }
   body.tv #app { min-height: 100vh; padding: 0; }
   ::-webkit-scrollbar { display: none; }
@@ -424,9 +514,14 @@ let _areaCtlOpen = null;   // which area's change/remove controls are showing (o
 let _areaAddOpen = false;  // the add form stays folded away until it's wanted
 // The cleaning crew = staff tagged as cleaners. Until anyone is tagged, fall
 // back to everyone so cleaning screens are never empty after a Hik import.
+// ALWAYS ALPHABETICAL, ALWAYS A COPY. The crew came out in whatever order people
+// were added, so the same list read differently on every screen and a rehired cleaner
+// sat at the bottom of it. The copy matters too: callers sort this, and sorting the
+// live array would quietly reorder state.staff itself.
 function cleaningStaff() {
   const tagged = (state.staff || []).filter((p) => p.isCleaner);
-  return tagged.length ? tagged : (state.staff || []);
+  return (tagged.length ? tagged : (state.staff || []).slice())
+    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, { numeric: true, sensitivity: 'base' }));
 }
 function buildUnits() {
   const u = [];
@@ -887,6 +982,8 @@ function unitsOwnedBy(personId) {
 
 let state = {
   tab: 'rollcall',     // must always be a tab render() knows — see the guard in render()
+  roomsFilter: 'all',  // which kind of room the Rooms tab is showing: all|airbnb|office|building
+  shutGroups: {},      // room-type groups folded away on the Rooms tab: { office: true }
   attendance: {},
   completions: {},
   logRefs: {},         // completion key -> cleaning_log row id (so un-marking removes the history entry)
@@ -957,6 +1054,12 @@ function finalizeState() {
 
   // Headstones only have to outlive the devices that might still be carrying the old
   // tick. Three weeks is far longer than that, and stops the map growing for ever.
+  // Which rooms today's hand-out took from the plan. One entry per room, replaced
+  // each morning, but a room that leaves the plan would otherwise keep its entry.
+  if (state.planCarried) {
+    const cutoff = shiftDay(todayKey(), -7);
+    Object.keys(state.planCarried).forEach((k) => { if (String(state.planCarried[k]) < cutoff) delete state.planCarried[k]; });
+  }
   if (state.untick) {
     const cutoff = shiftDay(todayKey(), -21);
     Object.keys(state.untick).forEach((k) => { if (String(state.untick[k]) < cutoff) delete state.untick[k]; });
@@ -1595,7 +1698,31 @@ function assignCover(floor, pid) { state.coverage[floor]=pid; state.coverageDay=
 function toggleUnit(uid) { const k=uid+'::perm'; if(state.completions[k])delete state.completions[k];else state.completions[k]=true; save(); render(); }
 function toggleZone(zid, freq) { const k=zid+'::'+freqKey(freq); if(state.completions[k])delete state.completions[k];else state.completions[k]=true; save(); render(); }
 function toggleFloorExpand(fid) { state.expandedFloors[fid]=!state.expandedFloors[fid]; save(); render(); }
-function setTab(t) { state.tab=t; _assignPick=null; save(); render(); }
+// FOUR TABS FOR ONE LIST. Offices, Buildings, Airbnb and All Rooms were four views
+// of the same rooms, so finding a room meant knowing which tab it lived on before you
+// could look for it. They are one Rooms tab with a filter now. The old tab ids still
+// work — every button in the app that asks for 'offices' lands on Rooms showing
+// offices — so nothing that pointed at them had to be rewritten.
+const ROOM_TAB_TYPE = { offices: 'office', buildings: 'building', airbnb: 'airbnb', rooms: 'all' };
+// Where you came from. Deliberately NOT part of state: it is this device's history,
+// it changes on every tap, and the state travels to every other device on every save.
+let _navStack = [];
+function setTab(t, opts) {
+  if (ROOM_TAB_TYPE[t]) { state.roomsFilter = ROOM_TAB_TYPE[t]; t = 'rooms'; }
+  // A screen you cannot get out of is how the app loses your place: you tap into
+  // Settings from the roll call and the only way back is to work out which tab you
+  // were on. Every jump remembers where it came from, so ‹ Back always means the
+  // screen before this one.
+  if (!(opts && opts.back) && state.tab && state.tab !== t) {
+    _navStack.push(state.tab);
+    if (_navStack.length > 12) _navStack.shift();
+  }
+  state.tab = t; _assignPick = null; save(); render();
+}
+function goBack() {
+  const prev = _navStack.pop();
+  setTab(prev || 'rollcall', { back: true });
+}
 function resetCompletions() { showConfirm('Reset all completion checkmarks?', 'Attendance and assignments are kept.', () => { state.completions={}; save(); render(); }); }
 
 // --- Serviced unit actions ---
@@ -1758,7 +1885,30 @@ function suggestDaysFromFreq() {
       const f = u.freq || 'daily';
       let days = null;
       if (f === 'eod') {
-        days = flatter(after(EOD_SETS[0]), after(EOD_SETS[1])) <= 0 ? EOD_SETS[0] : EOD_SETS[1];
+        // A ROOM CLEANED TODAY IS NOT DUE TOMORROW. Neither set is a true every-other-day
+        // — seven days don't divide by two — so Sat/Mon/Wed/Fri runs Fri→Sat back to back
+        // and Sun/Tue/Thu leaves a three-day gap over the weekend. Which set a room wants
+        // therefore depends on the day it was last cleaned: put a room cleaned on Friday
+        // into Sat/Mon/Wed/Fri and it comes round again TOMORROW, so it gets cleaned two
+        // days running and the extra work shows up as a heavier Saturday.
+        //
+        // How far the set puts the room's next clean from the two days it should be.
+        const last = lastCleanDate(u);
+        const beat = (set) => {
+          if (!last) return 0;
+          for (let i = 1; i <= 7; i += 1) if (set.indexOf(dowOf(shiftDay(last, i))) >= 0) return Math.abs(i - 2);
+          return 0;
+        };
+        // A room cleaned in the last couple of days has a real rhythm and breaking it
+        // means cleaning it twice over; one that has been sitting has no rhythm to keep,
+        // so the week's shape decides. Peak day first either way — that is what "too
+        // heavy" actually means — then the other consideration, then fine smoothing.
+        const live = last && daysSince(last) <= 2;
+        const score = (set) => after(set).concat(beat(set));
+        const cmp = live
+          ? (a, b) => (a[2] !== b[2]) ? a[2] - b[2] : (a[0] !== b[0]) ? a[0] - b[0] : a[1] - b[1]
+          : (a, b) => (a[0] !== b[0]) ? a[0] - b[0] : (a[1] !== b[1]) ? a[1] - b[1] : a[2] - b[2];
+        days = cmp(score(EOD_SETS[0]), score(EOD_SETS[1])) <= 0 ? EOD_SETS[0] : EOD_SETS[1];
       } else if (f === 'weekly') {
         // Walk the week in working order from Saturday, and consider all seven days.
         // The old loop started at 1 and stopped before 7, so Sunday was never even
@@ -1776,6 +1926,29 @@ function suggestDaysFromFreq() {
       proposals.push({ u, days: days.slice() });
     });
   return { proposals, skipped, load };
+}
+// PUT THE ROOMS ON DAYS WITHOUT BEING ASKED. Working the days out was a button
+// inside a collapsed drawer on the roll call, which meant the schedule went on
+// drifting for anyone who never found it — and a drifting every-other-day group is
+// exactly what makes one morning carry 38 rooms and the next 25. It runs on its own
+// now, once a day, and only ever on rooms that are on a frequency with NO days set:
+// a room somebody has put on days is a decision and is never overruled.
+function autoPinDaysFromFreq() {
+  if (TV_MODE) return { pinned: 0 };                 // the board cannot write
+  if (state.autoDays === false) return { pinned: 0 };
+  if (state.autoDaysOn === todayKey()) return { pinned: 0 };
+  state.autoDaysOn = todayKey();
+  const plan = suggestDaysFromFreq();
+  if (!plan.proposals.length) return { pinned: 0 };
+  applySuggestedDays(plan);
+  // Kept so the roll call can say what changed underneath it. A schedule that
+  // rearranges itself silently is one nobody trusts.
+  state.lastAutoDays = {
+    day: todayKey(),
+    pinned: plan.proposals.length,
+    rooms: plan.proposals.slice(0, 8).map((x) => x.u.unit),
+  };
+  return { pinned: plan.proposals.length };
 }
 function applySuggestedDays(plan) {
   plan.proposals.forEach((p) => { p.u.days = p.days.slice(); });
@@ -2184,26 +2357,49 @@ const lastBoardChangeLabel = () => (state.lastAutoAssign && state.lastAutoAssign
 // Only for people who actually turned up: somebody who isn't in can't clean, so
 // their rooms fall through to be dealt with the rest.
 function applyPlannedAssignments() {
-  const day = todayKey();
-  const plan = (state.plans || {})[day];
-  const out = { carried: 0, absent: 0, load: {}, slotLoad: { early: {}, late: {} } };
+  // Read the plan by the WORK day — a round still running at 1am is on last night's
+  // plan, not tomorrow's — but stamp sign-offs with the calendar day, because that is
+  // what every other reader of assignConfirmed compares against.
+  const planDay = workToday();
+  const stampDay = todayKey();
+  const plan = (state.plans || {})[planDay];
+  const out = { carried: 0, absent: 0, waiting: 0, load: {}, slotLoad: { early: {}, late: {} } };
   if (!plan) return out;
   const unitById = {};
   (state.servicedUnits || []).forEach((u) => { unitById[u.id] = u; });
   const staffById = {};
   (state.staff || []).forEach((s) => { staffById[s.id] = s; });
+  state.planCarried = state.planCarried || {};
 
   Object.keys(plan).forEach((k) => {
     const j = plan[k];
     if (j.kind !== 'unit' || !j.assignedTo) return;
     const u = unitById[j.refId];
-    if (!u || !onRollCall(u) || !unitDueToday(u) || u.assignedTo) return;
-    if (!hikArrivals[j.assignedTo] || isAway(j.assignedTo)) { out.absent += 1; return; }   // planned for, not working
+    if (!u || !onRollCall(u) || u.paused) return;
+    // BEING ON THE PLAN IS WHY THE ROOM IS ON TODAY. This also demanded the room be
+    // due by its own schedule, so a room deliberately ADDED to tomorrow — which is
+    // the entire reason for planning a day — was dropped on the very morning it was
+    // planned for, and the office was told the plan had not carried over.
+    if (cleanedToday(u)) return;                      // already done; nothing to hand out
+    // The office's own decision outranks the plan. The app's own does not — without
+    // that difference one hasty deal at 06:40, made before the person the plan names
+    // had badged in, permanently overwrote a plan made the night before.
+    const carriedBefore = state.planCarried[u.id] === stampDay;
+    const handHeld = u.assignedTo && (state.assignConfirmed || {})[u.id] === stampDay && !carriedBefore;
+    if (handHeld) return;
+    // Hik's Time Card fills in through the morning, so "not badged in yet" at 06:40
+    // usually means "not scanned across yet". The room is left for the deal to cover
+    // and claimed back on a later pass, once they do appear.
+    if (!hikArrivals[j.assignedTo] || isAway(j.assignedTo)) {
+      out[hikArrivals[j.assignedTo] ? 'absent' : 'waiting'] += 1;
+      return;
+    }
     if (!canCleanUnit(staffById[j.assignedTo], u)) return;
+    if (u.assignedTo !== j.assignedTo) out.carried += 1;
     u.assignedTo = j.assignedTo;
     // Planned the night before is a decision, not a suggestion awaiting a yes/no.
-    state.assignConfirmed[u.id] = day;
-    out.carried += 1;
+    state.assignConfirmed[u.id] = stampDay;
+    state.planCarried[u.id] = stampDay;
     out.load[j.assignedTo] = (out.load[j.assignedTo] || 0) + 1;
     const slot = timeSlot(u);
     if (slot !== 'any') out.slotLoad[slot][j.assignedTo] = (out.slotLoad[slot][j.assignedTo] || 0) + 1;
@@ -2217,26 +2413,47 @@ function maybeAutoAssign() {
   // them. Dealing is for devices that can actually save the result.
   if (TV_MODE) return;
   if (state.autoAssign === false) return;                      // switched off in Settings
-  if (state.autoAssignedOn === todayKey()) return;             // already done today
-  const people = Object.keys(hikArrivals).filter((id) => (state.staff || []).some((s) => s.id === id));
-  if (!people.length) return;                                  // nobody in yet — wait
+  const day = todayKey();
+  // WHO IS IN CHANGES ALL MORNING. Hik's Time Card fills in over hours, so the crew
+  // this sees at 06:40 is the leader on their own and everybody else badges in one at
+  // a time over the next two. Dealing once, for whoever was first, handed that one
+  // person the entire board and left every later arrival with nothing to do — so it
+  // deals again each time somebody new badges in, and only the rooms nobody has
+  // decided on yet are moved.
+  const inNow = Object.keys(hikArrivals)
+    .filter((id) => (state.staff || []).some((s) => s.id === id)).sort();
+  if (!inNow.length) return;                                   // nobody in yet — wait
+  const forCrew = day + '|' + inNow.join(',');
+  if (state.autoAssignedFor === forCrew) return;               // same crew as the last deal
   // The same list the roll call shows, so a room that is on the plan but not
   // otherwise due today still gets handed to somebody instead of sitting there
   // with no name against it all morning.
   const due = todaysRoomList().filter((u) => !cleanedToday(u));
   if (!due.length) return;
-  const officeGotThereFirst = due.some((u) => u.assignedTo);
-  const carried = applyPlannedAssignments();                   // last night's plan wins over a fresh deal
-  if (officeGotThereFirst) {                                   // office got there first; don't touch the rest
-    state.autoAssignedOn = todayKey(); save(); return;
-  }
-  state.autoAssignedOn = todayKey();
+  applyPlannedAssignments();                                   // last night's plan wins over a fresh deal
+  state.autoAssignedFor = forCrew;
   autoLevelIfLopsided();    // level the week before handing today's rooms out
-  const rest = due.filter((u) => !u.assignedTo);
+  // A room the office assigned by hand, and a room carried in from last night's plan,
+  // both carry today's sign-off stamp. Those are decisions and a decision is never
+  // re-dealt. Everything else is still only a suggestion, so it goes back into the
+  // pool to be split across the crew who have actually turned up by now. Checking a
+  // room off is therefore also how you nail it to its cleaner for the rest of the day.
+  // …but a room held for somebody who has been marked AWAY is not a decision any
+  // more, it is a gap: nobody is coming to clean it. Those go back in the pool
+  // however they were assigned, or they sit with an absent name against them all
+  // morning and are simply never done.
+  const decided = (u) => (state.assignConfirmed || {})[u.id] === day && !isAway(u.assignedTo);
+  const rest = due.filter((u) => !(u.assignedTo && decided(u)));
   if (!rest.length) { save(); render(); return; }              // the plan covered the whole morning
-  // Deal only what the plan didn't cover, counting the carried rooms against their
-  // cleaners so the split stays even across the morning as a whole.
-  autoAssignRooms(rest, carried.load, carried.slotLoad);
+  // Count the rooms that are staying put against their cleaner, so the split stays
+  // even across the morning as a whole and not merely across this one deal.
+  const load = {}, slotLoad = { early: {}, late: {} };
+  due.filter((u) => u.assignedTo && decided(u)).forEach((u) => {
+    load[u.assignedTo] = (load[u.assignedTo] || 0) + 1;
+    const slot = timeSlot(u);
+    if (slot !== 'any') slotLoad[slot][u.assignedTo] = (slotLoad[slot][u.assignedTo] || 0) + 1;
+  });
+  autoAssignRooms(rest, load, slotLoad, true);
 }
 function openAssignPicker(id) { _assignPick = { unitId: id }; render(); }
 function dismissAssignPicker() { _assignPick = null; render(); }
@@ -2331,12 +2548,15 @@ function setUnitUsual(id, pid) {
 // onlyRooms limits the deal to part of the morning — used when last night's plan has
 // already covered the rest. loadSeed/slotSeed carry what those cleaners are holding
 // from the plan, so a partial deal still balances against the whole morning.
-function autoAssignRooms(onlyRooms, loadSeed, slotSeed) {
+// silent = the app dealt these on its own because somebody badged in. Nobody asked
+// for it, so it must not stop on a confirm nobody is standing in front of, and it
+// must not shout when there is simply nothing to hand out.
+function autoAssignRooms(onlyRooms, loadSeed, slotSeed, silent) {
   const people = Object.keys(hikArrivals)
     .filter((id) => (state.staff || []).some((s) => s.id === id))
     .map((id) => ({ id, raw: hikArrivals[id].raw }))
     .sort((a, b) => String(a.raw || '').localeCompare(String(b.raw || '')));   // earliest badge-in first
-  if (!people.length) { hikSyncMsg = { err: true, text: 'No one clocked in to assign rooms to.' }; render(); return; }
+  if (!people.length) { if (silent) return; hikSyncMsg = { err: true, text: 'No one clocked in to assign rooms to.' }; render(); return; }
   const inIds = new Set(people.map((p) => p.id));
   const load = {}; people.forEach((p) => { load[p.id] = (loadSeed && loadSeed[p.id]) || 0; });
 
@@ -2346,28 +2566,28 @@ function autoAssignRooms(onlyRooms, loadSeed, slotSeed) {
     || (b.priority ? 1 : 0) - (a.priority ? 1 : 0)                               // then priority ⭐ rooms
     || String(a.time || '~').localeCompare(String(b.time || '~'))               // then earliest scheduled time
     || String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }));
-  if (!rooms.length) { hikSyncMsg = { err: true, text: 'No rooms are due for cleaning today.' }; render(); return; }
+  if (!rooms.length) { if (silent) return; hikSyncMsg = { err: true, text: 'No rooms are due for cleaning today.' }; render(); return; }
 
   // Nothing handed out yet is the normal morning — don't make the common case
   // pay for a confirm. Only ask when there is real work to lose.
   const held = rooms.filter((u) => u.assignedTo);
   const signed = held.filter((u) => assignConfirmedToday(u)).length;
-  if (held.length) {
+  if (held.length && !silent) {
     showConfirm(
       `Reassign all ${rooms.length} rooms?`,
       `${held.length} ${held.length === 1 ? 'is' : 'are'} already handed out`
         + (signed ? `, ${signed} of them checked` : '')
         + `. This shuffles them all again — rooms with a permanent cleaner stay with that person. You can undo it afterwards.`,
-      () => runAutoAssign(rooms, people, inIds, load, slotSeed),
+      () => runAutoAssign(rooms, people, inIds, load, slotSeed, silent),
       'Reassign',
       'safe'
     );
     return;
   }
-  runAutoAssign(rooms, people, inIds, load, slotSeed);
+  runAutoAssign(rooms, people, inIds, load, slotSeed, silent);
 }
 
-function runAutoAssign(rooms, people, inIds, load, slotSeed) {
+function runAutoAssign(rooms, people, inIds, load, slotSeed, silent) {
   // Snapshot before reshuffling. Auto-assign silently discards a morning of manual
   // assignments, and it sits one mis-tap away from the room list, so it needs to be
   // reversible rather than merely careful.
@@ -2572,7 +2792,9 @@ function runAutoAssign(rooms, people, inIds, load, slotSeed) {
   hikSyncMsg = breaches.length
     ? { err: true, text: `Handed out ${rooms.length} rooms, but the leader rules could not be met: `
         + `${breaches.join('; ')}. Tap a room to move it, or bring someone else in.` }
-    : { text: `Suggested ${rooms.length} rooms for ${people.length} cleaners${notes.length ? ` (${notes.join(', ')})` : ''} — check each one below.` };
+    : { text: (silent ? `${people.length} cleaner${people.length === 1 ? ' is' : 's are'} badged in, so ` : '')
+        + `${silent ? 'the ' : 'Suggested '}${rooms.length} rooms ${silent ? 'were shared out again' : `for ${people.length} cleaners`}`
+        + `${notes.length ? ` (${notes.join(', ')})` : ''} — check each one below.` };
   save(); render();
 }
 
@@ -2805,12 +3027,19 @@ function addManualArrival(staffId) {
   const now = new Date();
   const hh = String(now.getHours()).padStart(2, '0'), mm = String(now.getMinutes()).padStart(2, '0');
   state.manualArrivals[day][staffId] = { time: fmtEventTime(day + ' ' + hh + ':' + mm), raw: day + ' ' + hh + ':' + mm };
-  save(); loadHikArrivals().then(render);
+  // Somebody arriving is somebody to give rooms to — the same thing a badge-in does,
+  // so it deals again straight away rather than waiting up to a minute for the poll.
+  save(); loadHikArrivals().then(() => { maybeAutoAssign(); render(); });
 }
 function removeManualArrival(staffId) {
   const day = selectedDay || todayKey();
   if (state.manualArrivals && state.manualArrivals[day]) { delete state.manualArrivals[day][staffId]; delete hikArrivals[staffId]; }
-  save(); loadHikArrivals().then(render);
+  // Taking somebody back off means they are not here after all, so their rooms are
+  // nobody's. Left on them they keep a name against them and are quietly never done.
+  (state.servicedUnits || []).forEach((u) => {
+    if (u.assignedTo === staffId && !cleanedToday(u)) { u.assignedTo = null; delete state.assignConfirmed[u.id]; }
+  });
+  save(); loadHikArrivals().then(() => { maybeAutoAssign(); render(); });
 }
 
 // Import a Hik export (Time Card or Access Record) → store check-ins → refresh Roll Call.
@@ -3356,6 +3585,74 @@ function removeTeam(name) {
 const TEAM_COLORS = {};
 function refreshTeamColors() { getTeams().forEach(t => { TEAM_COLORS[t.name] = t.color; }); }
 
+// ALLOCATING FLOORS WAS A TEXT BOX. You typed "1, 2, 3" into a field per person and
+// hoped: nothing showed which floors were already spoken for, nothing stopped two
+// people owning the same floor, and a typo silently gave somebody floor 12 in an
+// eleven-floor building. Floors are a fixed, small set — so they are buttons.
+const allFloors = () => Array.from({ length: (state.floors || DEFAULT_FLOORS) }, (_, i) => i + 1);
+// A floor has ONE owner. Handing it to somebody therefore takes it off whoever had
+// it, rather than leaving the building with two people who each think it is theirs.
+function toggleFloorFor(pid, floor) {
+  const p = (state.staff || []).find((x) => x.id === pid);
+  if (!p) return;
+  const mine = (p.floors || []).includes(floor);
+  (state.staff || []).forEach((x) => {
+    if (Array.isArray(x.floors) && x.floors.includes(floor)) x.floors = x.floors.filter((f) => f !== floor);
+  });
+  if (!mine) p.floors = (p.floors || []).concat(floor).sort((a, b) => a - b);
+  save(); render();
+}
+function setFloorOwner(floor, pid) {
+  (state.staff || []).forEach((x) => {
+    if (Array.isArray(x.floors) && x.floors.includes(floor)) x.floors = x.floors.filter((f) => f !== floor);
+  });
+  const p = pid ? (state.staff || []).find((x) => x.id === pid) : null;
+  if (p) p.floors = (p.floors || []).concat(floor).sort((a, b) => a - b);
+  save(); render();
+}
+// The same allocation read the other way round: a person's row of floors.
+function floorGrid(p) {
+  const grid = el('<div class="fl-grid"></div>');
+  allFloors().forEach((f) => {
+    const owner = ownerOfFloor(f);
+    const mine = owner && owner.id === p.id;
+    const taken = owner && !mine;
+    const b = el(`<button class="fl-btn ${mine ? 'on' : ''} ${taken ? 'taken' : ''}" `
+      + `title="${taken ? esc(owner.name) + ' has floor ' + f : 'Floor ' + f}">${f}</button>`);
+    b.onclick = () => toggleFloorFor(p.id, f);
+    grid.appendChild(b);
+  });
+  return grid;
+}
+// And floor by floor, which is the question the office actually asks out loud:
+// "who has six?" — not "which floors does Amina have?"
+function floorAllocationBox() {
+  const box = el('<div style="margin-bottom:16px"></div>');
+  const crew = cleaningStaff();
+  const unowned = allFloors().filter((f) => !ownerOfFloor(f)).length;
+  box.appendChild(el(`<div class="section-label">Who cleans which floor</div>`));
+  box.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin:-6px 0 8px">`
+    + `A floor belongs to one person — giving it to somebody takes it off whoever had it. `
+    + `${unowned ? `<b>${unowned}</b> floor${unowned === 1 ? ' has' : 's have'} nobody on ${unowned === 1 ? 'it' : 'them'}.` : 'Every floor has somebody.'}</div>`));
+  allFloors().forEach((f) => {
+    const owner = ownerOfFloor(f);
+    const row = el(`<div class="sr-row" style="cursor:default"></div>`);
+    row.appendChild(el(`<div style="font-size:13px;font-weight:800;color:#0f1a27;width:62px">Floor ${f}</div>`));
+    const sel = el(`<select class="area-select" style="flex:1;min-width:0"></select>`);
+    sel.appendChild(el(`<option value="">— nobody —</option>`));
+    crew.forEach((c) => {
+      const o = el(`<option value="${c.id}">${esc(c.name)}</option>`);
+      if (owner && owner.id === c.id) o.selected = true;
+      sel.appendChild(o);
+    });
+    sel.onchange = () => setFloorOwner(f, sel.value);
+    row.appendChild(sel);
+    if (!owner) row.appendChild(el(`<div class="sr-kind" style="color:#b45309">OPEN</div>`));
+    box.appendChild(row);
+  });
+  return box;
+}
+
 function parseFloors(str) {
   const max = state.floors || 11;
   return (str || '').split(/[,\s]+/).map(x => parseInt(x,10)).filter(n => !isNaN(n) && n>=1 && n<=max);
@@ -3630,6 +3927,114 @@ function addUnitForm(opts) {
   return form;
 }
 
+// ============================================================
+// SEARCH — one box for the whole app
+// ============================================================
+// You could not look anything up without first knowing where it lived: which of the
+// four room tabs a unit was filed under, whether "Lift lobby" was a communal area or
+// an exterior one, whether a name was on Team or Settings. This searches all of it
+// at once and takes you to the thing, with the term already applied when you land.
+let _search = null;      // null | { q }
+let _roomSeek = null;    // term to seed the room list's own filter with on arrival
+function openSearch() { _search = { q: '' }; render(); }
+function closeSearch() { _search = null; render(); }
+
+function searchHits(q) {
+  const t = String(q || '').trim().toLowerCase();
+  if (t.length < 1) return [];
+  const out = [];
+  (state.servicedUnits || []).forEach((u) => {
+    const hay = [u.unit, u.guest, u.note].filter(Boolean).join(' ').toLowerCase();
+    if (!hay.includes(t)) return;
+    const kind = UNIT_TYPES[unitType(u)] ? UNIT_TYPES[unitType(u)].label : 'Room';
+    out.push({
+      group: 'ROOM',
+      kind: kind.toUpperCase(),
+      main: 'Unit ' + u.unit,
+      sub: [u.guest, schedLabel(u), u.paused ? 'paused' : ''].filter(Boolean).join(' · '),
+      go: () => { _roomSeek = u.unit; _search = null; setTab({ office: 'offices', building: 'buildings', airbnb: 'airbnb' }[unitType(u)] || 'rooms'); },
+    });
+  });
+  (state.areas || []).forEach((a) => {
+    if (!String(a.label || '').toLowerCase().includes(t)) return;
+    out.push({
+      group: 'AREA',
+      kind: a.kind === 'exterior' ? 'EXTERIOR' : 'COMMUNAL',
+      main: a.label,
+      sub: (FREQ_LABEL[a.freq] || a.freq || 'daily') + (areaDone(a) ? ' · done' : ' · outstanding'),
+      go: () => { _search = null; setTab(a.kind === 'exterior' ? 'exterior' : 'building'); },
+    });
+  });
+  (state.staff || []).forEach((p) => {
+    if (!String(p.name || '').toLowerCase().includes(t)) return;
+    out.push({
+      group: 'PERSON',
+      kind: p.isCleaner ? (p.isLeader ? 'LEADER' : 'CLEANER') : 'STAFF',
+      main: p.name,
+      sub: [p.crew, (p.floors || []).length ? 'Floors ' + p.floors.join(', ') : 'no floors'].filter(Boolean).join(' · '),
+      go: () => { _search = null; setTab('team'); },
+    });
+  });
+  // Alphabetical inside each kind, so the same search always reads the same way.
+  const byMain = (a, b) => String(a.main).localeCompare(String(b.main), undefined, { numeric: true, sensitivity: 'base' });
+  const KIND_ORDER = ['ROOM', 'AREA', 'PERSON'];
+  return out.sort((a, b) => (KIND_ORDER.indexOf(a.group) - KIND_ORDER.indexOf(b.group)) || byMain(a, b));
+}
+
+function searchSheet() {
+  const bg = el('<div class="sheet-bg"></div>');
+  bg.onclick = (e) => { if (e.target === bg) closeSearch(); };
+  const sheet = el('<div class="sheet"></div>');
+  const head = el('<div class="sheet-head"></div>');
+  const row = el('<div style="display:flex;gap:8px;align-items:center"></div>');
+  const box = el(`<input type="search" placeholder="Room, guest, area or person…" `
+    + `style="flex:1;min-width:0;background:#f4f7fb;color:#15202e;border:1px solid #d8e0ea;`
+    + `border-radius:10px;padding:11px 13px;font-size:16px">`);
+  box.value = _search.q;
+  const cancel = el('<button class="tb-btn">Close</button>');
+  cancel.onclick = closeSearch;
+  row.appendChild(box); row.appendChild(cancel);
+  head.appendChild(row);
+  sheet.appendChild(head);
+  const body = el('<div class="sheet-body"></div>');
+  sheet.appendChild(body);
+
+  const draw = () => {
+    body.innerHTML = '';
+    const q = box.value;
+    if (!q.trim()) {
+      body.appendChild(el(`<div class="empty" style="text-align:center;padding:24px 0">`
+        + `Type a unit number, a guest, an area or a name.</div>`));
+      return;
+    }
+    const hits = searchHits(q);
+    if (!hits.length) {
+      body.appendChild(el(`<div class="empty" style="text-align:center;padding:24px 0">Nothing matches “${esc(q.trim())}”.</div>`));
+      return;
+    }
+    body.appendChild(el(`<div class="section-label">${hits.length} match${hits.length === 1 ? '' : 'es'}</div>`));
+    hits.slice(0, 40).forEach((h) => {
+      const r = el('<div class="sr-row"></div>');
+      const mid = el('<div style="flex:1;min-width:0"></div>');
+      mid.appendChild(el(`<div class="sr-main">${esc(h.main)}</div>`));
+      if (h.sub) mid.appendChild(el(`<div class="sr-sub">${esc(h.sub)}</div>`));
+      r.appendChild(mid);
+      r.appendChild(el(`<div class="sr-kind">${esc(h.kind)}</div>`));
+      r.appendChild(el(`<div style="color:#5b6a7f;font-size:18px">›</div>`));
+      r.onclick = h.go;
+      body.appendChild(r);
+    });
+    if (hits.length > 40) body.appendChild(el(`<div class="sr-sub" style="text-align:center;padding:8px 0">`
+      + `${hits.length - 40} more — keep typing to narrow it.</div>`));
+  };
+  // Redrawing only the results keeps the cursor and the keyboard where they are.
+  box.oninput = () => { _search.q = box.value; draw(); };
+  draw();
+  bg.appendChild(sheet);
+  setTimeout(() => box.focus(), 30);
+  return bg;
+}
+
 // Render the type-grouped card list for the given type keys.
 function unitGroups(wrap, typeKeys, emptyMsg) {
   const units = state.servicedUnits.slice().sort((a, b) => String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }));
@@ -3705,6 +4110,13 @@ function unitGroups(wrap, typeKeys, emptyMsg) {
     go.onclick = () => setTab(TAB_OF[unitType(first)] || 'rooms');
     hits.appendChild(go);
   };
+  // Arriving from the global search: land with the term already in the box and the
+  // list already narrowed, rather than on the right tab and none the wiser.
+  if (_roomSeek) {
+    search.value = _roomSeek; q = String(_roomSeek).trim().toLowerCase(); _roomSeek = null;
+    // A hit inside a folded group is a hit nobody can see.
+    state.shutGroups = {};
+  }
   search.oninput = () => { q = search.value.trim().toLowerCase(); apply(); };
   FREQ_FILTERS.forEach(([key, label]) => {
     const b = el(`<button class="freqmini${key === '' ? ' on' : ''}" style="flex:0 0 auto;padding:6px 10px;font-size:11px">${esc(label)}</button>`);
@@ -3715,9 +4127,9 @@ function unitGroups(wrap, typeKeys, emptyMsg) {
   // ABOVE EVERYTHING, INCLUDING THE ADD FORM. Appended in place it landed under a
   // full "add a unit" form, so finding a room meant scrolling past the thing you use
   // once a month to reach the thing you use every day — and it read as missing.
-  wrap.insertBefore(hits, wrap.firstChild);
-  wrap.insertBefore(freqRow, wrap.firstChild);
-  wrap.insertBefore(search, wrap.firstChild);
+  const stick = el('<div class="stickbar"></div>');
+  stick.appendChild(search); stick.appendChild(freqRow); stick.appendChild(hits);
+  wrap.insertBefore(stick, wrap.firstChild);
 
   typeKeys.forEach(tk => {
     const t = UNIT_TYPES[tk];
@@ -3728,12 +4140,23 @@ function unitGroups(wrap, typeKeys, emptyMsg) {
     const group = relevant.filter(u => unitType(u) === tk)
       .sort((a, b) => String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }));
     if (!group.length) return;
-    const head = el(`<div class="crew-head" style="margin-top:18px"></div>`);
+    // A GROUP YOU CAN SHUT. Scrolling past forty building units to reach the four
+    // offices underneath is the whole complaint about this list; tapping the heading
+    // folds it away, and which ones are folded is remembered.
+    const shut = !!(state.shutGroups || {})[tk];
+    const head = el(`<div class="crew-head grp-head" style="margin-top:18px"></div>`);
+    head.appendChild(el(`<div class="grp-caret">${shut ? '▸' : '▾'}</div>`));
     head.appendChild(el(`<div class="crew-dot" style="background:${t.color}"></div>`));
     head.appendChild(el(`<div class="crew-name">${t.label}</div>`));
-    const count = el(`<div class="crew-sub">${group.length}</div>`);
+    const count = el(`<div class="crew-sub">${group.length}${shut ? ' · hidden' : ''}</div>`);
     head.appendChild(count);
+    head.onclick = () => {
+      state.shutGroups = state.shutGroups || {};
+      if (state.shutGroups[tk]) delete state.shutGroups[tk]; else state.shutGroups[tk] = true;
+      save(); render();
+    };
     wrap.appendChild(head);
+    if (shut) { rows.push({ head, count, cards: [] }); return; }
     const cards = group.map((u) => {
       const card = servicedCard(u, onTodaysList(u));
       wrap.appendChild(card);
@@ -3742,6 +4165,7 @@ function unitGroups(wrap, typeKeys, emptyMsg) {
     });
     rows.push({ head, count, cards });
   });
+  if (q || freqPick) apply();
 }
 
 // Each cleaning type gets its own tab/column.
@@ -4491,10 +4915,16 @@ function mirrorPlanToBoard(day, key, keepBoard) {
 // the roll call as the app opens, without touching anything already handed out
 // there: a change made on the board is newer than the plan and wins.
 function carryPlanToBoardOnOpen() {
-  const day = todayKey();
-  if (!state.plans || !state.plans[day]) return 0;
+  // BOTH DAYS, NOT JUST THE CALENDAR ONE. Everything else that asks what the crew is
+  // on today asks workToday(), which between midnight and 3am is still YESTERDAY's
+  // date — a round that runs late is on the day it started. This looked only at the
+  // calendar day, so a plan filed while the round was still going was never carried
+  // onto the board, and the morning opened empty with the plan one tab away. The two
+  // dates are identical outside that window, so in daylight nothing changes.
+  const days = [...new Set([workToday(), todayKey()])];
+  if (!state.plans || !days.some((d) => state.plans[d])) return 0;
   const before = (state.servicedUnits || []).filter((u) => u.assignedTo).length;
-  mirrorPlanToBoard(day, null, true);
+  days.forEach((d) => { if (state.plans[d]) mirrorPlanToBoard(d, null, true); });
   const after = (state.servicedUnits || []).filter((u) => u.assignedTo).length;
   if (after !== before) save();
   return after - before;
@@ -4853,6 +5283,30 @@ function viewPlan() {
   return wrap;
 }
 
+// One tab, four filters — see ROOM_TAB_TYPE. The counts sit on the buttons so the
+// shape of the building is readable without opening anything.
+const ROOM_SEGMENTS = [['all', 'All'], ['airbnb', 'Airbnb'], ['office', 'Offices'], ['building', 'Buildings']];
+function roomsFilter() { return ROOM_SEGMENTS.some(([k]) => k === state.roomsFilter) ? state.roomsFilter : 'all'; }
+function viewRoomsHub() {
+  const wrap = el('<div class="body"></div>');
+  const cur = roomsFilter();
+  const seg = el('<div class="seg"></div>');
+  ROOM_SEGMENTS.forEach(([k, label]) => {
+    const n = (state.servicedUnits || []).filter((u) => k === 'all' || unitType(u) === k).length;
+    const b = el(`<button class="segbtn ${k === cur ? 'on' : ''}">${label}<span class="segn">${n}</span></button>`);
+    b.onclick = () => { state.roomsFilter = k; save(); render(); };
+    seg.appendChild(b);
+  });
+  wrap.appendChild(seg);
+  const body = cur === 'all' ? viewRooms()
+    : cur === 'airbnb' ? viewAirbnb()
+    : cur === 'office' ? viewOffices() : viewBuildings();
+  // Each sub-view returns its own .body, and a .body inside a .body doubles the
+  // page padding — so take the contents rather than the wrapper.
+  while (body.firstChild) wrap.appendChild(body.firstChild);
+  return wrap;
+}
+
 function viewRooms() {
   const wrap = el('<div class="body"></div>');
   const units = (state.servicedUnits || []).slice()
@@ -4861,6 +5315,38 @@ function viewRooms() {
   const pastBtn = el(`<button class="add-btn" style="width:100%;margin-bottom:14px">＋ Record a past day</button>`);
   pastBtn.onclick = () => openBackdate(yesterdayKey());
   wrap.appendChild(pastBtn);
+  // SIXTY-SIX ROOMS IS A LOT OF SCROLLING. This screen is where a room's schedule is
+  // changed, so it is read one room at a time — and it was the one room list with no
+  // way to search it. The box is pinned under the header so it is still there when
+  // you are forty rooms down, and it filters the cards already drawn rather than
+  // re-rendering, which would take the cursor with it.
+  const cards = [];
+  let q = '';
+  const stick = el('<div class="stickbar"></div>');
+  const search = el(`<input type="search" placeholder="Search a room, guest or note…" `
+    + `style="width:100%;background:#ffffff;color:#15202e;border:1px solid #d8e0ea;`
+    + `border-radius:10px;padding:11px 13px;font-size:15px">`);
+  const hits = el(`<div style="font-size:11px;color:#5f7189;font-weight:600;min-height:15px;margin-top:5px"></div>`);
+  const applyFilter = () => {
+    let shown = 0;
+    cards.forEach((c) => {
+      const on = !q || c.hay.includes(q);
+      c.card.style.display = on ? '' : 'none';
+      if (on) shown += 1;
+    });
+    // With a search running, a group heading and its bulk controls are noise unless
+    // something in that group matched.
+    groupBlocks.forEach((g) => {
+      const n = cards.filter((c) => c.tk === g.tk && c.card.style.display !== 'none').length;
+      g.els.forEach((e) => { e.style.display = (!q || n) ? '' : 'none'; });
+    });
+    hits.textContent = q ? (shown ? shown + ' match' + (shown === 1 ? '' : 'es') : 'No room matches “' + search.value.trim() + '”.') : '';
+    hits.style.color = (q && !shown) ? '#b45309' : '#5f7189';
+  };
+  search.oninput = () => { q = search.value.trim().toLowerCase(); applyFilter(); };
+  stick.appendChild(search); stick.appendChild(hits);
+  wrap.appendChild(stick);
+  const groupBlocks = [];
   if (!units.length) { wrap.appendChild(el(`<div class="empty">No rooms yet.</div>`)); return wrap; }
 
   // A whole frequency group falling due on the same day is what makes the week swing
@@ -4900,11 +5386,21 @@ function viewRooms() {
   ['airbnb', 'office', 'building'].forEach(tk => {
     const list = groups[tk]; if (!list || !list.length) return;
     const t = UNIT_TYPES[tk];
-    const head = el(`<div class="crew-head" style="margin-top:16px"></div>`);
+    const shut = !!(state.shutGroups || {})['rooms:' + tk];
+    const head = el(`<div class="crew-head grp-head" style="margin-top:16px"></div>`);
+    head.appendChild(el(`<div class="grp-caret">${shut ? '▸' : '▾'}</div>`));
     head.appendChild(el(`<div class="crew-dot" style="background:${t.color}"></div>`));
     head.appendChild(el(`<div class="crew-name">${t.label}</div>`));
-    head.appendChild(el(`<div class="crew-sub">${list.length}</div>`));
+    head.appendChild(el(`<div class="crew-sub">${list.length}${shut ? ' · hidden' : ''}</div>`));
+    head.onclick = () => {
+      state.shutGroups = state.shutGroups || {};
+      const k = 'rooms:' + tk;
+      if (state.shutGroups[k]) delete state.shutGroups[k]; else state.shutGroups[k] = true;
+      save(); render();
+    };
     wrap.appendChild(head);
+    const block = { tk, els: [] };
+    groupBlocks.push(block);
 
     // Group-level schedule flip + a breakdown of what this group is currently on,
     // so an odd room out ("13 on every-other-day") is visible instead of hidden.
@@ -4965,6 +5461,7 @@ function viewRooms() {
     markPast.onclick = () => openBackdateForType(tk, yesterdayKey());
     markRow.appendChild(markPast);
     bulk.appendChild(markRow);
+    if (shut) return;
 
     // Show the coming week's load, and offer to flatten it when one day spikes.
     const upcoming = {};
@@ -5059,6 +5556,7 @@ function viewRooms() {
       }
       card.appendChild(lcRow);
       wrap.appendChild(card);
+      cards.push({ card, tk, hay: [u.unit, u.guest, u.note, schedLabel(u)].filter(Boolean).join(' ').toLowerCase() });
     });
   });
   return wrap;
@@ -5137,11 +5635,9 @@ function viewMore() {
   const wrap = el('<div class="body"></div>');
   const items = [
     { id: 'tonight', label: 'Tonight', ico: '🌙', sub: 'What still needs cleaning on tonight’s round' },
-    { id: 'rooms', label: 'All Rooms', ico: '▤', sub: 'Every room we clean, at a glance' },
-    { id: 'plan', label: 'Plan a Day', ico: '🗓', sub: 'Set tomorrow’s jobs & assign who’s in' },
     { id: 'building', label: 'Floors & Common Areas', ico: '▦', sub: 'Rooftop → floors → ground checklist' },
+    { id: 'exterior', label: 'Exterior', ico: '⛅', sub: 'Outside areas and their frequencies' },
     { id: 'history', label: 'Cleaning History', ico: '◷', sub: 'What was cleaned, by day' },
-    { id: 'team', label: 'Team', ico: '☰', sub: 'Staff & cleaners' },
     { id: 'settings', label: 'Settings', ico: '⚙', sub: 'App settings' },
   ];
   items.forEach(it => {
@@ -5809,14 +6305,33 @@ function viewRollCall() {
   // didn't forget, so offering them here is how a day off turns into a hand-out by
   // mistake. Badging in still wins over the rota everywhere else: if they turn up on
   // their day off they appear as present and get rooms like anyone else.
-  const notIn = cleaningStaff().filter((p) => !hikArrivals[p.id] && worksOnDay(p, selectedDay || todayKey()));
+  // THE FRIDAY PROBLEM. This offered only people the rota says are working — which on
+  // a Friday is half the crew, because the rest day alternates. So somebody who came
+  // in on their off-Friday could not be added at all: not badged, not on the rota,
+  // not on the list, and no way to say they were there. Everybody who isn't already
+  // in is offered now; the rota decides which GROUP they appear under, so putting an
+  // off-duty person in is still a deliberate act rather than a mis-tap.
+  const addDay = selectedDay || todayKey();
+  const byName = (a, b) => String(a.name).localeCompare(String(b.name), undefined, { numeric: true, sensitivity: 'base' });
+  const notIn = cleaningStaff().filter((p) => !hikArrivals[p.id]);
+  const onRota = notIn.filter((p) => worksOnDay(p, addDay)).sort(byName);
+  const offRota = notIn.filter((p) => !worksOnDay(p, addDay)).sort(byName);
   if (notIn.length) {
     const addSel = el('<select class="area-select" style="margin-bottom:12px"></select>');
-    addSel.appendChild(el('<option value="">＋ Add someone who forgot to clock in…</option>'));
-    notIn.slice().sort((a, b) => a.name.localeCompare(b.name))
-      .forEach((p) => addSel.appendChild(el(`<option value="${esc(p.id)}">${esc(p.name)}</option>`)));
+    addSel.appendChild(el('<option value="">＋ Add someone who came in but didn’t clock in…</option>'));
+    const group = (label, list) => {
+      if (!list.length) return;
+      const g = el(`<optgroup label="${esc(label)}"></optgroup>`);
+      list.forEach((p) => g.appendChild(el(`<option value="${esc(p.id)}">${esc(p.name)}</option>`)));
+      addSel.appendChild(g);
+    };
+    group('Down to work today', onRota);
+    group('Off today — came in anyway', offRota);
     addSel.onchange = (e) => { if (e.target.value) addManualArrival(e.target.value); };
     whoIn.appendChild(addSel);
+    if (offRota.length) whoIn.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin:-8px 0 12px">`
+      + `${offRota.length} ${offRota.length === 1 ? 'person is' : 'people are'} down as off today. `
+      + `Adding one puts them on the board and they get rooms like anyone else.</div>`));
   }
   if (!arrIds.length) {
     whoIn.appendChild(el(`<div class="empty" style="text-align:center;padding:16px 0;color:#5b6a7f">No clock-ins for this day. Tap "Import Attendance File" and pick your Hik export.</div>`));
@@ -6094,9 +6609,11 @@ function viewSettings() {
   const autoBox = el(`<div class="addbox"></div>`);
   [
     ['autoAssign', 'Hand out rooms each morning',
-     'Once the first cleaners badge in, today\'s rooms are shared out automatically. Only ever when nothing has been handed out yet, so it can\'t undo your own decisions.'],
+     'Today\'s rooms are shared out automatically as the crew badge in — and shared out again each time somebody new arrives, so whoever is in early is not left holding the whole board. A room you have checked off, or handed to someone yourself, stays where you put it.'],
     ['autoConfirm', 'Hand them out without asking',
      'Skips the morning list of assignments to check. The rooms were dealt from the rota and split evenly, so there is nothing to approve — they are simply handed out. You can still move any room by tapping it. Off by default, because it means the morning happens whether or not anyone looks at it.', false],
+    ['autoDays', 'Put rooms on set days',
+     'Every-other-day and weekly rooms are given actual weekdays — split so no day comes out heavier than the rest, and keeping each room on the beat it is already on. Rooms then come round on the same days every week instead of sliding. A room you have put on days yourself is never changed.'],
     ['autoBalance', 'Keep the week level',
      'Stops the every-other-day rooms all falling due on the same morning — they are split across the cycle so the days stop swinging between a huge one and an empty one. Nothing is ever left longer than its frequency: a room takes its next turn earlier, or is cleaned once more to move it onto the opposite day.'],
   ].forEach(([k, label, why, defOn]) => {
@@ -6494,8 +7011,10 @@ function employeeCard(p) {
       teamBtns[t.name] = b; teamRow.appendChild(b);
     });
     card.appendChild(teamRow);
-    const floorsIn = el(`<input id="eeFloors_${p.id}" value="${esc((p.floors||[]).join(', '))}" placeholder="Floors (e.g. 1, 2, 3)">`);
-    card.appendChild(floorsIn);
+    // Floors are tapped on and off, and save as you tap — see floorGrid(). A dashed
+    // amber number is a floor somebody else has; tapping it moves the floor over.
+    card.appendChild(el(`<div style="font-size:11px;color:#5b6a7f;font-weight:600;margin-top:8px">Floors</div>`));
+    card.appendChild(floorGrid(p));
     // What this person is cleared to clean. Trainees are commonly kept off offices.
     card.appendChild(el(`<div style="font-size:11px;color:#5b6a7f;font-weight:600;margin-top:8px">Cleared to clean</div>`));
     const canRow = el(`<div style="display:flex;gap:6px;flex-wrap:wrap"></div>`);
@@ -6508,7 +7027,8 @@ function employeeCard(p) {
     card.appendChild(canRow);
     const row = el(`<div style="display:flex;gap:8px"></div>`);
     const sv = el(`<button class="add-btn" style="flex:1">Save</button>`);
-    sv.onclick = () => editEmployee(p.id, document.getElementById('eeName_'+p.id).value, chosenTeam, document.getElementById('eeFloors_'+p.id).value);
+    // null = leave the floors alone; the grid above has already saved them.
+    sv.onclick = () => editEmployee(p.id, document.getElementById('eeName_'+p.id).value, chosenTeam, null);
     const cn = el(`<button class="modal-skip">Cancel</button>`);
     cn.onclick = () => cancelEditEmp();
     row.appendChild(sv); row.appendChild(cn);
@@ -6625,7 +7145,8 @@ function employeeGroups(wrap) {
     wrap.appendChild(el(`<div class="empty" style="text-align:center;padding:24px 0">No cleaners tagged yet. Switch to "All staff" and tap <b>+ Cleaner</b> on the cleaners.</div>`));
     return;
   }
-  const crews = [...new Set(list.map(p => p.crew))];
+  const crews = [...new Set(list.map(p => p.crew))]
+    .sort((a, b) => String(a || '').localeCompare(String(b || ''), undefined, { numeric: true, sensitivity: 'base' }));
   crews.forEach(crewName => {
     const members = list.filter(p => p.crew===crewName)
       // Leader first, then by name. Without the name tie-break the crew appeared in
@@ -6764,6 +7285,8 @@ function viewTeam() {
     seg.appendChild(mk(`All staff (${total})`, teamShowAll, () => { teamShowAll = true; render(); }));
     wrap.appendChild(seg);
   }
+
+  if (cleaners) wrap.appendChild(floorAllocationBox());
 
   // SHARE OUT THE REST DAY — the Friday off alternates, so half the crew is in one
   // week and half the next. Doing that by hand across a whole crew is where it drifts
@@ -7301,8 +7824,23 @@ function render() {
   const s = statsBar();
 
   const header = el(`<div class="header"></div>`);
+  // Back and Search, in the same place on every screen. Neither existed: you got out
+  // of a screen by working out which tab you had come from, and you found a room by
+  // knowing which tab it was on first.
+  const topbar = el(`<div class="topbar"></div>`);
+  if (_navStack.length) {
+    const back = el(`<button class="tb-btn">‹ Back</button>`);
+    back.onclick = goBack;
+    topbar.appendChild(back);
+  }
+  topbar.appendChild(el(`<div style="flex:1"></div>`));
+  const searchBtn = el(`<button class="tb-btn">⌕ Search</button>`);
+  searchBtn.onclick = openSearch;
+  topbar.appendChild(searchBtn);
+  header.appendChild(topbar);
   header.appendChild(el(`<div class="h-eyebrow">66-UNIT BUILDING · 11 FLOORS</div>`));
-  const titles = { offices:'Office Cleaning', buildings:'Building Cleaning', airbnb:'Airbnb Rooms', more:'More', rollcall:'Morning Roll Call', building:'Floors & Common Areas', exterior:'Exterior', history:'Cleaning History', team:'Team', settings:'Settings', plan:'Plan a Day', rooms:'All Rooms', tonight:'Tonight’s Round' };
+  const ROOMS_TITLE = { all: 'All Rooms', airbnb: 'Airbnb Rooms', office: 'Office Cleaning', building: 'Building Cleaning' };
+  const titles = { more:'More', rollcall:'Morning Roll Call', building:'Floors & Common Areas', exterior:'Exterior', history:'Cleaning History', team:'Team', settings:'Settings', plan:'Plan a Day', rooms: ROOMS_TITLE[roomsFilter()], tonight:'Tonight’s Round' };
   // A tab with no view renders an empty screen, so never trust it blindly:
   // fall back to Roll Call rather than showing a header over nothing.
   if (!titles[state.tab]) state.tab = 'rollcall';
@@ -7326,7 +7864,7 @@ function render() {
   } else {
     header.appendChild(el(`<div class="h-date">${dateStr}</div>`));
   }
-  const typeTab = { offices: 'office', buildings: 'building', airbnb: 'airbnb' }[state.tab];
+  const typeTab = state.tab === 'rooms' && roomsFilter() !== 'all' ? roomsFilter() : null;
   if (typeTab) {
     const inType = state.servicedUnits.filter(u => unitType(u) === typeTab);
     // Today's list = rooms due now + rooms already cleaned today, so the count
@@ -7353,13 +7891,10 @@ function render() {
   }
   app.appendChild(header);
 
-  if (state.tab==='offices') app.appendChild(viewOffices());
-  else if (state.tab==='buildings') app.appendChild(viewBuildings());
-  else if (state.tab==='airbnb') app.appendChild(viewAirbnb());
-  else if (state.tab==='more') app.appendChild(viewMore());
+  if (state.tab==='more') app.appendChild(viewMore());
   else if (state.tab==='plan') app.appendChild(viewPlan());
   else if (state.tab==='tonight') app.appendChild(viewTonight());
-  else if (state.tab==='rooms') app.appendChild(viewRooms());
+  else if (state.tab==='rooms') app.appendChild(viewRoomsHub());
   else if (state.tab==='rollcall') app.appendChild(viewRollCall());
   else if (state.tab==='building') app.appendChild(viewBuilding());
   else if (state.tab==='exterior') app.appendChild(viewExterior());
@@ -7428,17 +7963,21 @@ function render() {
   }
 
   if (_backdate) app.appendChild(backdateSheet());
+  if (_search) app.appendChild(searchSheet());
 
   const nav = el(`<div class="nav"></div>`);
+  // The bar carries the four screens the day actually runs on. Three of the old five
+  // were the same room list filtered three ways, which spent most of the bar on one
+  // thing and pushed Plan and Team — used every day — behind "More".
   const tabs = [
     { id:'rollcall', label:'Roll Call', ico:'☀' },
-    { id:'airbnb', label:'Airbnb', ico:'⌂' },
-    { id:'offices', label:'Offices', ico:'▤' },
-    { id:'buildings', label:'Buildings', ico:'▦' },
+    { id:'rooms', label:'Rooms', ico:'▤' },
+    { id:'plan', label:'Plan', ico:'🗓' },
+    { id:'team', label:'Team', ico:'☰' },
     { id:'more', label:'More', ico:'⋯' },
   ];
   // "More" stays highlighted while you're on any of its sub-pages.
-  const moreIds = ['more','rooms','plan','building','history','team','settings'];
+  const moreIds = ['more','tonight','building','exterior','history','settings'];
   tabs.forEach(t => {
     const isActive = t.id === 'more' ? moreIds.includes(state.tab) : state.tab === t.id;
     const b = el(`<button class="${isActive?'active':''}"><div class="ico">${t.ico}</div><div>${t.label}</div></button>`);
@@ -7446,6 +7985,11 @@ function render() {
     nav.appendChild(b);
   });
   app.appendChild(nav);
+  // The sticky search bar has to sit exactly under the header, and the header's
+  // height changes with the screen and with which strips it is showing — so it is
+  // measured rather than guessed.
+  const hdr = app.querySelector('.header');
+  if (hdr) app.style.setProperty('--hdr', hdr.offsetHeight + 'px');
 }
 
 // ============================================================
@@ -7608,6 +8152,7 @@ function startDayWatch() {
     const day = workToday();
     if (day !== _plannedForDay) {
       _plannedForDay = day;
+      autoPinDaysFromFreq();
       planningPass();
       loadHikArrivals().then(() => { maybeAutoAssign(); render(); });
       render();
@@ -7623,6 +8168,10 @@ async function boot() {
   await remotePull();   // wait for the staff roster before matching arrivals
   tvLastData = Date.now();
   _plannedForDay = workToday();
+  // Days first: the planning pass reads the schedule, so the rooms need to be ON
+  // their days before it runs, not after. It is a property of the rota rather than
+  // of who has badged in, so it does not wait for the roll call.
+  autoPinDaysFromFreq();
   planningPass();
   loadHikArrivals().then(() => { maybeAutoAssign(); route(); });
   startArrivalPolling();

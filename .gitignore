@@ -2,3 +2,5 @@
 Thumbs.db
 *.swp
 *~
+supabase/.temp/
+node_modules/
