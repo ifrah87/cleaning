@@ -123,11 +123,24 @@ for (const [label,vp] of [['PHONE',{width:420,height:900}],['DESKTOP',{width:144
  check('the room search stays on screen when the list is scrolled',
    boxSeen&&boxBox&&boxBox.y>=0&&boxBox.y<vp.height, JSON.stringify(boxBox));
  // Folding a group away is the other half of not scrolling for ever.
+ const sects=await page.locator('.grp-btn').allTextContents();
+ check('each kind of room is its own drop-down section', sects.length>=2, sects.join(' | '));
+ const air=page.locator('.grp-btn', {hasText:'Airbnb'}).first();
+ check('the Airbnb section starts shut', (await air.textContent()).includes('separate job')
+   && (await air.locator('.grp-caret').textContent())==='▸', await air.textContent());
+ const beforeOpen=await page.locator('.su-card').count();
+ await air.click(); await page.waitForTimeout(500);
+ check('opening it shows its rooms', (await page.locator('.su-card').count())>beforeOpen,
+   beforeOpen+' -> '+(await page.locator('.su-card').count()));
+ await page.locator('.grp-btn', {hasText:'Airbnb'}).first().click(); await page.waitForTimeout(500);
+ check('and it shuts again', (await page.locator('.su-card').count())===beforeOpen);
+ // …and an OPEN section (Airbnb is the shut one) folds the other way.
+ const openSect=page.locator('.grp-btn').last();
  const beforeFold=await page.locator('.su-card').count();
- await page.locator('.grp-head').first().click(); await page.waitForTimeout(500);
+ await openSect.click(); await page.waitForTimeout(500);
  const afterFold=await page.locator('.su-card').count();
- check('tapping a group heading folds its rooms away', afterFold<beforeFold, beforeFold+' -> '+afterFold);
- await page.locator('.grp-head').first().click(); await page.waitForTimeout(500);
+ check('folding an open section hides its rooms', afterFold<beforeFold, beforeFold+' -> '+afterFold);
+ await page.locator('.grp-btn').last().click(); await page.waitForTimeout(500);
  check('and unfolds them again', (await page.locator('.su-card').count())===beforeFold);
 
  // AN EVERY-OTHER-DAY ROOM MUST NOT BE DUE EVERY DAY. Once its next-due date passed
@@ -152,6 +165,30 @@ for (const [label,vp] of [['PHONE',{width:420,height:900}],['DESKTOP',{width:144
  check('a never-recorded room shows today, then on its own beat',
    beat.neverRecorded[0]==='X'&&alternates(beat.neverRecorded), beat.neverRecorded);
  check('a daily room is still due every day', beat.daily==='XXXXXXX', beat.daily);
+
+ // RECORDING A CLEAN HAS TO AFFECT TOMORROW. A pinned room ignored the last clean
+ // entirely, so marking 305 cleaned today still planned it for the morning after.
+ const pinnedRecent=await page.evaluate(()=>{
+   const t=workToday(), tom=shiftDay(t,1), dowT=dowOf(t), dowTom=dowOf(tom);
+   // pinned to a set that contains BOTH today and tomorrow — the back-to-back case
+   const eod={id:'r1',unit:'R1',type:'building',freq:'eod',days:[dowT,dowTom],lastCleaned:t};
+   const wk ={id:'r2',unit:'R2',type:'building',freq:'weekly',days:[dowTom],lastCleaned:shiftDay(t,-5)};
+   const dy ={id:'r3',unit:'R3',type:'building',freq:'daily',days:[dowT,dowTom],lastCleaned:shiftDay(t,-1)};
+   return {
+     eodTomorrow: dueOnDay(eod,tom),
+     eodDayAfter: dueOnDay({...eod,days:[dowOf(shiftDay(t,2))]},shiftDay(t,2)),
+     weeklyOwnDay: dueOnDay(wk,tom),
+     dailyToday: dueOnDay(dy,t),
+   };
+ });
+ check('a room recorded as cleaned today is not planned for tomorrow',
+   pinnedRecent.eodTomorrow===false, JSON.stringify(pinnedRecent));
+ check('it is back on its own days straight after',
+   pinnedRecent.eodDayAfter===true, JSON.stringify(pinnedRecent));
+ check('a weekly room cleaned mid-week still takes its own day',
+   pinnedRecent.weeklyOwnDay===true, JSON.stringify(pinnedRecent));
+ check('a pinned daily room cleaned yesterday is still due today',
+   pinnedRecent.dailyToday===true, JSON.stringify(pinnedRecent));
 
  // A DAILY ROOM COMES UP EVERY DAY, MARKED OR NOT.
  const dailyBeat=await page.evaluate(()=>{
@@ -240,6 +277,48 @@ for (const [label,vp] of [['PHONE',{width:420,height:900}],['DESKTOP',{width:144
  await page.waitForTimeout(1500);
  const third=await boardOf();
  check('a room handed out by hand keeps its cleaner through a re-deal', third['101']==='p1', JSON.stringify(third));
+
+ // --- the hand-out sheet: a whole day's teams, on one screen, photographable ---
+ // Built up to a realistic morning first: 30 rooms across 5 cleaners.
+ await page.evaluate(()=>{
+   const names=['Amina Yusuf','Fatima Ali','Hodan Omar','Zahra Ahmed','Sagal Nur'];
+   names.forEach((n,i)=>{ if(!(state.staff||[]).some(s=>s.name===n))
+     state.staff.push({id:'sp'+i,name:n,crew:'Team A',isCleaner:true,floors:[]}); });
+   const crew=names.map(n=>(state.staff||[]).find(s=>s.name===n).id);
+   const day=workToday(); state.plans=state.plans||{}; const plan={};
+   for(let i=0;i<30;i++){
+     const id='sheet'+i, unit=String(101+i);
+     if(!(state.servicedUnits||[]).some(u=>u.id===id))
+       state.servicedUnits.push({id,unit,type:'building',freq:'daily',lastCleaned:shiftDay(day,-1)});
+     plan['unit:'+id]={kind:'unit',refId:id,label:'Unit '+unit,assignedTo:crew[i%crew.length]};
+   }
+   state.plans[day]=plan; save();
+ });
+ await page.locator('.nav button').nth(2).click(); await page.waitForTimeout(700);
+ await page.locator('button', {hasText:'Hand-out sheet'}).first().click(); await page.waitForTimeout(700);
+ check('the hand-out sheet opens', await page.locator('.sheet-paper').count()>0);
+ const rowN=await page.locator('.sp-row').count();
+ const looseN=await page.locator('.sp-row.sp-loose').count();
+ check('a row per cleaner, plus at most one row for anything nobody has',
+   rowN-looseN>=5 && looseN<=1, `rows ${rowN}, of which ${looseN} unassigned`);
+ if(looseN) check('work nobody has is called out, not hidden',
+   (await page.locator('.sp-row.sp-loose').textContent()).includes('Nobody'),
+   await page.locator('.sp-row.sp-loose').textContent());
+ const emptyRows=await page.evaluate(()=>[...document.querySelectorAll('.sp-row')]
+   .filter(r=>!r.querySelectorAll('.sp-job').length).length);
+ check('no row is empty', emptyRows===0, 'empty rows: '+emptyRows);
+ // The day the screen opens on is seeded from the schedule, so it carries the
+ // communal walks as well as the 30 rooms — every planned job has to be on the sheet.
+ const jobN=await page.locator('.sp-job').count();
+ check('every planned job is on it', jobN>=30, 'jobs: '+jobN);
+ const sheetTxt=await page.locator('.sheet-paper').textContent();
+ check('it names the day and the size of it', /\d+ cleaners · \d+ jobs/.test(sheetTxt), sheetTxt.slice(0,90));
+ check('the count on the sheet matches what is on it', sheetTxt.includes(jobN+' jobs'), sheetTxt.slice(0,90));
+ // THE POINT: it has to fit the screen, or a screenshot is the top third of it.
+ const pageH=await page.evaluate(()=>document.documentElement.scrollHeight);
+ check('the whole day fits on one screen', pageH<=vp.height, `page ${pageH}px vs screen ${vp.height}px`);
+ if(process.env.SHOT_DIR) await page.screenshot({path:process.env.SHOT_DIR ? require('path').join(process.env.SHOT_DIR,'handout-'+label.toLowerCase()+'.png') : undefined,fullPage:true});
+ await page.locator('button', {hasText:'Back to planning'}).first().click(); await page.waitForTimeout(500);
 
  check('no console errors', errs.length===0, errs.slice(0,4).join('\n       '));
  await ctx.close();

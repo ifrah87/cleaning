@@ -87,6 +87,18 @@
     background: #f4f7fb; padding: 8px 0 4px; margin: 0 -2px;
   }
   .grp-head { cursor: pointer; user-select: none; }
+  .grp-btn {
+    display: flex; align-items: center; gap: 9px; width: 100%;
+    margin: 16px 0 6px; padding: 11px 12px; border-radius: 10px;
+    background: #ffffff; border: 1px solid #e7ecf3; text-align: left;
+  }
+  .grp-btn:active { background: #eef2f8; }
+  .grp-title { font-size: 14px; font-weight: 700; color: #0f1a27; }
+  .grp-sub { font-size: 11px; color: #5f7189; margin-top: 1px; }
+  .grp-count {
+    font-size: 11px; font-weight: 700; color: #5b6a7f; background: #f4f7fb;
+    border-radius: 20px; padding: 3px 9px; flex: 0 0 auto;
+  }
   .grp-caret { font-size: 11px; color: #5b6a7f; width: 12px; }
 
   /* Segmented filter — one row of room kinds in place of four tabs. */
@@ -116,6 +128,31 @@
   .sr-main { flex: 1; min-width: 0; font-size: 14px; font-weight: 700; color: #0f1a27; }
   .sr-sub { font-size: 11px; color: #5f7189; font-weight: 500; margin-top: 1px; }
   .sr-kind { font-size: 9px; letter-spacing: 0.1em; font-weight: 700; color: #5b6a7f; }
+
+  /* The hand-out sheet: one screen, photographable, no controls. */
+  .sheet-paper { background: #ffffff; border: 1px solid #e7ecf3; border-radius: 12px; padding: 12px 14px; }
+  .sp-head { border-bottom: 2px solid #0f1a27; padding-bottom: 7px; margin-bottom: 9px; }
+  .sp-date { font-size: 16px; font-weight: 800; color: #0f1a27; letter-spacing: -0.01em; }
+  .sp-meta { font-size: 11px; color: #5f7189; font-weight: 600; margin-top: 1px; }
+  .sp-row { display: flex; gap: 10px; padding: 6px 0; border-bottom: 1px solid #eef2f8; }
+  .sp-row:last-child { border-bottom: none; }
+  .sp-who {
+    flex: 0 0 84px; font-size: 13px; font-weight: 800; color: #0f1a27;
+    display: flex; align-items: baseline; gap: 4px;
+  }
+  .sp-lead { color: #d97706; font-size: 11px; }
+  .sp-n { font-size: 10px; font-weight: 700; color: #5b6a7f; }
+  .sp-jobs { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; gap: 3px 4px; }
+  .sp-job {
+    font-size: 12px; font-weight: 700; color: #15202e;
+    background: #eef2f8; border-radius: 5px; padding: 1px 6px;
+  }
+  .sp-job.area { background: #e3f2f4; color: #0369a1; font-weight: 600; }
+  .sp-loose .sp-who { color: #b45309; }
+  .sp-loose .sp-job { background: #fdf3e6; color: #8a5a12; }
+  @media (min-width: 900px) {
+    body:not(.tv) .sp-who { flex: 0 0 110px; }
+  }
 
   /* Floor allocation — tap a floor on or off for a person. */
   .fl-grid { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
@@ -878,7 +915,22 @@ function dueOnDayFrom(u, day, base) {
     // and showing it every day until somebody clears it. That keeps the board equal
     // to the rota — set the days once and stop thinking about it — at the price of a
     // genuinely skipped room not announcing itself. The gap audit is where that shows.
-    return days.indexOf(dowOf(day)) >= 0;
+    if (days.indexOf(dowOf(day)) < 0) return false;
+    // …BUT NOT TWO DAYS RUNNING. Neither every-other-day set is a true every other
+    // day — seven does not divide by two — so Sat/Mon/Wed/Fri runs Fri→Sat back to
+    // back. Record 305 as cleaned on the Friday and it still came up on the Saturday,
+    // because a pinned room did not look at the last clean at all: you told the app
+    // it had just been done and it planned it again for the morning after.
+    // A recorded clean now suppresses the very next pinned day, and only that: the
+    // rota itself never moves, so the room is back on its own days immediately after.
+    // Capped at two days so a weekly room cleaned mid-week still takes its own day
+    // rather than waiting another whole week for it.
+    const minGap = Math.min(FREQ_DAYS[u.freq] || 1, 2);
+    if (base) {
+      const gap = Math.round((new Date(day + 'T00:00:00') - new Date(base + 'T00:00:00')) / 864e5);
+      if (gap >= 0 && gap < minGap) return false;
+    }
+    return true;
   }
   const today = workToday();
   // AN EVERY-OTHER-DAY ROOM WAS DUE ON EVERY DAY OF THE WEEK AHEAD. Work nobody got
@@ -4134,8 +4186,11 @@ function unitGroups(wrap, typeKeys, emptyMsg) {
   // list already narrowed, rather than on the right tab and none the wiser.
   if (_roomSeek) {
     search.value = _roomSeek; q = String(_roomSeek).trim().toLowerCase(); _roomSeek = null;
-    // A hit inside a folded group is a hit nobody can see.
-    state.shutGroups = {};
+    // A hit inside a folded group is a hit nobody can see. Only this view's own
+    // groups are opened — the room list's drop-downs keep however they were left.
+    Object.keys(state.shutGroups || {}).forEach((k) => {
+      if (k.indexOf('rooms:') !== 0) delete state.shutGroups[k];
+    });
   }
   search.oninput = () => { q = search.value.trim().toLowerCase(); apply(); };
   FREQ_FILTERS.forEach(([key, label]) => {
@@ -4968,6 +5023,60 @@ function autoAssignPlan(day) {
   save(); render();
 }
 
+// THE SHEET THAT GETS HANDED OUT. The plan screen is built for editing a day —
+// pickers, day jumps, a control on every job — none of which survives being
+// photographed and sent to the security desk, who only need to know which rooms go
+// to which person. This is the same day with everything else taken off: names down
+// the side, their rooms beside them, sized to fit one screen so a screenshot is the
+// whole day rather than the top third of it.
+let _planSheet = false;
+function planHandoutSheet(day) {
+  const wrap = el('<div class="sheet-paper"></div>');
+  const staffById = {};
+  (state.staff || []).forEach((p) => { staffById[p.id] = p; });
+  const byPerson = {}, loose = [];
+  planJobs(day).forEach((j) => {
+    const label = j.kind === 'unit' ? String(j.label || '').replace(/^Unit\s+/, '') : String(j.label || '');
+    const item = { label, area: j.kind !== 'unit' };
+    if (j.assignedTo && staffById[j.assignedTo]) (byPerson[j.assignedTo] = byPerson[j.assignedTo] || []).push(item);
+    else loose.push(item);
+  });
+  const byLbl = (a, b) => String(a.label).localeCompare(String(b.label), undefined, { numeric: true, sensitivity: 'base' });
+  const ids = Object.keys(byPerson).sort((a, b) =>
+    String(staffById[a].name).localeCompare(String(staffById[b].name), undefined, { sensitivity: 'base' }));
+
+  const dt = new Date(day + 'T00:00:00');
+  const total = Object.values(byPerson).reduce((n, l) => n + l.length, 0) + loose.length;
+  const head = el('<div class="sp-head"></div>');
+  head.appendChild(el(`<div class="sp-date">${esc(dt.toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long' }))}</div>`));
+  head.appendChild(el(`<div class="sp-meta">${ids.length} cleaner${ids.length === 1 ? '' : 's'} · ${total} job${total === 1 ? '' : 's'}</div>`));
+  wrap.appendChild(head);
+
+  if (!total) {
+    wrap.appendChild(el(`<div class="empty" style="text-align:center;padding:22px 0">Nothing planned for this day yet.</div>`));
+    return wrap;
+  }
+  ids.forEach((id) => {
+    const list = byPerson[id].slice().sort(byLbl);
+    const row = el('<div class="sp-row"></div>');
+    const p = staffById[id];
+    row.appendChild(el(`<div class="sp-who">${esc(String(p.name).split(' ')[0])}`
+      + `${p.isLeader ? ' <span class="sp-lead">★</span>' : ''}`
+      + `<span class="sp-n">${list.length}</span></div>`));
+    row.appendChild(el(`<div class="sp-jobs">${list.map((x) =>
+      `<span class="sp-job${x.area ? ' area' : ''}">${esc(x.label)}</span>`).join('')}</div>`));
+    wrap.appendChild(row);
+  });
+  if (loose.length) {
+    const row = el('<div class="sp-row sp-loose"></div>');
+    row.appendChild(el(`<div class="sp-who">Nobody<span class="sp-n">${loose.length}</span></div>`));
+    row.appendChild(el(`<div class="sp-jobs">${loose.slice().sort(byLbl).map((x) =>
+      `<span class="sp-job${x.area ? ' area' : ''}">${esc(x.label)}</span>`).join('')}</div>`));
+    wrap.appendChild(row);
+  }
+  return wrap;
+}
+
 function viewPlan() {
   const wrap = el('<div class="body"></div>');
   const day = curPlanDay();
@@ -5004,6 +5113,13 @@ function viewPlan() {
   dayIn.onchange = (e) => { planDay = e.target.value || null; render(); };
   quick.appendChild(dayIn);
   wrap.appendChild(quick);
+
+  // One tap between planning the day and the sheet that gets photographed.
+  const sheetBtn = el(`<button class="freqmini" style="width:100%;padding:9px;margin-bottom:10px;`
+    + `border-color:#0284c7;color:#0284c7">${_planSheet ? '‹ Back to planning' : '📋 Hand-out sheet — fits one screen'}</button>`);
+  sheetBtn.onclick = () => { _planSheet = !_planSheet; render(); };
+  wrap.appendChild(sheetBtn);
+  if (_planSheet) { wrap.appendChild(planHandoutSheet(day)); return wrap; }
 
   // THE ONE BUTTON.
   const planBtn = el(`<button class="add-btn" style="background:#15803d;margin-bottom:10px;font-size:15px;padding:12px">`
@@ -5303,6 +5419,10 @@ function viewPlan() {
 
 // One tab, four filters — see ROOM_TAB_TYPE. The counts sit on the buttons so the
 // shape of the building is readable without opening anything.
+// Airbnb is cleaned by its own pair after the offices and is off the morning roll
+// call, so on the room list it opens shut rather than sitting in the way.
+const SHUT_BY_DEFAULT = ['airbnb'];
+const GROUP_SUB = { airbnb: 'a separate job, after the main round' };
 const ROOM_SEGMENTS = [['all', 'All'], ['airbnb', 'Airbnb'], ['office', 'Offices'], ['building', 'Buildings']];
 function roomsFilter() { return ROOM_SEGMENTS.some(([k]) => k === state.roomsFilter) ? state.roomsFilter : 'all'; }
 function viewRoomsHub() {
@@ -5403,16 +5523,24 @@ function viewRooms() {
   ['airbnb', 'office', 'building'].forEach(tk => {
     const list = groups[tk]; if (!list || !list.length) return;
     const t = UNIT_TYPES[tk];
-    const shut = !!(state.shutGroups || {})['rooms:' + tk];
-    const head = el(`<div class="crew-head grp-head" style="margin-top:16px"></div>`);
+    // EACH KIND OF ROOM IS ITS OWN DROP-DOWN. Airbnb starts shut: it is a separate
+    // job, run by its own pair after the main round, so on a screen about the
+    // building's schedule it is a section you open when you want it — not thirty
+    // rooms to scroll past to reach the ones the morning is actually about.
+    const gk = 'rooms:' + tk;
+    const saved = (state.shutGroups || {})[gk];
+    const shut = saved === undefined ? SHUT_BY_DEFAULT.includes(tk) : !!saved;
+    const head = el(`<button class="grp-btn"></button>`);
     head.appendChild(el(`<div class="grp-caret">${shut ? '▸' : '▾'}</div>`));
     head.appendChild(el(`<div class="crew-dot" style="background:${t.color}"></div>`));
-    head.appendChild(el(`<div class="crew-name">${t.label}</div>`));
-    head.appendChild(el(`<div class="crew-sub">${list.length}${shut ? ' · hidden' : ''}</div>`));
+    const gt = el(`<div style="flex:1;min-width:0;text-align:left"></div>`);
+    gt.appendChild(el(`<div class="grp-title">${t.label}</div>`));
+    if (GROUP_SUB[tk]) gt.appendChild(el(`<div class="grp-sub">${GROUP_SUB[tk]}</div>`));
+    head.appendChild(gt);
+    head.appendChild(el(`<div class="grp-count">${list.length}</div>`));
     head.onclick = () => {
       state.shutGroups = state.shutGroups || {};
-      const k = 'rooms:' + tk;
-      if (state.shutGroups[k]) delete state.shutGroups[k]; else state.shutGroups[k] = true;
+      state.shutGroups[gk] = !shut;      // stored either way, so "opened" survives too
       save(); render();
     };
     wrap.appendChild(head);
