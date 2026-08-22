@@ -3737,6 +3737,15 @@ function assistantsFor(p, present) {
     .filter((x) => x.id !== p.id && x.isCleaner && !x.isLeader && (!present || present(x)))
     .sort((a, b) => String(a.name).localeCompare(String(b.name), undefined, { sensitivity: 'base' }));
 }
+// AN ASSISTANT. A cleaner on a team that has a leader, who is not that leader. Not a
+// TV concept, though it started as one: an assistant is there to work with the leader
+// they are tagged under, so they do not belong in the places the app asks "which one
+// person is this?" — the roll call, and the "cleaned by" list on a room.
+function isAssistant(p) {
+  if (!p || !p.isCleaner || p.isLeader || !p.crew) return false;
+  return teamMembers(p.crew).some((x) => x.id !== p.id && x.isLeader);
+}
+
 const withLabel = (p, present) => {
   const a = assistantsFor(p, present);
   return a.length ? 'with ' + a.map((x) => String(x.name).split(' ')[0]).join(', ') : '';
@@ -6073,9 +6082,12 @@ function servicedCard(u, isDue) {
   assignRow.appendChild(el(`<div style="font-size:11px;color:#5b6a7f;font-weight:600;white-space:nowrap">Cleaned by</div>`));
   const asel = el(`<select class="area-select" style="flex:1"></select>`);
   asel.appendChild(el(`<option value="">Auto (by floor)</option>`));
-  // Only people cleared for this kind of room. Where a pair swaps rooms day to day,
-  // this turns "who cleaned it" into a two-name choice instead of a list of twenty.
-  cleaningStaff().filter(p => canCleanUnit(p, u)).forEach(p => {
+  // Only people cleared for this kind of room, and only leaders. Where a pair swaps
+  // rooms day to day this turns "who cleaned it" into a two-name choice rather than a
+  // list of twenty — and an assistant should never be the answer, because the room is
+  // the leader's and the assistant is there to work it with them. Naming the assistant
+  // here would quietly move the room off the leader it belongs to.
+  cleaningStaff().filter(p => canCleanUnit(p, u) && !isAssistant(p)).forEach(p => {
     const o = el(`<option value="${esc(p.id)}">${esc(p.name)}</option>`);
     if (u.assignedTo === p.id) o.setAttribute('selected', '');
     asel.appendChild(o);
@@ -7979,15 +7991,6 @@ function tvWithLabel(p, spare) {
   return a.length ? 'with ' + a.map(tvName).join(', ') : '';
 }
 
-// AN ASSISTANT AT ALL — regardless of whether they are holding rooms today. A cleaner
-// on a team that has a leader, who is not that leader, assists. Kept separate from
-// tvNamedElsewhere below, which asks the narrower question of whether somebody has
-// already been named under a leader and so needs no column.
-function tvIsAssistant(p) {
-  if (!p || !p.isCleaner || p.isLeader || !p.crew) return false;
-  return teamMembers(p.crew).some((x) => x.id !== p.id && x.isLeader);
-}
-
 // Named under somebody else, so not given a column of their own.
 function tvNamedElsewhere(p, spare) {
   if (!p || !p.isCleaner || p.isLeader || !p.crew || !spare(p) || !tvHere(p)) return false;
@@ -8057,7 +8060,7 @@ function tvCrewStrip() {
   // tagged under, and they are already named on that leader's column — putting them on
   // the roll call as well made the strip a list of everybody, which is the one thing it
   // was not meant to be. Whoever a leader has with them is read off their column.
-  const crew = cleaningStaff().filter((p) => worksToday(p) && tvOnTeam(p) && !tvIsAssistant(p));
+  const crew = cleaningStaff().filter((p) => worksToday(p) && tvOnTeam(p) && !isAssistant(p));
   if (!crew.length) { wrap.appendChild(el(`<div class="tv-empty">Nobody is rostered on today</div>`)); return wrap; }
 
   // WHO IS STILL IN THE BUILDING. Counted before the chips, because "how many are
