@@ -7926,25 +7926,40 @@ function tvArrival(p) {
 // The shared withLabel() prints bare first names, which on this screen would undo the
 // thing tvName() exists to do: "with Mahad" above one column while another column is
 // headed Mahad A. is the same ambiguity in smaller type. Same sentence, TV names.
-function tvWithLabel(p) {
-  const a = assistantsFor(p, tvHere);
+// ONE PERSON, ONE PLACE ON THE BOARD. An assistant who holds no rooms of their own
+// belongs under their leader — that is the whole point of naming them there — and an
+// assistant who does hold rooms has a column already. Listing them in both spots put
+// the same person on the wall twice, once as a name and once as an empty column, and
+// an empty column on a board full of work reads as somebody with nothing to do.
+// This is the rule the hand-out sheet has always used; the TV simply never had it.
+function tvWithLabel(p, spare) {
+  const a = assistantsFor(p, (x) => tvHere(x) && spare(x));
   return a.length ? 'with ' + a.map(tvName).join(', ') : '';
+}
+
+// Named under somebody else, so not given a column of their own.
+function tvNamedElsewhere(p, spare) {
+  if (!p || !p.isCleaner || p.isLeader || !p.crew || !spare(p) || !tvHere(p)) return false;
+  return teamMembers(p.crew).some((x) => x.id !== p.id && x.isLeader && tvHere(x));
 }
 
 function tvColumns() {
   const grouped = tvJobsByPerson();
+  // "Spare" = holding nothing of their own today. Computed once from the same buckets
+  // the columns are built from, so the two can never disagree about who has work.
+  const spare = (x) => !(grouped.buckets[x.id] || []).length;
   const cols = [];
   const unassigned = grouped.buckets['__none__'] || [];
   if (unassigned.length) {
     cols.push({ key: '__none__', name: 'NOBODY YET', jobs: unassigned, none: true, out: false, status: null });
   }
   const seen = {};
-  cleaningStaff().filter((p) => worksToday(p) && tvOnTeam(p)).forEach((p) => {
+  cleaningStaff().filter((p) => worksToday(p) && tvOnTeam(p) && !tvNamedElsewhere(p, spare)).forEach((p) => {
     seen[p.id] = true;
     const st = state.attendance[p.id] || 'present';
     cols.push({
       key: p.id, name: tvName(p), jobs: grouped.buckets[p.id] || [],
-      none: false, out: AWAY.indexOf(st) >= 0, status: st, with: tvWithLabel(p),
+      none: false, out: AWAY.indexOf(st) >= 0, status: st, with: tvWithLabel(p, spare),
       team: tvTeam(p), at: tvArrival(p),
     });
   });
@@ -7954,7 +7969,7 @@ function tvColumns() {
     const st = state.attendance[p.id] || 'present';
     cols.push({
       key: p.id, name: tvName(p), jobs: grouped.buckets[p.id],
-      none: false, out: AWAY.indexOf(st) >= 0, status: st, with: tvWithLabel(p),
+      none: false, out: AWAY.indexOf(st) >= 0, status: st, with: tvWithLabel(p, spare),
       team: tvTeam(p), at: tvArrival(p),
     });
   });
