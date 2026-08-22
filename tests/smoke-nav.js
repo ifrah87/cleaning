@@ -17,6 +17,12 @@ const ROOT='/Users/ifrahawaale/Desktop/cleaning';
 const SUPA_HOST='issnrivggzkhrcjfhzit.supabase.co';
 const key=(d)=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
 const TODAY=key(new Date()), YESTERDAY=key(new Date(Date.now()-864e5));
+// THE WORK DAY, NOT THE CALENDAR DAY. The app's day runs from 3am, so a run started at
+// half past midnight has a work day of YESTERDAY — and a room stamped "cleaned
+// yesterday" by the calendar reads as cleaned today and is never due. Badge-ins are
+// read by the work day too, so the events have to carry that date or nobody is in.
+const WORK_TODAY=(()=>{const d=new Date();if(d.getHours()<3)d.setDate(d.getDate()-1);return key(d)})();
+const DAY_BEFORE=(()=>{const d=new Date();d.setDate(d.getDate()-(d.getHours()<3?2:1));return key(d)})();
 const SESSION={access_token:'t',token_type:'bearer',expires_in:3600,expires_at:Math.floor(Date.now()/1000)+3600,refresh_token:'r',user:{id:'u1',email:'a@b.c',aud:'authenticated',role:'authenticated'}};
 const STAFF=[
  {id:'p1',name:'Amina Yusuf',crew:'Team A',isCleaner:true,floors:[1,2],hikPersonId:'h1'},
@@ -29,22 +35,22 @@ const STAFF=[
 ];
 const U=(id,unit,type,freq,last,extra)=>Object.assign({id,unit,type,freq,lastCleaned:last},extra||{});
 const APP_STATE={staff:STAFF,servicedUnits:[
- U('u1','101','building','daily',YESTERDAY),
- U('u2','102','building','eod',TODAY),
- U('u3','305','building','eod',TODAY),
- U('u4','402','building','eod',TODAY),
- U('u5','A1','airbnb','daily',YESTERDAY),
- U('u6','Suite 9','office','weekly',YESTERDAY),
+ U('u1','101','building','daily',DAY_BEFORE),
+ U('u2','102','building','eod',WORK_TODAY),
+ U('u3','305','building','eod',WORK_TODAY),
+ U('u4','402','building','eod',WORK_TODAY),
+ U('u5','A1','airbnb','daily',DAY_BEFORE),
+ U('u6','Suite 9','office','weekly',DAY_BEFORE),
  // 601 was cleaned today, so its own schedule says it is NOT due — it is on today's
  // board only because somebody planned it there last night, for Fatima, who badges
  // in an hour after the leader.
- U('u7','601','building','weekly',TODAY),
+ U('u7','601','building','weekly',WORK_TODAY),
 ],completions:{},assignConfirmed:{},
- plans:{[TODAY]:{'unit:u7':{kind:'unit',refId:'u7',label:'601',assignedTo:'p2'}}},
+ plans:{[WORK_TODAY]:{'unit:u7':{kind:'unit',refId:'u7',label:'601',assignedTo:'p2'}}},
  manualArrivals:{},floors:11};
 // Everybody badges in over the morning: leader first, then the rest.
 // Hik matches on the person's NAME, and the app asks for one day at a time.
-let EVENTS=[{person_name:'Hodan Omar',person_code:'1003',event_time:TODAY+' 06:30:00'}];
+let EVENTS=[{person_name:'Hodan Omar',person_code:'1003',event_time:WORK_TODAY+' 06:30:00'}];
 const eventsFor=(url)=>{const m=decodeURIComponent(url).match(/event_time=like\.(\d{4}-\d{2}-\d{2})/);return m?EVENTS.filter(e=>e.event_time.startsWith(m[1])):EVENTS};
 function serve(){return new Promise(r=>{const s=http.createServer((q,res)=>{const f=q.url.split('?')[0]==='/'?'/index.html':q.url.split('?')[0];const p=path.join(ROOT,f);if(!p.startsWith(ROOT)||!fs.existsSync(p)){res.writeHead(404);res.end();return}res.writeHead(200,{'Content-Type':f.endsWith('.html')?'text/html':f.endsWith('.js')?'text/javascript':f.endsWith('.webmanifest')?'application/manifest+json':'text/plain'});res.end(fs.readFileSync(p))});s.listen(0,'127.0.0.1',()=>r({s,port:s.address().port}))})}
 const out=[];const check=(n,c,d)=>{out.push([n,!!c]);console.log((c?'  \x1b[32mPASS\x1b[0m ':'  \x1b[31mFAIL\x1b[0m ')+n+(c||!d?'':'\n       '+d))};
@@ -53,7 +59,7 @@ const {s,port}=await serve();
 const browser=await chromium.launch();
 for (const [label,vp] of [['PHONE',{width:420,height:900}],['DESKTOP',{width:1440,height:900}]]) {
  // Each viewport starts the morning over: the leader alone, nobody else in yet.
- EVENTS=[{person_name:'Hodan Omar',person_code:'1003',event_time:TODAY+' 06:30:00'}];
+ EVENTS=[{person_name:'Hodan Omar',person_code:'1003',event_time:WORK_TODAY+' 06:30:00'}];
  const ctx=await browser.newContext({viewport:vp});
  await ctx.route(`**://${SUPA_HOST}/**`,async(route)=>{const req=route.request(),url=req.url(),m=req.method();
   const json=(b,st=200)=>route.fulfill({status:st,contentType:'application/json',headers:{'Access-Control-Allow-Origin':'*'},body:JSON.stringify(b)});
@@ -289,7 +295,7 @@ for (const [label,vp] of [['PHONE',{width:420,height:900}],['DESKTOP',{width:144
    groups.some(g=>g.startsWith('Down to work today'))&&groups.some(g=>g.startsWith('Off today')), JSON.stringify(groups));
  check('someone down as off today can still be added', groups.join(' ').includes('Zahra Ahmed'), JSON.stringify(groups));
 
- EVENTS=EVENTS.concat([{person_name:'Amina Yusuf',person_code:'1001',event_time:TODAY+' 07:40:00'},{person_name:'Fatima Ali',person_code:'1002',event_time:TODAY+' 08:10:00'}]);
+ EVENTS=EVENTS.concat([{person_name:'Amina Yusuf',person_code:'1001',event_time:WORK_TODAY+' 07:40:00'},{person_name:'Fatima Ali',person_code:'1002',event_time:WORK_TODAY+' 08:10:00'}]);
  await page.evaluate(()=>loadHikArrivals().then(()=>{maybeAutoAssign();render()}));
  await page.waitForTimeout(1500);
  const second=await boardOf();
@@ -329,7 +335,7 @@ for (const [label,vp] of [['PHONE',{width:420,height:900}],['DESKTOP',{width:144
  await page.evaluate(()=>{setUnitAssignee('u1','p1')});
  await page.waitForTimeout(500);
  await page.evaluate(()=>{state.staff.push({id:'p9',name:'Late Arrival',crew:'Team A',isCleaner:true,floors:[],hikPersonId:'h9'});});
- EVENTS=EVENTS.concat([{person_name:'Late Arrival',person_code:'1009',event_time:TODAY+' 09:00:00'}]);
+ EVENTS=EVENTS.concat([{person_name:'Late Arrival',person_code:'1009',event_time:WORK_TODAY+' 09:00:00'}]);
  await page.evaluate(()=>loadHikArrivals().then(()=>{maybeAutoAssign();render()}));
  await page.waitForTimeout(1500);
  const third=await boardOf();

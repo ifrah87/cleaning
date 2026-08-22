@@ -13,13 +13,19 @@ const ROOT = path.join(__dirname, '..');
 const SUPA_HOST = 'issnrivggzkhrcjfhzit.supabase.co';
 const key = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 const TODAY = key(new Date()), YESTERDAY = key(new Date(Date.now() - 864e5));
+// THE WORK DAY, NOT THE CALENDAR DAY. The app's day runs from 3am, so a test started
+// at half past midnight has a work day of YESTERDAY — and a room stamped "cleaned
+// yesterday" by the calendar reads as cleaned today and is not due. Everything the
+// fixtures date is dated from the work day.
+const WORK_TODAY = (() => { const d = new Date(); if (d.getHours() < 3) d.setDate(d.getDate() - 1); return key(d); })();
+const DAY_BEFORE = (() => { const d = new Date(); d.setDate(d.getDate() - (d.getHours() < 3 ? 2 : 1)); return key(d); })();
 const SESSION = { access_token: 't', token_type: 'bearer', expires_in: 3600, expires_at: Math.floor(Date.now() / 1e3) + 3600, refresh_token: 'r', user: { id: 'u1', email: 'a@b.c', aud: 'authenticated', role: 'authenticated' } };
 const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'], WEEK = [6, 0, 1, 2, 3, 4, 5];
 
 // The clump as it actually stands: every eod room on Sat/Mon/Wed/Fri, cleaned in one
 // batch yesterday, which is exactly how they all came to ask for the same set.
 const SET_A = [6, 1, 3, 5];
-const U = (n, extra) => Object.assign({ id: 'u' + n, unit: String(n), type: 'building', freq: 'daily', lastCleaned: YESTERDAY, assignedTo: null }, extra || {});
+const U = (n, extra) => Object.assign({ id: 'u' + n, unit: String(n), type: 'building', freq: 'daily', lastCleaned: DAY_BEFORE, assignedTo: null }, extra || {});
 const FIXTURE = {
   staff: [{ id: 'p1', name: 'Amina Yusuf', crew: 'Team A', isCleaner: true, floors: [] }],
   teams: [{ name: 'Team A', color: '#0284c7', floors: [] }],

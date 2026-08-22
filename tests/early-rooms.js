@@ -14,6 +14,12 @@ const ROOT = path.join(__dirname, '..');
 const SUPA_HOST = 'issnrivggzkhrcjfhzit.supabase.co';
 const key = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 const TODAY = key(new Date()), YESTERDAY = key(new Date(Date.now() - 864e5));
+// THE WORK DAY, NOT THE CALENDAR DAY. The app's day runs from 3am, so a test started
+// at half past midnight has a work day of YESTERDAY — and a room stamped "cleaned
+// yesterday" by the calendar reads as cleaned today and is not due. Everything the
+// fixtures date is dated from the work day.
+const WORK_TODAY = (() => { const d = new Date(); if (d.getHours() < 3) d.setDate(d.getDate() - 1); return key(d); })();
+const DAY_BEFORE = (() => { const d = new Date(); d.setDate(d.getDate() - (d.getHours() < 3 ? 2 : 1)); return key(d); })();
 const SESSION = { access_token: 't', token_type: 'bearer', expires_in: 3600, expires_at: Math.floor(Date.now() / 1e3) + 3600, refresh_token: 'r', user: { id: 'u1', email: 'a@b.c', aud: 'authenticated', role: 'authenticated' } };
 
 // Nobody is a leader here, so the leader quota can't muddy the picture.
@@ -23,7 +29,7 @@ const STAFF = [
   { id: 'p3', name: 'Hodan Omar',  crew: 'Team A', isCleaner: true, floors: [] },
 ];
 const TEAMS = [{ name: 'Team A', color: '#0284c7', floors: [] }];
-const U = (n, extra) => Object.assign({ id: 'u' + n, unit: String(n), type: 'building', freq: 'daily', lastCleaned: YESTERDAY, assignedTo: null, usualTo: null }, extra || {});
+const U = (n, extra) => Object.assign({ id: 'u' + n, unit: String(n), type: 'building', freq: 'daily', lastCleaned: DAY_BEFORE, assignedTo: null, usualTo: null }, extra || {});
 const EARLY = ['101', '102', '103', '104', '105', '106'];
 const PLAIN = ['201', '202', '203', '204', '205', '206'];
 const UNITS = EARLY.map((n) => U(n, { preferEarly: true })).concat(PLAIN.map((n) => U(n)));
@@ -31,7 +37,7 @@ const APP_STATE = { staff: STAFF, teams: TEAMS, servicedUnits: UNITS, floors: 11
 
 let EVENTS = [];
 const eventsFor = (url) => { const m = decodeURIComponent(url).match(/event_time=like\.(\d{4}-\d{2}-\d{2})/); return m ? EVENTS.filter((e) => e.event_time.startsWith(m[1])) : EVENTS; };
-const badge = (name, hhmm) => EVENTS.push({ person_name: name, person_code: 'c' + name.length, event_time: TODAY + ' ' + hhmm + ':00' });
+const badge = (name, hhmm) => EVENTS.push({ person_name: name, person_code: 'c' + name.length, event_time: WORK_TODAY + ' ' + hhmm + ':00' });
 
 function serve() {
   return new Promise((r) => {
@@ -48,7 +54,14 @@ function serve() {
 const results = [];
 const check = (n, ok, d) => { results.push([n, !!ok]); console.log((ok ? '  \x1b[32mPASS\x1b[0m ' : '  \x1b[31mFAIL\x1b[0m ') + n + (ok || !d ? '' : '\n         ' + d)); };
 
-const CAP = 3;   // Settings → "Morning rooms per cleaner"; the app's default
+const CAP = 2;   // Settings → "Morning rooms per cleaner"; the app's default
+
+// Hand the whole board back, so what follows is a genuine morning deal rather than
+// the hand-out the plan already made when the app opened.
+const RESET = `
+  (state.servicedUnits || []).forEach((u) => { u.assignedTo = null; });
+  state.assignConfirmed = {}; state.planCarried = {}; state.autoAssignedFor = null;
+`;
 
 (async () => {
   const { s, port } = await serve();
@@ -96,37 +109,46 @@ const CAP = 3;   // Settings → "Morning rooms per cleaner"; the app's default
   // 06:30 — Amina, on her own
   badge('Amina Yusuf', '06:30');
   let r = await poll(); dump('06:30 — Amina badges in first, alone', r);
-  check('the whole early round goes to the only cleaner in', EARLY.every((u) => r.early[u] === 'Amina'),
-    JSON.stringify(r.early));
+  // ONE PERSON IS NOT A CREW. She takes a round of CAP and the rest wait for the next
+  // arrival — handing her all six is the very thing the cap exists to stop.
+  check('the only cleaner in takes a round of ' + CAP + ', not the lot',
+    (r.earlyLoad['Amina'] || 0) === CAP, JSON.stringify(r.earlyLoad));
+  check('the early rooms she cannot take are left free, not forced on her',
+    EARLY.filter((u) => !r.early[u]).length === EARLY.length - CAP, JSON.stringify(r.early));
 
   // 07:00 — Fatima
   badge('Fatima Ali', '07:00');
   r = await poll(); dump('07:00 — Fatima badges in (30 min later)', r);
-  check('every early room is handed out before any ordinary one',
-    EARLY.every((u) => !!r.early[u]), JSON.stringify(r.early));
+  // With two in and a round of CAP each, four of the six morning rooms go out and the
+  // other two wait for the next arrival. Both of them fill their round before either
+  // picks up ordinary work — that is what "morning rooms first" means once it is capped.
+  check('both of them have a full round of ' + CAP + ' morning rooms',
+    Object.values(r.earlyLoad).every((n) => n === CAP), JSON.stringify(r.earlyLoad));
+  check('the morning rooms they cannot take are still waiting, not given to somebody else',
+    EARLY.filter((u) => !r.early[u]).length === EARLY.length - 2 * CAP, JSON.stringify(r.early));
   const amina2 = r.earlyLoad['Amina'] || 0, fatima2 = r.earlyLoad['Fatima'] || 0;
-  check('the earliest arrival fills her round of ' + CAP + ' before the next one starts',
-    amina2 === CAP, 'Amina ' + amina2 + ' vs Fatima ' + fatima2);
-  console.log('    → early round split ' + amina2 + '/' + fatima2 + ' (earliest in filled to the cap first)');
+  check('neither of them is over the round of ' + CAP,
+    amina2 === CAP && fatima2 === CAP, 'Amina ' + amina2 + ' vs Fatima ' + fatima2);
+  console.log('    → early round split ' + amina2 + '/' + fatima2);
 
   // 07:30 — Hodan
   badge('Hodan Omar', '07:30');
   r = await poll(); dump('07:30 — Hodan badges in last', r);
   check('all six early rooms still have a name against them', EARLY.every((u) => !!r.early[u]), JSON.stringify(r.early));
   const el = r.earlyLoad;
-  check('the earliest in still holds at least as many early rooms as the latest',
-    (el['Amina'] || 0) >= (el['Hodan'] || 0), JSON.stringify(el));
-  check('nobody carries more than ' + CAP + ' asked-for mornings while the crew fits them',
-    Math.max(...Object.values(el)) <= CAP, JSON.stringify(el));
-  check('the two earliest in carry the early round, the last one in does not',
-    (el['Amina'] || 0) + (el['Fatima'] || 0) === EARLY.length && (el['Hodan'] || 0) === 0, JSON.stringify(el));
+  check('nobody carries more than ' + CAP + ' asked-for mornings', Math.max(...Object.values(el)) <= CAP,
+    JSON.stringify(el));
+  // With everybody in, the levelling pass evens the morning up rather than leaving the
+  // two early birds holding all six — which is the whole point of a round.
+  check('the early round is spread across the crew, not stacked on the first two in',
+    Math.max(...Object.values(el)) - Math.min(...Object.values(el)) <= 1, JSON.stringify(el));
 
   // ------------------------------------------------- MORE EARLY ROOMS THAN THE CREW
   // Six more asked-for mornings land on the same three cleaners: 12 early rooms, a
   // round of 3 each = 9. The surplus must still be dealt, and shared out evenly.
-  const flood = await page.evaluate(async () => {
+  const flood = await page.evaluate(async (reset) => {
     (state.servicedUnits || []).forEach((u) => { u.preferEarly = true; u.preferLate = false; });
-    state.autoAssignedFor = null;
+    eval(reset);
     maybeAutoAssign(); render();
     await new Promise((r) => setTimeout(r, 250));
     const nameOf = (id) => { const p = (state.staff || []).find((x) => x.id === id); return p ? p.name.split(' ')[0] : null; };
@@ -137,31 +159,33 @@ const CAP = 3;   // Settings → "Morning rooms per cleaner"; the app's default
       if (!n) unassigned.push(u.unit); else if (n in earlyLoad) earlyLoad[n] += 1;
     });
     return { earlyLoad, unassigned, msg: (hikSyncMsg && hikSyncMsg.text) || '' };
-  });
+  }, RESET);
   console.log('\n\x1b[1mAll 12 rooms asked for in the morning, 3 cleaners, round of ' + CAP + '\x1b[0m');
   console.log('    early each  : ' + JSON.stringify(flood.earlyLoad));
   console.log('    ' + flood.msg);
-  check('every room is still handed out when there are more early rooms than the crew can hold',
-    flood.unassigned.length === 0, 'unassigned: ' + flood.unassigned.join(', '));
   const fv = Object.values(flood.earlyLoad);
-  check('the surplus over the round is shared out evenly, not piled on the first arrival',
-    Math.max(...fv) - Math.min(...fv) <= 1, JSON.stringify(flood.earlyLoad));
-  check('the hand-out says the crew is over its round', /over the \d+-a-piece round/.test(flood.msg), flood.msg);
+  check('nobody goes over their round however many morning rooms there are',
+    Math.max(...fv) <= CAP, JSON.stringify(flood.earlyLoad));
+  check('the crew take a full round each', fv.every((n) => n === CAP), JSON.stringify(flood.earlyLoad));
+  check('the rest are left for the next arrivals rather than piled on somebody',
+    flood.unassigned.length === 12 - fv.length * CAP,
+    flood.unassigned.length + ' left: ' + flood.unassigned.join(', '));
+  check('the hand-out says what it held back', /left for the next arrivals/.test(flood.msg), flood.msg);
 
   // A ROOM TIED TO ONE PERSON IS THEIRS. Even when it is an early room, even when the
   // person is a leader already holding a full round.
-  const pinned = await page.evaluate(async () => {
+  const pinned = await page.evaluate(async (reset) => {
     (state.servicedUnits || []).forEach((u) => { u.preferEarly = u.unit === '101'; u.preferLate = false; u.usualTo = null; });
     const one = (state.servicedUnits || []).find((u) => u.unit === '101');
     one.usualTo = 'p3';                       // Hodan — the LAST person to badge in
     const lead = (state.staff || []).find((p) => p.id === 'p3');
     lead.isLeader = true;                     // and a leader, so the 4-room cap applies
-    state.autoAssignedFor = null;
+    eval(reset);
     maybeAutoAssign(); render();
     await new Promise((r) => setTimeout(r, 250));
     const nameOf = (id) => { const p = (state.staff || []).find((x) => x.id === id); return p ? p.name.split(' ')[0] : null; };
     return { who: nameOf(one.assignedTo), msg: (hikSyncMsg && hikSyncMsg.text) || '' };
-  });
+  }, RESET);
   check('a room tied to one cleaner goes to them even when it is an early room',
     pinned.who === 'Hodan', '101 -> ' + pinned.who + ' (tied to Hodan, who badged in last)');
 

@@ -17,6 +17,12 @@ const ROOT = path.join(__dirname, '..');
 const SUPA_HOST = 'issnrivggzkhrcjfhzit.supabase.co';
 const key = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 const TODAY = key(new Date()), YESTERDAY = key(new Date(Date.now() - 864e5));
+// THE WORK DAY, NOT THE CALENDAR DAY. The app's day runs from 3am, so a test started
+// at half past midnight has a work day of YESTERDAY — and a room stamped "cleaned
+// yesterday" by the calendar reads as cleaned today and is not due. Everything the
+// fixtures date is dated from the work day.
+const WORK_TODAY = (() => { const d = new Date(); if (d.getHours() < 3) d.setDate(d.getDate() - 1); return key(d); })();
+const DAY_BEFORE = (() => { const d = new Date(); d.setDate(d.getDate() - (d.getHours() < 3 ? 2 : 1)); return key(d); })();
 const SESSION = { access_token: 't', token_type: 'bearer', expires_in: 3600, expires_at: Math.floor(Date.now() / 1e3) + 3600, refresh_token: 'r', user: { id: 'u1', email: 'a@b.c', aud: 'authenticated', role: 'authenticated' } };
 
 // Five cleaners. Hodan leads (capped at 4 rooms, owed 2 early ones). Amina owns
@@ -39,7 +45,7 @@ const TEAMS = [ { name: 'Team A', color: '#0284c7', floors: [] }, { name: 'Team 
 //   104 is pinned to Fatima      -> must never move
 //   201 asks for the morning     -> early round
 //   301 was planned last night for Zahra -> the plan is the decision
-const U = (n, extra) => Object.assign({ id: 'u' + n, unit: String(n), type: 'building', freq: 'daily', lastCleaned: YESTERDAY, assignedTo: null, usualTo: null }, extra || {});
+const U = (n, extra) => Object.assign({ id: 'u' + n, unit: String(n), type: 'building', freq: 'daily', lastCleaned: DAY_BEFORE, assignedTo: null, usualTo: null }, extra || {});
 const UNITS = [
   U(101), U(102), U(103), U(104, { usualTo: 'p3' }),
   U(201, { preferEarly: true }), U(202), U(203), U(204),
@@ -48,13 +54,13 @@ const UNITS = [
 const APP_STATE = {
   staff: STAFF, teams: TEAMS, servicedUnits: UNITS, floors: 11,
   completions: {}, assignConfirmed: {}, manualArrivals: {}, attendance: {},
-  plans: { [TODAY]: { 'unit:u301': { kind: 'unit', refId: 'u301', label: '301', assignedTo: 'p4' } } },
+  plans: { [WORK_TODAY]: { 'unit:u301': { kind: 'unit', refId: 'u301', label: '301', assignedTo: 'p4' } } },
 };
 
 // The Hik Time Card fills in through the morning; the test pushes rows into it.
 let EVENTS = [];
 const eventsFor = (url) => { const m = decodeURIComponent(url).match(/event_time=like\.(\d{4}-\d{2}-\d{2})/); return m ? EVENTS.filter((e) => e.event_time.startsWith(m[1])) : EVENTS; };
-const badge = (name, hhmm) => EVENTS.push({ person_name: name, person_code: 'c' + name.length, event_time: TODAY + ' ' + hhmm + ':00' });
+const badge = (name, hhmm) => EVENTS.push({ person_name: name, person_code: 'c' + name.length, event_time: WORK_TODAY + ' ' + hhmm + ':00' });
 
 function serve() {
   return new Promise((r) => {

@@ -1482,6 +1482,14 @@ function applyRemote(saved) {
     state.autoAssignOnce = '2026-08-22';
     if (state.autoAssign === false) { delete state.autoAssign; markDirty(); }
   }
+  // THE MORNING ROUND IS TWO ROOMS, NOT THREE. Three was a guess and it was already
+  // saved into the settings by the time the office said so, where a new default cannot
+  // reach it. Same one-off treatment: set once, recorded, and changeable in Settings
+  // afterwards like any other setting.
+  if (!TV_MODE && !state.earlyCapOnce) {
+    state.earlyCapOnce = '2026-08-23';
+    if (state.earlyCap !== EARLY_CAP_DEFAULT) { state.earlyCap = EARLY_CAP_DEFAULT; markDirty(); }
+  }
   state.plans = mergedPlans;
   state.planSeeded = mergedSeeded;
   state.removedUnits = gone;
@@ -1919,7 +1927,10 @@ const onRollCall = (u) => OFF_ROLL_CALL_TYPES.indexOf(unitType(u)) < 0
 // How many rooms the customer asked a morning time for one cleaner is given before
 // the next person in starts taking them. The building has more early rooms than
 // cleaners, so without a limit the first arrival would be handed the lot.
-const EARLY_CAP_DEFAULT = 3;
+// TWO EACH. The morning rooms go round the crew two at a time: the first person in
+// takes two, the next person in takes the next two, and so on as they badge in. Three
+// was a guess; two is what the office asked for, having watched it happen.
+const EARLY_CAP_DEFAULT = 2;
 const earlyCap = () => Math.max(1, Number(state.earlyCap) || EARLY_CAP_DEFAULT);
 function toggleRollCallType(typeKey) {
   if (OFF_ROLL_CALL_TYPES.indexOf(typeKey) >= 0) return;   // never on the roll call — see onRollCall
@@ -2741,7 +2752,16 @@ function applyPlannedAssignments() {
   (state.staff || []).forEach((s) => { staffById[s.id] = s; });
   state.planCarried = state.planCarried || {};
 
-  Object.keys(plan).forEach((k) => {
+  // Rooms tied to somebody are carried FIRST, so their pins fill their morning round
+  // before any ordinary asked-for room is considered for them. Carried in plan order,
+  // a pinned room could arrive third and push them past the round.
+  const planKeys = Object.keys(plan).sort((a, b) => {
+    const ua = unitById[plan[a].refId], ub = unitById[plan[b].refId];
+    const pa = (ua && ua.usualTo && ua.usualTo === plan[a].assignedTo) ? 0 : 1;
+    const pb = (ub && ub.usualTo && ub.usualTo === plan[b].assignedTo) ? 0 : 1;
+    return pa - pb;
+  });
+  planKeys.forEach((k) => {
     const j = plan[k];
     if (j.kind !== 'unit' || !j.assignedTo) return;
     const u = unitById[j.refId];
@@ -2776,6 +2796,15 @@ function applyPlannedAssignments() {
     // hand the room to somebody else on the very morning after it was pinned. The
     // room is left for the deal, which gives it to the person it belongs to.
     if (u.usualTo && u.usualTo !== j.assignedTo) return;
+    // THE MORNING ROUND IS THE LAST WORD ON THE MORNING ROUND. A plan already drawn up
+    // and saved keeps whatever it said, and it was written before the round existed —
+    // so a cleaner named on four asked-for rooms had all four carried onto the board and
+    // the cap never got a look in. Their own pinned rooms count first and are never
+    // refused; beyond that, an asked-for room past the round goes back to the deal and
+    // is shared with whoever else is in. Nothing is lost — it is handed out this morning
+    // either way, just not all to one person.
+    if (timeSlot(u) === 'early' && u.usualTo !== j.assignedTo
+        && (out.slotLoad.early[j.assignedTo] || 0) >= earlyCap()) return;
     if (u.assignedTo !== j.assignedTo) out.carried += 1;
     u.assignedTo = j.assignedTo;
     // Planned the night before is a decision, not a suggestion awaiting a yes/no.
@@ -3025,8 +3054,34 @@ function runAutoAssign(rooms, people, inIds, load, slotSeed, silent) {
   const isLeader = (id) => !!(staffById[id] && staffById[id].isLeader);
   const capOf = (id) => isLeader(id) ? LEADER_ROOMS : Infinity;
   const underCap = (id) => (load[id] || 0) < capOf(id);
+  // Seeded with any asked-for rooms already carried in from the plan, so a partial
+  // deal doesn't hand somebody a second helping of the early round.
+  const slotLoad = { early: {}, late: {} };
+  people.forEach((p) => {
+    slotLoad.early[p.id] = (slotSeed && slotSeed.early && slotSeed.early[p.id]) || 0;
+    slotLoad.late[p.id] = (slotSeed && slotSeed.late && slotSeed.late[p.id]) || 0;
+  });
+  // THE EARLY CAP IS HARD. Every other limit here bends when nothing else will do,
+  // because a room still has to be cleaned — but the whole point of the morning round
+  // is that one person cannot physically finish six of them before lunch, so handing
+  // them over anyway is not a rescue, it is the failure. At 06:15 with one leader in,
+  // a soft cap gave that one person every asked-for room in the building.
+  // A room nobody can take stays free instead. The morning re-deals each time somebody
+  // new badges in, so it is picked up by the next arrival rather than lost — and until
+  // then it sits on the board as still to hand out, which is the truth.
+  const earlyFull = (id) => (slotLoad.early[id] || 0) >= EARLY_CAP;
+  const overEarly = (u, id) => timeSlot(u) === 'early' && earlyFull(id);
+  // Keep the count straight wherever a room is given out. Only the first pass used to
+  // touch slotLoad, so a morning room handed over by any later pass was invisible to
+  // the cap and somebody could quietly end up holding five.
+  const place = (u, id) => {
+    u.assignedTo = id;
+    load[id] = (load[id] || 0) + 1;
+    const sl = timeSlot(u);
+    if (sl !== 'any') slotLoad[sl][id] = (slotLoad[sl][id] || 0) + 1;
+  };
   const ableFor = (u) => {
-    const all = order.filter((id) => canCleanUnit(staffById[id], u));
+    const all = order.filter((id) => canCleanUnit(staffById[id], u) && !overEarly(u, id));
     const spare = all.filter(underCap);
     return spare.length ? spare : all;      // nobody spare — the room still gets cleaned
   };
@@ -3049,56 +3104,58 @@ function runAutoAssign(rooms, people, inIds, load, slotSeed, silent) {
   // wins, and arrival order only breaks the tie. The earliest in still get the first
   // ones, but once everyone has had one it comes round again, and everybody ends up
   // with a mixture of asked-for and ordinary rooms rather than one lopsided round.
-  const slotLoad = { early: {}, late: {} };
-  people.forEach((p) => {
-    // Seeded with any asked-for rooms already carried in from the plan, so a partial
-    // deal doesn't hand somebody a second helping of the early round.
-    slotLoad.early[p.id] = (slotSeed && slotSeed.early && slotSeed.early[p.id]) || 0;
-    slotLoad.late[p.id] = (slotSeed && slotSeed.late && slotSeed.late[p.id]) || 0;
-  });
   const spreadSlot = (slot) => {
     // Only the morning round is filled earliest-in first. An afternoon room has no
     // reason to prefer whoever badged in at dawn, so those stay shared out evenly.
     const byArrival = slot === 'early';
     const full = (id) => slotLoad[slot][id] >= EARLY_CAP;
     rooms.filter((u) => !u.assignedTo && timeSlot(u) === slot).forEach((u) => {
-      // A ROOM WITH A PERMANENT CLEANER IS THEIRS, WHATEVER TIME IT IS ASKED FOR. This
-      // pass runs first so the morning round can be spread, and it used to deal pinned
-      // rooms out with the rest — the pin was not looked at until the pass after, by
-      // which time the room was gone. Tying a room to one person has to mean it, or
-      // there is no point in the setting.
-      if (u.usualTo && inIds.has(u.usualTo) && canCleanUnit(staffById[u.usualTo], u)) {
-        u.assignedTo = u.usualTo; load[u.usualTo]++; slotLoad[slot][u.usualTo]++;
-        return;
-      }
       // A leader still short of their two early rooms takes the next one going. Every
       // early room is dealt in this pass, so it is the only place the quota can be met.
       const owed = (id) => (slot === 'early' && isLeader(id) && slotLoad.early[id] < LEADER_EARLY) ? 0 : 1;
+      // MORE EARLY ROOMS THAN THE CREW CAN HOLD IS THE NORMAL MORNING, not an error.
+      // ableFor has already dropped anyone at their round, so what is left here is
+      // people who can still take one; when that is nobody the room stays free for
+      // the next person through the door.
       const pick = ableFor(u).sort((a, b) =>
         (owed(a) - owed(b))                               // a leader owed their early rooms first
         || (byArrival ? (full(a) ? 1 : 0) - (full(b) ? 1 : 0) : 0)   // anyone still under their round wins
-        // MORE EARLY ROOMS THAN THE CREW CAN HOLD IS THE NORMAL MORNING, not an error:
-        // once everybody is at the cap the surplus is shared out evenly rather than
-        // piled on the first arrival or left with no name against it at all.
         || ((!byArrival || (full(a) && full(b))) ? (slotLoad[slot][a] - slotLoad[slot][b]) : 0)
         || (byArrival ? (order.indexOf(a) - order.indexOf(b)) : 0)   // else whoever got here first
         || (load[a] - load[b])                            // then whoever has least overall
         || (repeats(a, u) - repeats(b, u))                // then not the same person as last time
         || (order.indexOf(a) - order.indexOf(b)))[0];     // then whoever got here first
-      if (pick) { u.assignedTo = pick; load[pick]++; slotLoad[slot][pick]++; }
+      if (pick) place(u, pick);
     });
   };
+  // PASS 0: ROOMS TIED TO ONE CLEANER, BEFORE ANYTHING ELSE IS DEALT. Tying a room to
+  // somebody is the office deciding, so it is settled before the app starts making
+  // choices of its own — but the ORDER also decides whether the morning round holds.
+  // Pinned rooms used to be handed out inside the early pass, as the loop reached them:
+  // a cleaner with two early rooms tied to them had already been dealt a full round of
+  // ordinary morning rooms by then, and the pins landed on top. First in at 06:05 meant
+  // five asked-for rooms, which is exactly the pile-up the round exists to prevent.
+  // Counted first, their pins ARE their round.
+  let pinnedFirst = 0;
+  rooms.forEach((u) => {
+    if (u.assignedTo || !u.usualTo) return;
+    if (!inIds.has(u.usualTo) || !canCleanUnit(staffById[u.usualTo], u)) return;
+    place(u, u.usualTo); pinnedFirst += 1;
+  });
   spreadSlot('early');
   spreadSlot('late');
   // Pass 2: remaining rooms keep their usual cleaner if that person clocked in.
-  let kept = 0;
+  let kept = pinnedFirst;
   rooms.forEach((u) => {
     // No cap check. A leader at four rooms still gets the room that is tied to them:
     // the four-room limit is the app's own rule of thumb, the pin is somebody in the
     // office deciding that this room is that person's. The decision wins, and the
     // leader-rule warning below says so by name rather than quietly moving the room.
+    // The early cap is not checked here on purpose: tying a room to somebody is the
+    // office saying THIS person cleans it, and a rule of thumb does not overrule that.
+    // It is counted, though, so their next room goes to somebody else.
     if (!u.assignedTo && u.usualTo && inIds.has(u.usualTo) && canCleanUnit(staffById[u.usualTo], u)) {
-      u.assignedTo = u.usualTo; load[u.usualTo]++; kept++;
+      place(u, u.usualTo); kept++;
     }
   });
   // Pass 3: keep a room with whoever owns its floor, if they clocked in. Floors are
@@ -3108,8 +3165,9 @@ function runAutoAssign(rooms, people, inIds, load, slotSeed, silent) {
   rooms.forEach((u) => {
     if (u.assignedTo) return;
     const owner = ownerOfFloor(floorOfUnit(u.unit));
-    if (owner && inIds.has(owner.id) && canCleanUnit(owner, u) && underCap(owner.id)) {
-      u.assignedTo = owner.id; load[owner.id]++; onFloor++;
+    if (owner && inIds.has(owner.id) && canCleanUnit(owner, u) && underCap(owner.id)
+        && !overEarly(u, owner.id)) {
+      place(u, owner.id); onFloor++;
     }
   });
   // Pass 4: rooms on a floor a TEAM owns go to that team, spread across whichever
@@ -3120,7 +3178,8 @@ function runAutoAssign(rooms, people, inIds, load, slotSeed, silent) {
     if (u.assignedTo) return;
     const t = teamOfFloor(floorOfUnit(u.unit));
     if (!t) return;
-    const allMates = teamMembers(t.name).filter((p) => inIds.has(p.id) && canCleanUnit(p, u));
+    const allMates = teamMembers(t.name)
+      .filter((p) => inIds.has(p.id) && canCleanUnit(p, u) && !overEarly(u, p.id));
     const spareMates = allMates.filter((p) => underCap(p.id));
     const mates = spareMates.length ? spareMates : allMates;
     if (!mates.length) return;                    // nobody from that team in today who can take it
@@ -3128,13 +3187,15 @@ function runAutoAssign(rooms, people, inIds, load, slotSeed, silent) {
       ((load[a.id] || 0) - (load[b.id] || 0))
       || (repeats(a.id, u) - repeats(b.id, u))
       || (order.indexOf(a.id) - order.indexOf(b.id)))[0];
-    u.assignedTo = pick.id; load[pick.id]++; onTeam++;
+    place(u, pick.id); onTeam++;
   });
   // Pass 5: whatever is left goes to whoever's carrying the fewest (earliest breaks ties).
-  let unstaffed = 0;
+  let unstaffed = 0, waitingEarly = 0;
   rooms.filter((u) => !u.assignedTo).forEach((u) => {
     const pick = lightestFor(u);
-    if (pick) { u.assignedTo = pick; load[pick]++; } else unstaffed++;   // nobody in today is cleared for it
+    if (pick) place(u, pick);
+    else if (timeSlot(u) === 'early') waitingEarly += 1;   // everybody in is holding a full round
+    else unstaffed++;                                      // nobody in today is cleared for it
   });
   // Pass 6: even it out. Keeping a cleaner on their own floor or inside their team's
   // zone saves a lot of walking, but those are preferences, not promises — left to
@@ -3187,10 +3248,13 @@ function runAutoAssign(rooms, people, inIds, load, slotSeed, silent) {
       for (const lo of ranked) {
         if (load[hi] - load[lo] <= 1) break;
         if (!underCap(lo)) continue;   // never level a room ONTO a leader who is full
-        const cands = rooms.filter((u) => u.assignedTo === hi && pass(u) && canCleanUnit(staffById[lo], u));
+        const cands = rooms.filter((u) => u.assignedTo === hi && pass(u)
+          && canCleanUnit(staffById[lo], u) && !overEarly(u, lo));
         // Of the rooms that could move, shift one this person didn't clean last time.
         const move = cands.find((u) => !repeats(lo, u)) || cands[0];
         if (!move) continue;
+        const ms = timeSlot(move);
+        if (ms !== 'any') { slotLoad[ms][hi] -= 1; slotLoad[ms][lo] = (slotLoad[ms][lo] || 0) + 1; }
         move.assignedTo = lo; load[hi] -= 1; load[lo] += 1; moved += 1;
         done = true; break;
       }
@@ -3201,12 +3265,19 @@ function runAutoAssign(rooms, people, inIds, load, slotSeed, silent) {
 
   const notes = [];
   if (moved) notes.push(`${moved} moved to even it out`);
-  // A crew over the early cap is not a fault in the deal — there were more asked-for
-  // rooms than the people in could hold. Say it, so the office can move one or bring
-  // somebody in rather than wondering why one person has four mornings.
+  // More asked-for rooms than the crew in can hold is the normal early morning, not a
+  // fault. The rooms are not lost — the next person through the door picks them up —
+  // but the office has to be able to see that is what happened.
+  if (waitingEarly) {
+    notes.push(`${waitingEarly} morning room${waitingEarly === 1 ? '' : 's'} left for the next arrivals — `
+      + `everyone in is holding their ${EARLY_CAP}`);
+  }
+  // A pin can still put somebody over their round, because the office said so. Name it
+  // rather than leaving them to wonder why one person has four mornings.
   {
-    const over = order.reduce((n, id) => n + Math.max(0, (slotLoad.early[id] || 0) - EARLY_CAP), 0);
-    if (over) notes.push(`${over} early room${over === 1 ? '' : 's'} over the ${EARLY_CAP}-a-piece round — more asked-for rooms than the crew in can hold`);
+    const over = order.filter((id) => (slotLoad.early[id] || 0) > EARLY_CAP)
+      .map((id) => String((staffById[id] || {}).name || '').split(' ')[0]);
+    if (over.length) notes.push(`${over.join(', ')} over the ${EARLY_CAP}-a-piece round on rooms tied to them`);
   }
   // Pinned rooms do not move, so the split can end lopsided and the office needs to
   // know it did — a silent gap reads as an even morning that simply went wrong.
@@ -3307,7 +3378,12 @@ function fmtEventTime(v) {
 // Load arrivals for the selected day (defaults to today), matched to staff by name.
 async function loadHikArrivals() {
   if (!db) return;
-  const res = await arrivalsForDay(selectedDay || todayKey());
+  // THE WORK DAY. Who is on the round is a work-day question like every other one here,
+  // and the work day does not roll over until 3am — so between midnight and 3am asking
+  // for the calendar day asks about a morning nobody has badged in for yet. The roll
+  // call emptied itself, and with nobody in, the hand-out had nobody to give rooms to.
+  // Outside that window the two are the same date.
+  const res = await arrivalsForDay(selectedDay || workToday());
   if (!res) return;               // read failed → keep the arrivals we already had
   hikArrivals = res.arrivals; hikUnknown = res.unknown; hikOther = res.other;
   hikLastPull = new Date();       // an empty roll call means "checked, nobody in" — not "no idea"
@@ -3473,7 +3549,10 @@ function mergeManualArrivals(day, arrivals) {
   }
 }
 function addManualArrival(staffId) {
-  const day = selectedDay || todayKey();
+  // The work day, like the roll call that reads it back. Filed under the calendar day,
+  // somebody added by hand between midnight and 3am was written to a day the roll call
+  // was not looking at, and simply never appeared.
+  const day = selectedDay || workToday();
   if (!state.manualArrivals) state.manualArrivals = {};
   if (!state.manualArrivals[day]) state.manualArrivals[day] = {};
   const now = new Date();
@@ -3484,7 +3563,7 @@ function addManualArrival(staffId) {
   save(); loadHikArrivals().then(() => { maybeAutoAssign(); render(); });
 }
 function removeManualArrival(staffId) {
-  const day = selectedDay || todayKey();
+  const day = selectedDay || workToday();
   if (state.manualArrivals && state.manualArrivals[day]) { delete state.manualArrivals[day][staffId]; delete hikArrivals[staffId]; }
   // Taking somebody back off means they are not here after all, so their rooms are
   // nobody's. Left on them they keep a name against them and are quietly never done.
@@ -4817,14 +4896,33 @@ function autoPlanDay(day) {
   const LEADER_ROOMS = 4, LEADER_EARLY = 2;
   const isLeader = (id) => !!(staffById[id] && staffById[id].isLeader);
   const underCap = (id) => (load[id] || 0) < (isLeader(id) ? LEADER_ROOMS : Infinity);
+  // THE MORNING ROUND IS CAPPED HERE TOO, or the cap does not exist. The morning
+  // hand-out honours the plan — a planned room goes to the person the plan names —
+  // so a plan that piled four asked-for rooms on one cleaner handed that straight
+  // through, cap and all. Which is what happened: the plan gave Mahad Abdi two pinned
+  // morning rooms plus two more, and the morning dealt it out exactly as written.
+  const EARLY_CAP = earlyCap();
+  const overEarly = (u, id) => timeSlot(u) === 'early' && (slotLoad.early[id] || 0) >= EARLY_CAP;
   const ableFor = (u) => {
-    const all = order.filter((id) => canCleanUnit(staffById[id], u));
+    const all = order.filter((id) => canCleanUnit(staffById[id], u) && !overEarly(u, id));
     const spare = all.filter(underCap);
     return spare.length ? spare : all;
   };
   const repeats = (id, u) => (u.lastCleanedBy && id === u.lastCleanedBy) ? 1 : 0;
 
   keys.forEach((k) => { plan[k].assignedTo = null; });
+  // ROOMS TIED TO ONE CLEANER FIRST, so their pins count towards the round before any
+  // ordinary morning room is dealt. Otherwise somebody with two pinned early rooms is
+  // dealt a full round on top of them and starts the day holding four.
+  keys.forEach((k) => {
+    const u = roomOf(k);
+    if (!u || !u.usualTo || plan[k].assignedTo) return;
+    if (!staffById[u.usualTo] || !canCleanUnit(staffById[u.usualTo], u)) return;
+    plan[k].assignedTo = u.usualTo;
+    load[u.usualTo] += 1;
+    const sl = timeSlot(u);
+    if (sl !== 'any') slotLoad[sl][u.usualTo] += 1;
+  });
   const deal = (slot) => {
     keys.filter((k) => !plan[k].assignedTo && (slot ? timeSlot(roomOf(k)) === slot : true)).forEach((k) => {
       const u = roomOf(k);
@@ -4884,7 +4982,13 @@ function seedPlanOnce(day) {
   const added = applySuggestions(day, planningJobsFor(day));
   // Today is the morning's business — the door reader decides who is actually in,
   // and overwriting that from a rota would undo real hand-outs.
-  if (day !== todayKey() && added) autoPlanDay(day);
+  // THE WORK DAY, NOT THE CALENDAR DAY. Every day here is keyed by workToday(), which
+  // does not roll over until 3am — so between midnight and 3am this compared the work
+  // day against tomorrow's date, decided the current morning was "a future day", and
+  // auto-planned it. The whole board was handed out to whoever the rota said, before a
+  // single person had badged in, and the morning then treated all of it as decided.
+  // Anybody opening the app in the small hours saw a day that had dealt itself.
+  if (day !== workToday() && added) autoPlanDay(day);
   save();
   return added;
 }
@@ -5401,7 +5505,15 @@ function setPlanAssignee(day, k, pid) {
 // so planning today changed nothing the crew could see. Anything set on today's
 // plan is written straight onto the room (or area) the roll call reads.
 function mirrorPlanToBoard(day, key, keepBoard) {
-  if (day !== todayKey() && day !== workToday()) return;
+  // THE WORK DAY, AND ONLY THE WORK DAY. This used to accept the calendar day as well,
+  // so that a plan filed after midnight while a round was still running still landed.
+  // The cost was far worse than the fix: between midnight and 3am the calendar day is
+  // TOMORROW's work day, which is a future day and therefore already handed round from
+  // the rota — so opening the app at 1am wrote tomorrow's rota onto tonight's board,
+  // stamped every room as decided, and the morning would not re-deal any of it. The
+  // crew arrived to a board naming people who were not there. Outside that window the
+  // two dates are identical and nothing changes.
+  if (day !== workToday()) return;
   const plan = getPlan(day);
   const keys = key ? [key] : Object.keys(plan);
   keys.forEach((k) => {
@@ -5449,13 +5561,11 @@ function mirrorPlanToBoard(day, key, keepBoard) {
 // the roll call as the app opens, without touching anything already handed out
 // there: a change made on the board is newer than the plan and wins.
 function carryPlanToBoardOnOpen() {
-  // BOTH DAYS, NOT JUST THE CALENDAR ONE. Everything else that asks what the crew is
-  // on today asks workToday(), which between midnight and 3am is still YESTERDAY's
-  // date — a round that runs late is on the day it started. This looked only at the
-  // calendar day, so a plan filed while the round was still going was never carried
-  // onto the board, and the morning opened empty with the plan one tab away. The two
-  // dates are identical outside that window, so in daylight nothing changes.
-  const days = [...new Set([workToday(), todayKey()])];
+  // The day the crew is actually working, which between midnight and 3am is still
+  // yesterday's date — a round that runs late is on the day it started. The calendar
+  // day is deliberately NOT included: in that window it is tomorrow's work day, and
+  // tomorrow has already been handed round from the rota. See mirrorPlanToBoard.
+  const days = [workToday()];
   if (!state.plans || !days.some((d) => state.plans[d])) return 0;
   const before = (state.servicedUnits || []).filter((u) => u.assignedTo).length;
   days.forEach((d) => { if (state.plans[d]) mirrorPlanToBoard(d, null, true); });
