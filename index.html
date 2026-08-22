@@ -1222,6 +1222,7 @@ function finalizeState() {
   if (!Array.isArray(state.teams)) state.teams = DEFAULT_TEAMS.map(t => ({ ...t }));
   state.teams.sort((a, b) => String(a.name).localeCompare(String(b.name), undefined, { numeric: true, sensitivity: 'base' }));
   if (typeof state.floors !== 'number' || state.floors < 1) state.floors = DEFAULT_FLOORS;
+  if (typeof state.earlyCap !== 'number' || state.earlyCap < 1) state.earlyCap = EARLY_CAP_DEFAULT;
   if (!state.plans || typeof state.plans !== 'object') state.plans = {};
   if (!state.planSeeded || typeof state.planSeeded !== 'object') state.planSeeded = {};
   if (!state.planDropped || typeof state.planDropped !== 'object') state.planDropped = {};
@@ -1815,6 +1816,12 @@ function cycleStatus(pid) {
   state.attendance[pid] = next;
 
   if (next === 'noshow' || next === 'sick') {
+    // Their rooms are nobody's now. Left on them they keep a name against them and are
+    // quietly never done — the same reason taking a manual arrival back off releases
+    // them. Anything they already finished stays theirs.
+    (state.servicedUnits || []).forEach((u) => {
+      if (u.assignedTo === pid && !cleanedToday(u)) { u.assignedTo = null; delete state.assignConfirmed[u.id]; }
+    });
     // Does this person own any serviced units (via their floors)?
     const affected = unitsOwnedBy(pid);
     if (affected.length) {
@@ -1831,6 +1838,9 @@ function cycleStatus(pid) {
     }
     if (state.pendingCover && state.pendingCover.absentId === pid) state.pendingCover = null;
   }
+  // Somebody leaving, or coming back, is a different crew — share the morning out
+  // again over the people who are actually here rather than waiting for the poll.
+  maybeAutoAssign();
   save(); render();
 }
 // Apply the confirmed cover: all the absent person's units -> chosen covererer
@@ -1885,8 +1895,23 @@ const UNIT_TYPES = {
 const UNIT_TYPE_ORDER = ['airbnb', 'office', 'building'];
 // Which kinds of room the morning roll call is about. Some kinds are run as a
 // separate operation and only clutter it. No list set = all of them.
-const onRollCall = (u) => !Array.isArray(state.rollCallTypes) || state.rollCallTypes.includes(unitType(u));
+// AIRBNB IS NEVER ON THE ROLL CALL. It is a separate job: cleaned after the offices,
+// by two people, and the office picks which flats and who does them — turnovers depend
+// on who has checked out, which the app has no way of knowing. It was kept off by a
+// setting, which is a switch somebody can flip by accident (or a fresh device can
+// default differently) and then the morning quietly hands out twelve flats nobody
+// asked for. It is a rule, so it lives in the code. The Airbnb tab still has its own
+// list, its own schedule and its own hand-out button — that is where they are picked.
+const OFF_ROLL_CALL_TYPES = ['airbnb'];
+const onRollCall = (u) => OFF_ROLL_CALL_TYPES.indexOf(unitType(u)) < 0
+  && (!Array.isArray(state.rollCallTypes) || state.rollCallTypes.includes(unitType(u)));
+// How many rooms the customer asked a morning time for one cleaner is given before
+// the next person in starts taking them. The building has more early rooms than
+// cleaners, so without a limit the first arrival would be handed the lot.
+const EARLY_CAP_DEFAULT = 3;
+const earlyCap = () => Math.max(1, Number(state.earlyCap) || EARLY_CAP_DEFAULT);
 function toggleRollCallType(typeKey) {
+  if (OFF_ROLL_CALL_TYPES.indexOf(typeKey) >= 0) return;   // never on the roll call — see onRollCall
   const cur = Array.isArray(state.rollCallTypes) ? state.rollCallTypes.slice() : UNIT_TYPE_ORDER.slice();
   const next = cur.includes(typeKey) ? cur.filter((k) => k !== typeKey) : cur.concat(typeKey);
   if (!next.length) return;               // roll call with nothing on it is not a state worth having
@@ -1944,6 +1969,7 @@ function toggleUnitDay(id, dow) {
   if (at >= 0) cur.splice(at, 1); else cur.push(dow);
   cur.sort((a, b) => a - b);
   u.days = cur.length ? cur : null;
+  u.daysAuto = false;              // typed by hand — the levelling pass leaves it alone
   save(); render();
 }
 function clearUnitDays(id) {
@@ -1998,7 +2024,7 @@ function setUnitsDaysBulk(ids, days, groupLabel) {
       ? `${groupLabel} only. They come round on those days from now on. Any room can still be changed on its own.`
       : `They go back to coming round on their frequency, counted from the last clean.`,
     () => {
-      list.forEach((u) => { u.days = what ? days.slice() : null; });
+      list.forEach((u) => { u.days = what ? days.slice() : null; u.daysAuto = false; });
       save(); render();
     },
     what ? 'Set days' : 'Clear days',
@@ -2018,7 +2044,16 @@ function setUnitsDaysBulk(ids, days, groupLabel) {
 // sets between them cover the week exactly once, so a room is on one or the other and
 // the estate splits evenly. Written Saturday-first because that is the order the week
 // is worked in — the days themselves are unchanged, so nothing already pinned moves.
-const EOD_SETS = [[6, 1, 3, 5], [0, 2, 4]];   // Sat/Mon/Wed/Fri and Sun/Tue/Thu
+// FRIDAY IS PICKED BY HAND. There are fewer cleaners in on a Friday, so a Friday
+// carrying a full every-other-day round cannot actually be finished — the office
+// chooses what gets done that day themselves. Every other day of the week is
+// automatic. Keeping Friday out of both patterns is what makes that possible: no
+// room is ever put on a Friday by the app, and the day is left clear for the office
+// to fill. It also makes the two patterns the same size — three days each, so they
+// carry the same weight instead of one taking four days' worth of rooms.
+const MANUAL_DAYS = [5];                     // Friday — the office picks these rooms
+const isManualDay = (dow) => MANUAL_DAYS.indexOf(dow) >= 0;
+const EOD_SETS = [[6, 1, 3], [0, 2, 4]];     // Sat/Mon/Wed and Sun/Tue/Thu — Friday left clear
 function suggestDaysFromFreq() {
   const rooms = (state.servicedUnits || []).filter((u) => !u.paused && onRollCall(u));
   const load = [0, 0, 0, 0, 0, 0, 0];
@@ -2070,8 +2105,11 @@ function suggestDaysFromFreq() {
         // Walk the week in working order from Saturday, and consider all seven days.
         // The old loop started at 1 and stopped before 7, so Sunday was never even
         // looked at — a weekly room could not be put on a Sunday however light it was.
-        let best = DOW_PICK_ORDER[0];
-        DOW_PICK_ORDER.forEach((d) => { if (load[d] < load[best]) best = d; });
+        // Never the day the office picks by hand: it is the lightest day on paper,
+        // which is exactly why an automatic weekly would land there and fill it.
+        const pick = DOW_PICK_ORDER.filter((d) => !isManualDay(d));
+        let best = pick[0];
+        pick.forEach((d) => { if (load[d] < load[best]) best = d; });
         days = [best];
       } else {
         // Daily and nightly are due every day, so they cannot drift and pinning them
@@ -2084,6 +2122,172 @@ function suggestDaysFromFreq() {
     });
   return { proposals, skipped, load };
 }
+// ============================================================
+// LEVEL THE EVERY-OTHER-DAY ROOMS ACROSS THE TWO DAY-SETS
+// The whole estate's every-other-day rooms end up on ONE of the two sets, and stay
+// there. That is not a coincidence: the set a room wants depends on the day it was
+// last cleaned, and the crew clean them in one batch on the same morning — so every
+// room asks for the same set, gets it, and the schedule sets solid. On the live
+// building that is 10 rooms on Sat/Mon/Wed/Fri against 1 on Sun/Tue/Thu: three
+// mornings carrying ten extra rooms and three carrying one.
+//
+// The week-levelling pass could not undo it. It gives a room ONE extra clean on the
+// opposite day (u.alsoCleanOn) and expects the room to carry on from there — which is
+// true of a room running on its frequency, but a room pinned to weekdays is its days
+// and nothing else. So the room got its extra clean and went straight back onto the
+// clumped set the next week. Moving the room between the SETS is the only thing that
+// actually changes when it comes round.
+//
+// A move costs at most one off-rhythm clean, once — the same one-off price the week
+// leveller already pays — and after it the room runs every other day for good.
+// Rooms on a set somebody typed themselves are left alone: only the app's own two
+// patterns are re-spread.
+const sameDays = (a, b) => Array.isArray(a) && Array.isArray(b) && a.length === b.length
+  && a.slice().sort((x, y) => x - y).join() === b.slice().sort((x, y) => x - y).join();
+// PATTERNS THE APP USED TO HAND OUT. A room still sitting on one is the app's doing,
+// not the office's, so it is still the app's to move. Without this, changing the
+// patterns strands every room on the old one: it stops matching, gets read as a set
+// somebody typed, and is left where it is for ever — which is exactly what kept seven
+// rooms on Friday after Friday was supposed to be left clear.
+const EOD_LEGACY_SETS = [[6, 1, 3, 5]];      // Sat/Mon/Wed/Fri, from before Friday was hand-picked
+// Which of the app's two patterns a room is on: 0 or 1, -1 for one it used to hand out
+// and no longer does, or null for a set of somebody else's choosing (or none at all),
+// which is a decision and never re-spread.
+const eodSetIndex = (u) => {
+  const d = fixedDays(u);
+  if (!d) return null;
+  for (let i = 0; i < EOD_SETS.length; i += 1) if (sameDays(d, EOD_SETS[i])) return i;
+  for (let i = 0; i < EOD_LEGACY_SETS.length; i += 1) if (sameDays(d, EOD_LEGACY_SETS[i])) return -1;
+  return null;
+};
+function levelEodPlan() {
+  const rooms = (state.servicedUnits || []).filter((u) => !u.paused && onRollCall(u));
+  const load = [0, 0, 0, 0, 0, 0, 0];
+  const movable = [];
+  rooms.forEach((u) => {
+    const days = fixedDays(u);
+    const isEod = (u.freq || 'daily') === 'eod';
+    const idx = eodSetIndex(u);
+    // Every-other-day rooms on one of the app's own two patterns, and ones on no days
+    // at all, are what we have to play with. Everything else — a custom set, a weekly,
+    // a daily that is due whatever we do — is load to work around.
+    // daysAuto === false is a set somebody typed, even if it happens to match one of
+    // ours. Their decision, so it stays where they put it.
+    if (isEod && u.daysAuto !== false && (idx !== null || !days)) { movable.push({ u, at: idx, was: days }); return; }
+    if (days) days.forEach((x) => { load[x] += 1; });
+  });
+  if (!movable.length) return { moves: [], load, before: load.slice() };
+
+  const before = load.slice();
+  movable.forEach((m) => { if (m.was) m.was.forEach((x) => { before[x] += 1; }); });
+
+  // How flat the week is left: worst day first — that is what "too heavy" means to
+  // the crew standing in it — then the shape as a whole.
+  const shapeOf = (t) => [Math.max.apply(null, t), t.reduce((a, b) => a + b * b, 0)];
+  const after = (set) => { const t = load.slice(); set.forEach((x) => { t[x] += 1; }); return shapeOf(t); };
+  const flatter = (a, b) => (a[0] !== b[0]) ? a[0] - b[0] : a[1] - b[1];
+
+  // WHICH ROOMS GO WHERE IS FREE ONCE THE COUNTS ARE DECIDED. Six on each pattern is
+  // six either way, so the choice of WHICH six costs the balance nothing — and it is
+  // worth a lot to the rooms. A room cleaned on Friday is due on Sunday; put it on
+  // Sat/Mon/Wed and its next turn is Monday, three days later, for no gain at all.
+  // So each room's rhythm decides it, and the rooms that care most choose first.
+  //
+  // How far a set puts the room's next clean from the two days it should be.
+  const beat = (u, set) => {
+    const last = lastCleanDate(u);
+    if (!last) return 0;                       // never cleaned — no rhythm to keep
+    for (let i = 1; i <= 7; i += 1) if (set.indexOf(dowOf(shiftDay(last, i))) >= 0) return Math.abs(i - 2);
+    return 0;
+  };
+  // How much this room cares which set it lands on. A room that is due Sunday either
+  // way does not care; one that would be put off until Monday cares a lot.
+  const cares = (u) => Math.abs(beat(u, EOD_SETS[0]) - beat(u, EOD_SETS[1]));
+  movable.sort((a, b) => (cares(b.u) - cares(a.u))
+    || String(a.u.unit).localeCompare(String(b.u.unit), undefined, { numeric: true }));
+  const moves = [];
+  movable.forEach((m) => {
+    const scored = EOD_SETS.map((set, i) => ({ i, set, s: after(set), b: beat(m.u, set) })).sort((a, b) =>
+      flatter(a.s, b.s)
+      // The week's shape first — that is what the crew feel — then the room's own
+      // rhythm, which is free whenever the two sets leave the week equally flat.
+      || (a.b - b.b)
+      // A TIE STAYS PUT. Churning a room between two equally good sets changes when it
+      // is cleaned for no gain at all, and the office has to re-learn the week for it.
+      || ((a.i === m.at ? 0 : 1) - (b.i === m.at ? 0 : 1))
+      || (a.i - b.i));
+    const pick = scored[0];
+    pick.set.forEach((x) => { load[x] += 1; });
+    if (pick.i !== m.at) moves.push({ u: m.u, from: m.at, to: pick.i, days: pick.set.slice() });
+  });
+  // A room sitting on a day the office picks by hand has to come off it whatever the
+  // rest of the week looks like — that day is not the app's to fill, so "it barely
+  // changes the peak" is not a reason to leave it there.
+  const frees = moves.filter((m) => (m.u.days || []).some(isManualDay)).length;
+  return { moves, load, before, frees };
+}
+function applyEodLevel(plan) {
+  plan.moves.forEach((m) => {
+    m.u.days = m.days.slice();
+    // The move is the app's, so it stays the app's to revisit. A set typed by hand is
+    // marked differently and never re-spread — see eodSetIndex.
+    m.u.daysAuto = true;
+  });
+  save();
+}
+// Once a day, with the other automatic tidying, and only while "Keep the week level"
+// is on. A schedule that rearranges itself silently is one nobody trusts, so what
+// moved is kept for the week-ahead panel to say.
+function autoLevelEodDays() {
+  if (TV_MODE) return { moves: 0 };
+  // ITS OWN SWITCH, ON UNLESS SWITCHED OFF. It used to ride on "Keep the week level",
+  // which is off on the live building — so the one pass that clears Friday and splits
+  // the every-other-day rooms never ran. That switch is about granting rooms an EXTRA
+  // clean to flatten a fortnight, which is a different and more intrusive thing than
+  // deciding which two patterns the rooms sit on. Nobody has to turn anything on.
+  if (state.eodSpread === false || state.autoDays === false) return { moves: 0 };
+  if (state.eodLevelledOn === todayKey()) return { moves: 0 };
+  const plan = levelEodPlan();
+  const peakBefore = Math.max.apply(null, plan.before);
+  const peakAfter = Math.max.apply(null, plan.load);
+  // Only worth disturbing the schedule for a real difference — two rooms off the
+  // worst morning. Anything less is churn the office has to re-learn for nothing.
+  if (!plan.moves.length || ((peakBefore - peakAfter) < 2 && !plan.frees)) { state.eodLevelledOn = todayKey(); return { moves: 0 }; }
+  state.eodLevelledOn = todayKey();
+  state.lastEodLevel = {
+    day: todayKey(),
+    moves: plan.moves.length,
+    from: peakBefore,
+    to: peakAfter,
+    rooms: plan.moves.slice(0, 8).map((m) => m.u.unit),
+  };
+  applyEodLevel(plan);
+  return { moves: plan.moves.length };
+}
+function levelEodDaysConfirm() {
+  const plan = levelEodPlan();
+  if (!plan.moves.length) {
+    hikSyncMsg = { text: 'The every-other-day rooms are already spread as evenly as the two patterns allow.' };
+    render(); return;
+  }
+  const weekBefore = DOW_PICK_ORDER.map((d) => DOW_SHORT[d] + ' ' + plan.before[d]).join(', ');
+  const weekAfter = DOW_PICK_ORDER.map((d) => DOW_SHORT[d] + ' ' + plan.load[d]).join(', ');
+  const names = plan.moves.slice(0, 10).map((m) => m.u.unit).join(', ');
+  showConfirm(
+    'Move ' + plan.moves.length + ' room' + (plan.moves.length === 1 ? '' : 's') + ' to the other set of days?',
+    names + (plan.moves.length > 10 ? ' and ' + (plan.moves.length - 10) + ' more' : '') + '.'
+      + '\n\nEvery other day, per day now: ' + weekBefore
+      + '\nAfter this: ' + weekAfter
+      + (plan.frees ? '\n\n' + plan.frees + ' of them come off ' + MANUAL_DAYS.map((d) => DOW_LABEL[d]).join('/')
+          + ', which you pick by hand — nothing automatic is scheduled for that day.' : '')
+      + '\n\nA moved room is cleaned once off its usual rhythm, then runs every other day from its new days. '
+      + 'Rooms on days you set yourself are untouched.',
+    () => { applyEodLevel(plan); hikSyncMsg = { text: plan.moves.length + ' rooms moved — the week is level now.' }; render(); },
+    'Move them',
+    'safe'
+  );
+}
+
 // PUT THE ROOMS ON DAYS WITHOUT BEING ASKED. Working the days out was a button
 // inside a collapsed drawer on the roll call, which meant the schedule went on
 // drifting for anyone who never found it — and a drifting every-other-day group is
@@ -2575,8 +2779,10 @@ function maybeAutoAssign() {
   // person the entire board and left every later arrival with nothing to do — so it
   // deals again each time somebody new badges in, and only the rooms nobody has
   // decided on yet are moved.
+  // Marking somebody away changes the crew as surely as a badge-in does, so it is part
+  // of the key: the morning deals again the moment the office says one of them has gone.
   const inNow = Object.keys(hikArrivals)
-    .filter((id) => (state.staff || []).some((s) => s.id === id)).sort();
+    .filter((id) => (state.staff || []).some((s) => s.id === id) && !isAway(id)).sort();
   if (!inNow.length) return;                                   // nobody in yet — wait
   const forCrew = day + '|' + inNow.join(',');
   if (state.autoAssignedFor === forCrew) return;               // same crew as the last deal
@@ -2710,8 +2916,12 @@ function setUnitUsual(id, pid) {
 // for it, so it must not stop on a confirm nobody is standing in front of, and it
 // must not shout when there is simply nothing to hand out.
 function autoAssignRooms(onlyRooms, loadSeed, slotSeed, silent) {
+  // BADGED IN IS NOT THE SAME AS HERE. Somebody can scan at the door and be sent home
+  // sick an hour later, and the office marks them away — but the hand-out read the
+  // Time Card alone, so it kept dealing rooms to a person who had gone. Those rooms
+  // sat with a name against them all morning and were simply never cleaned.
   const people = Object.keys(hikArrivals)
-    .filter((id) => (state.staff || []).some((s) => s.id === id))
+    .filter((id) => (state.staff || []).some((s) => s.id === id) && !isAway(id))
     .map((id) => ({ id, raw: hikArrivals[id].raw }))
     .sort((a, b) => String(a.raw || '').localeCompare(String(b.raw || '')));   // earliest badge-in first
   if (!people.length) { if (silent) return; hikSyncMsg = { err: true, text: 'No one clocked in to assign rooms to.' }; render(); return; }
@@ -2770,6 +2980,13 @@ function runAutoAssign(rooms, people, inIds, load, slotSeed, silent) {
   // and a leader only goes past four when nobody else in today is cleared for it at
   // all. When that happens the hand-out says so instead of quietly overloading them.
   const LEADER_ROOMS = 4, LEADER_EARLY = 2;
+  // THE EARLY ROUND IS FILLED EARLIEST-IN FIRST, NOT SHARED ROUND. The rooms the
+  // customer asked for in the morning are the ones with a clock on them, so they go
+  // to whoever is already in the building — the 06:30 arrival takes them until they
+  // are holding a full round, and only then does the next person in start on them.
+  // The cap is what stops that becoming a wall: nobody carries more than earlyCap()
+  // asked-for rooms while somebody else in today is still under it.
+  const EARLY_CAP = earlyCap();
   const isLeader = (id) => !!(staffById[id] && staffById[id].isLeader);
   const capOf = (id) => isLeader(id) ? LEADER_ROOMS : Infinity;
   const underCap = (id) => (load[id] || 0) < capOf(id);
@@ -2805,13 +3022,31 @@ function runAutoAssign(rooms, people, inIds, load, slotSeed, silent) {
     slotLoad.late[p.id] = (slotSeed && slotSeed.late && slotSeed.late[p.id]) || 0;
   });
   const spreadSlot = (slot) => {
+    // Only the morning round is filled earliest-in first. An afternoon room has no
+    // reason to prefer whoever badged in at dawn, so those stay shared out evenly.
+    const byArrival = slot === 'early';
+    const full = (id) => slotLoad[slot][id] >= EARLY_CAP;
     rooms.filter((u) => !u.assignedTo && timeSlot(u) === slot).forEach((u) => {
+      // A ROOM WITH A PERMANENT CLEANER IS THEIRS, WHATEVER TIME IT IS ASKED FOR. This
+      // pass runs first so the morning round can be spread, and it used to deal pinned
+      // rooms out with the rest — the pin was not looked at until the pass after, by
+      // which time the room was gone. Tying a room to one person has to mean it, or
+      // there is no point in the setting.
+      if (u.usualTo && inIds.has(u.usualTo) && canCleanUnit(staffById[u.usualTo], u)) {
+        u.assignedTo = u.usualTo; load[u.usualTo]++; slotLoad[slot][u.usualTo]++;
+        return;
+      }
       // A leader still short of their two early rooms takes the next one going. Every
       // early room is dealt in this pass, so it is the only place the quota can be met.
       const owed = (id) => (slot === 'early' && isLeader(id) && slotLoad.early[id] < LEADER_EARLY) ? 0 : 1;
       const pick = ableFor(u).sort((a, b) =>
         (owed(a) - owed(b))                               // a leader owed their early rooms first
-        || (slotLoad[slot][a] - slotLoad[slot][b])        // nobody carries them all
+        || (byArrival ? (full(a) ? 1 : 0) - (full(b) ? 1 : 0) : 0)   // anyone still under their round wins
+        // MORE EARLY ROOMS THAN THE CREW CAN HOLD IS THE NORMAL MORNING, not an error:
+        // once everybody is at the cap the surplus is shared out evenly rather than
+        // piled on the first arrival or left with no name against it at all.
+        || ((!byArrival || (full(a) && full(b))) ? (slotLoad[slot][a] - slotLoad[slot][b]) : 0)
+        || (byArrival ? (order.indexOf(a) - order.indexOf(b)) : 0)   // else whoever got here first
         || (load[a] - load[b])                            // then whoever has least overall
         || (repeats(a, u) - repeats(b, u))                // then not the same person as last time
         || (order.indexOf(a) - order.indexOf(b)))[0];     // then whoever got here first
@@ -2823,8 +3058,11 @@ function runAutoAssign(rooms, people, inIds, load, slotSeed, silent) {
   // Pass 2: remaining rooms keep their usual cleaner if that person clocked in.
   let kept = 0;
   rooms.forEach((u) => {
-    if (!u.assignedTo && u.usualTo && inIds.has(u.usualTo) && canCleanUnit(staffById[u.usualTo], u)
-        && underCap(u.usualTo)) {
+    // No cap check. A leader at four rooms still gets the room that is tied to them:
+    // the four-room limit is the app's own rule of thumb, the pin is somebody in the
+    // office deciding that this room is that person's. The decision wins, and the
+    // leader-rule warning below says so by name rather than quietly moving the room.
+    if (!u.assignedTo && u.usualTo && inIds.has(u.usualTo) && canCleanUnit(staffById[u.usualTo], u)) {
       u.assignedTo = u.usualTo; load[u.usualTo]++; kept++;
     }
   });
@@ -2928,6 +3166,13 @@ function runAutoAssign(rooms, people, inIds, load, slotSeed, silent) {
 
   const notes = [];
   if (moved) notes.push(`${moved} moved to even it out`);
+  // A crew over the early cap is not a fault in the deal — there were more asked-for
+  // rooms than the people in could hold. Say it, so the office can move one or bring
+  // somebody in rather than wondering why one person has four mornings.
+  {
+    const over = order.reduce((n, id) => n + Math.max(0, (slotLoad.early[id] || 0) - EARLY_CAP), 0);
+    if (over) notes.push(`${over} early room${over === 1 ? '' : 's'} over the ${EARLY_CAP}-a-piece round — more asked-for rooms than the crew in can hold`);
+  }
   // Pinned rooms do not move, so the split can end lopsided and the office needs to
   // know it did — a silent gap reads as an even morning that simply went wrong.
   {
@@ -6423,6 +6668,23 @@ function viewRollCall() {
           + `Split so the week comes out even.</div>`));
       }
     }
+    // The every-other-day rooms settle onto one of the two patterns and stay there,
+    // which is what makes three mornings heavy and three light. Only offered while
+    // there is a real difference to be had.
+    if (state.rcSetupOpen) {
+      const ep = levelEodPlan();
+      const peakBefore = Math.max.apply(null, ep.before);
+      const peakAfter = Math.max.apply(null, ep.load);
+      if (ep.moves.length && ((peakBefore - peakAfter) >= 1 || ep.frees)) {
+        const eBtn = el(`<button class="freqmini" style="width:100%;padding:9px;margin-bottom:4px;border-color:#0284c7;color:#0284c7">`
+          + `⚖ Spread ${ep.moves.length} every-other-day room${ep.moves.length === 1 ? '' : 's'} across the week</button>`);
+        eBtn.onclick = () => levelEodDaysConfirm();
+        setupBox.appendChild(eBtn);
+        setupBox.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin:-2px 0 8px">`
+          + (ep.frees ? `${ep.frees} of them come off ${MANUAL_DAYS.map((d) => DOW_LABEL[d]).join('/')}, which you pick yourself. ` : '')
+          + `Worst morning goes from ${peakBefore} to ${peakAfter} of them.</div>`));
+      }
+    }
     // Pinned rooms go back to the same person every morning, so once there are a lot
     // of them the hand-out stops rotating. Only worth mentioning when it's a real share.
     const pinnedCount = (state.servicedUnits || []).filter((u) => onRollCall(u) && u.usualTo).length;
@@ -6945,6 +7207,8 @@ function viewSettings() {
      'Every-other-day and weekly rooms get fixed weekdays, split so no day is heavier. Days you set yourself are never changed.'],
     ['autoBalance', 'Keep the week level',
      'Spreads rooms that fall due together, so the days stop swinging between heavy and empty. Nothing waits longer than its frequency.'],
+    ['eodSpread', 'Split the every-other-day rooms',
+     'Keeps them on two patterns — Sat/Mon/Wed and Sun/Tue/Thu — so the same number falls due each day. Friday is left clear for you to pick.'],
   ].forEach(([k, label, why, defOn]) => {
     // Most of these are on unless switched off; a couple are off unless switched on.
     const offByDefault = defOn === false;
@@ -6960,6 +7224,25 @@ function viewSettings() {
     row.appendChild(b);
     autoBox.appendChild(row);
   });
+  // The early round: how many asked-for mornings one person carries before the next
+  // person in starts on them. There are more early rooms than cleaners, so this is
+  // the number that decides whether the first arrival is loaded up or spread thin.
+  {
+    const cap = earlyCap();
+    const row = el(`<div style="padding:10px 0;border-top:1px solid #e7ecf3"></div>`);
+    row.appendChild(el(`<div style="font-size:14px;font-weight:600;color:#0f1a27">Morning rooms per cleaner</div>`));
+    row.appendChild(el(`<div style="font-size:11px;color:#5f7189;line-height:1.5;margin-top:2px">`
+      + `Rooms the customer asked for in the morning go to whoever badged in first, up to this many each, `
+      + `then the next person in starts on them. Anything over it is shared out evenly.</div>`));
+    const btns = el(`<div style="display:flex;gap:6px;margin-top:8px"></div>`);
+    [2, 3, 4].forEach((n) => {
+      const b = el(`<button class="freqmini ${n === cap ? 'on' : ''}" style="flex:1;padding:9px 4px">${n === cap ? '✓ ' : ''}${n} each</button>`);
+      b.onclick = () => { state.earlyCap = n; save(); render(); };
+      btns.appendChild(b);
+    });
+    row.appendChild(btns);
+    autoBox.appendChild(row);
+  }
   autoBox.appendChild(el(`<div style="font-size:11px;color:#5f7189;line-height:1.5;padding-top:10px;border-top:1px solid #e7ecf3;margin-top:4px">`
     + `<b>Marking rooms cleaned is never automatic</b> — only someone who saw it done can say so.</div>`));
   wrap.appendChild(autoBox);
@@ -6971,13 +7254,21 @@ function viewSettings() {
   rcBox.appendChild(el(`<div style="font-size:13px;color:#5f7189;margin-bottom:10px">Which rooms the morning roll call covers. One switched off keeps its own tab and schedule.</div>`));
   const rcRow = el(`<div style="display:flex;gap:6px"></div>`);
   UNIT_TYPE_ORDER.forEach(tk => {
-    const on = !Array.isArray(state.rollCallTypes) || state.rollCallTypes.includes(tk);
+    // Airbnb is never on the roll call, so it is shown as settled rather than as a
+    // switch that happens to be off — an off switch invites somebody to turn it on.
+    const fixedOff = OFF_ROLL_CALL_TYPES.indexOf(tk) >= 0;
+    const on = !fixedOff && (!Array.isArray(state.rollCallTypes) || state.rollCallTypes.includes(tk));
     const n = (state.servicedUnits || []).filter(u => unitType(u) === tk).length;
-    const b = el(`<button class="freqmini ${on ? 'on' : ''}" style="flex:1;padding:9px 4px">${on ? '✓ ' : ''}${UNIT_TYPES[tk].label}<br><span style="font-weight:500;font-size:10px">${n} rooms</span></button>`);
-    b.onclick = () => toggleRollCallType(tk);
+    const b = el(`<button class="freqmini ${on ? 'on' : ''}" style="flex:1;padding:9px 4px${fixedOff ? ';opacity:.6' : ''}">`
+      + `${on ? '✓ ' : ''}${UNIT_TYPES[tk].label}<br><span style="font-weight:500;font-size:10px">`
+      + `${fixedOff ? 'own tab' : n + ' rooms'}</span></button>`);
+    if (!fixedOff) b.onclick = () => toggleRollCallType(tk);
     rcRow.appendChild(b);
   });
   rcBox.appendChild(rcRow);
+  rcBox.appendChild(el(`<div style="font-size:11px;color:#5f7189;line-height:1.5;margin-top:8px">`
+    + `Airbnb is always a separate job — the office picks the flats and who does them on the Airbnb tab, `
+    + `after the offices are done. It never appears on the morning roll call.</div>`));
   wrap.appendChild(rcBox);
 
   // --- Teams ---
@@ -8765,6 +9056,7 @@ function startDayWatch() {
     if (day !== _plannedForDay) {
       _plannedForDay = day;
       autoPinDaysFromFreq();
+      autoLevelEodDays();     // and undo any clump the pinning has settled into
       planningPass();
       loadHikArrivals().then(() => { maybeAutoAssign(); render(); });
       render();
@@ -8784,6 +9076,9 @@ async function boot() {
   // their days before it runs, not after. It is a property of the rota rather than
   // of who has badged in, so it does not wait for the roll call.
   autoPinDaysFromFreq();
+  // Pinning alone lands the whole estate on one of the two patterns, because they all
+  // ask for the set their last clean points at. This spreads them back out.
+  autoLevelEodDays();
   planningPass();
   loadHikArrivals().then(() => { maybeAutoAssign(); route(); });
   startArrivalPolling();

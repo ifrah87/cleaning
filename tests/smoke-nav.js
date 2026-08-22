@@ -251,8 +251,12 @@ for (const [label,vp] of [['PHONE',{width:420,height:900}],['DESKTOP',{width:144
    freqStick.onList && freqStick.due.slice(1)==='XXXXXX', JSON.stringify(freqStick));
 
  const pinnedDays=await page.evaluate(()=>(state.servicedUnits||[]).filter(u=>u.freq==='eod').map(u=>u.unit+':'+(u.days||[]).join('')));
+ // Sat/Mon/Wed and Sun/Tue/Thu. Friday is the office's own day — they work out who is
+ // in and pick the rooms themselves — so nothing automatic is ever put on it.
  check('every eod room ends up on one of the two weekday sets',
-   pinnedDays.every(x=>/:(6135|024)$/.test(x)), pinnedDays.join(' '));
+   pinnedDays.every(x=>/:(613|024)$/.test(x)), pinnedDays.join(' '));
+ check('and none of them lands on a Friday',
+   pinnedDays.every(x=>x.split(':')[1].indexOf('5')<0), pinnedDays.join(' '));
 
  // --- the whole point: the board re-deals as more people badge in ---
  await page.locator('.nav button').nth(0).click(); await page.waitForTimeout(600);
@@ -268,7 +272,12 @@ for (const [label,vp] of [['PHONE',{width:420,height:900}],['DESKTOP',{width:144
  check('no room is handed to somebody who has not badged in',
    strays.length===0, 'in: '+JSON.stringify(inNow)+' board: '+JSON.stringify(first));
  check('the rooms nobody planned go to the one person who is in',
-   first['101']==='p3'&&first['A1']==='p3', JSON.stringify(first));
+   first['101']==='p3', JSON.stringify(first));
+ // AIRBNB IS A SEPARATE JOB. The flats are done after the offices, by two people, and
+ // the office picks which ones — it depends on who has checked out, which the app has
+ // no way of knowing. So the morning must not hand one out, ever.
+ check('an Airbnb flat is not dealt out with the morning rooms',
+   !first['A1'], 'A1 -> ' + first['A1']);
  // The Friday case: the add list must offer people the rota says are OFF, in their
  // own group, as well as the ones who are simply not in yet.
  const groups=await page.evaluate(()=>{
