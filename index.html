@@ -138,8 +138,9 @@
   .sp-row:last-child { border-bottom: none; }
   .sp-who {
     flex: 0 0 84px; font-size: 13px; font-weight: 800; color: #0f1a27;
-    display: flex; align-items: baseline; gap: 4px;
+    display: flex; align-items: baseline; gap: 4px; flex-wrap: wrap;
   }
+  .sp-with { flex: 1 0 100%; font-size: 10px; font-weight: 700; color: #5f7189; }
   .sp-lead { color: #d97706; font-size: 11px; }
   .sp-n { font-size: 10px; font-weight: 700; color: #5b6a7f; }
   .sp-jobs { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; gap: 3px 4px; }
@@ -3645,6 +3646,22 @@ function teamOfFloor(floor) {
   return getTeams().find(t => (t.floors || []).includes(floor)) || null;
 }
 function teamMembers(name) { return (state.staff || []).filter(p => p.crew === name); }
+// WHO IS WITH THE LEADER. A leader answers for their team and works it with their
+// assistants, but that pairing was readable only on the Team screen — so every other
+// screen named one person and left the office to remember, from memory, who that
+// actually meant on the floor. `present` narrows it to the people who count on the
+// day being looked at: on the morning board an assistant who has not turned up is
+// not with anybody, and printing their name would be a promise the day cannot keep.
+function assistantsFor(p, present) {
+  if (!p || !p.isLeader || !p.crew) return [];
+  return teamMembers(p.crew)
+    .filter((x) => x.id !== p.id && x.isCleaner && !x.isLeader && (!present || present(x)))
+    .sort((a, b) => String(a.name).localeCompare(String(b.name), undefined, { sensitivity: 'base' }));
+}
+const withLabel = (p, present) => {
+  const a = assistantsFor(p, present);
+  return a.length ? 'with ' + a.map((x) => String(x.name).split(' ')[0]).join(', ') : '';
+};
 function setTeamFloors(name, floorsStr) {
   const t = getTeams().find(x => x.name === name);
   if (!t) return;
@@ -5094,9 +5111,15 @@ function planHandoutSheet(day) {
     const list = byPerson[id].slice().sort(byLbl);
     const row = el('<div class="sp-row"></div>');
     const p = staffById[id];
-    row.appendChild(el(`<div class="sp-who">${esc(String(p.name).split(' ')[0])}`
+    const mates = assistantsFor(p, (x) => byPerson[x.id] === undefined)
+      .map((x) => String(x.name).split(' ')[0]);
+    const who = el(`<div class="sp-who">${esc(String(p.name).split(' ')[0])}`
       + `${p.isLeader ? ' <span class="sp-lead">★</span>' : ''}`
-      + `<span class="sp-n">${list.length}</span></div>`));
+      + `<span class="sp-n">${list.length}</span></div>`);
+    // Only assistants who have no rooms of their own on the sheet: one with their own
+    // line is already accounted for, and naming them twice reads as two hand-outs.
+    if (mates.length) who.appendChild(el(`<div class="sp-with">+ ${esc(mates.join(', '))}</div>`));
+    row.appendChild(who);
     row.appendChild(el(`<div class="sp-jobs">${list.map((x) =>
       `<span class="sp-job${x.area ? ' area' : ''}">${esc(x.label)}</span>`).join('')}</div>`));
     wrap.appendChild(row);
@@ -5223,7 +5246,10 @@ function viewPlan() {
       const info = el('<div class="person-info"></div>');
       const lead = (p && p.isLeader) ? ` <span style="color:#d97706;font-size:12px;font-weight:700">★</span>` : '';
       const nameRow = el(`<div style="display:flex;align-items:center;gap:8px"></div>`);
-      nameRow.appendChild(el(`<div class="person-name" style="flex:1">${esc(name)}${lead}</div>`));
+      const withWho = none ? '' : withLabel(p, (x) => worksOnDay(x, day));
+      nameRow.appendChild(el(`<div class="person-name" style="flex:1">${esc(name)}${lead}`
+        + (withWho ? ` <span style="font-size:12px;font-weight:600;color:#5f7189">${esc(withWho)}</span>` : '')
+        + `</div>`));
       // The sick-day button. Without it, moving five rooms means five taps and the
       // plan gets abandoned in favour of improvising the morning.
       if (!none) {
@@ -6522,7 +6548,10 @@ function viewRollCall() {
         const shk = shiftOf(s);
         const shiftBadge = shk !== 'day' ? ` <span style="color:${SHIFTS[shk].color};font-size:11px;font-weight:700">${SHIFTS[shk].icon} ${SHIFTS[shk].label}</span>` : '';
         const nameRow = el(`<div style="display:flex;align-items:center;gap:8px"></div>`);
-        nameRow.appendChild(el(`<div class="person-name" style="flex:1">${esc(s.name)}${lead}${shiftBadge}</div>`));
+        const withWho = withLabel(s, (x) => !!hikArrivals[x.id]);
+        nameRow.appendChild(el(`<div class="person-name" style="flex:1">${esc(s.name)}${lead}${shiftBadge}`
+          + (withWho ? ` <span style="font-size:12px;font-weight:600;color:#5f7189">${esc(withWho)}</span>` : '')
+          + `</div>`));
         if (manual) {
           const rm = el(`<button class="su-rm" style="flex:0 0 auto">✕ Remove</button>`);
           rm.onclick = () => removeManualArrival(s.id);

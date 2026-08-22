@@ -293,12 +293,22 @@ for (const [label,vp] of [['PHONE',{width:420,height:900}],['DESKTOP',{width:144
  check('and goes back to the person the plan named, once they badge in', second['601']==='p2', JSON.stringify(second));
 
  // --- somebody who is down as off, but came in anyway ---
+ // Hodan leads Team B and Zahra is the assistant on it. Until Zahra is in, the
+ // leader is not paired with anybody and must not claim to be.
+ const soloCard=await page.locator('.person', {hasText:'Hodan Omar'}).first().textContent();
+ check('a leader with nobody in alongside them is not paired up',
+   !/with Zahra/.test(soloCard), soloCard.slice(0,80));
+
  await page.evaluate(()=>addManualArrival('p4'));
  await page.waitForTimeout(1500);
  check('adding them by hand puts them on the roll call as in',
    await page.evaluate(()=>!!hikArrivals['p4']), 'in: '+JSON.stringify(await page.evaluate(()=>Object.keys(hikArrivals))));
  const zahraShown=await page.locator('.person-name', {hasText:'Zahra Ahmed'}).count();
  check('and they are listed with the rest of the crew', zahraShown>0, 'cards: '+zahraShown);
+ const pairCard=await page.locator('.person', {hasText:'Hodan Omar'}).first().textContent();
+ check('the assistant\'s name comes up next to their leader',
+   /with Zahra/.test(pairCard), pairCard.slice(0,110));
+
  await page.evaluate(()=>removeManualArrival('p4'));
  await page.waitForTimeout(1500);
  check('taking them back off removes them again',
