@@ -35,8 +35,8 @@ import java.util.Calendar;
 public class MainActivity extends Activity {
 
   /** The board, told it is the board. src=tvapp is only there to be greppable later. */
-  private static final String BOARD_URL =
-      "https://cleaning.orfanerealestate.so/?tv=1&src=tvapp";
+  private static final String BOARD_ORIGIN = "https://cleaning.orfanerealestate.so/";
+  private static final String BOARD_URL = BOARD_ORIGIN + "?tv=1&src=tvapp";
 
   /**
    * A failed load retries on this cadence, forever. Forever is deliberate: the office
@@ -142,10 +142,28 @@ public class MainActivity extends Activity {
     load();
   }
 
+  /**
+   * Normally the board, but an `url` intent extra can point it elsewhere for as long
+   * as the app stays open — which is how a variant like ?tv=1&light=1 gets looked at
+   * on the real television instead of being guessed at from a laptop screen.
+   *
+   * It is pinned to our own origin. Not because a hostile adb client is a threat we
+   * expect on an office TV, but because a kiosk whose URL is an open parameter stops
+   * being a kiosk, and the next person to read this file should not have to work out
+   * whether it can be pointed at anything.
+   */
+  private String targetUrl() {
+    try {
+      String u = getIntent() != null ? getIntent().getStringExtra("url") : null;
+      if (u != null && u.startsWith(BOARD_ORIGIN)) return u;
+    } catch (Exception ignored) { }
+    return BOARD_URL;
+  }
+
   private void load() {
     failed = false;
     handler.removeCallbacks(retry);
-    web.loadUrl(BOARD_URL);
+    web.loadUrl(targetUrl());
   }
 
   private void scheduleRetry() {
@@ -196,6 +214,14 @@ public class MainActivity extends Activity {
   @Override public boolean onKeyDown(int code, KeyEvent e) {
     if (code == KeyEvent.KEYCODE_BACK) return true;
     return super.onKeyDown(code, e);
+  }
+
+  @Override protected void onNewIntent(android.content.Intent intent) {
+    super.onNewIntent(intent);
+    // singleTask, so a second launch arrives here rather than in onCreate. Without
+    // this an `url` extra sent to an already-running board would be silently ignored.
+    setIntent(intent);
+    load();
   }
 
   @Override protected void onResume() {

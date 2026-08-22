@@ -7934,11 +7934,24 @@ function tvColumns() {
       team: tvTeam(p), at: tvArrival(p),
     });
   });
-  // Stranded work first. The board pages itself, and a sick cleaner's untouched
-  // rooms are the one thing that must not be sitting on the page nobody saw.
+  // Stranded work first, then TEAMS TOGETHER. The first rule is unchanged: work with
+  // nobody behind it leads, because it is the only thing on the board that is nobody's
+  // job to notice. What follows it used to be arbitrary, which scattered Team B across
+  // two corners of the screen and made the team labels decorative — you could read who
+  // somebody worked with but never see the team as a thing. Sorting by team after rank
+  // puts mates side by side, so a team reads as a block and a gap in one is obvious.
+  //
+  // This was safe to change only once the board stopped paging: when half the crew was
+  // hidden for fifteen seconds at a time, ordering had to fight to get the urgent onto
+  // the visible page. Everybody is on one screen now, so ordering can group instead.
   return cols.sort((a, b) => {
     const rank = (c) => (c.none ? 0 : (c.out && c.jobs.some((j) => !j.done)) ? 1 : 2);
-    return rank(a) - rank(b);
+    // Teamless people sort last rather than under an empty heading, so "Outside team"
+    // sits at the end where it reads as the exception it is.
+    const teamKey = (c) => (c.team ? '0' + c.team.toLowerCase() : '1');
+    return rank(a) - rank(b)
+      || teamKey(a).localeCompare(teamKey(b))
+      || String(a.name).localeCompare(String(b.name), undefined, { sensitivity: 'base' });
   });
 }
 
@@ -7959,7 +7972,9 @@ function tvCrewStrip() {
     const tail = (st === 'present' && at) ? at : meta.label;
     const chip = el(`<div class="tv-chip"><span>${esc(tvName(p))}</span><span class="st">${esc(tail)}</span></div>`);
     chip.style.borderColor = meta.color;
-    chip.style.color = (st === 'present') ? '#eaf1fb' : meta.color;
+    // Present takes the board's own text colour rather than a hardcoded near-white:
+    // on the light ground that was white-on-white and the whole roll call vanished.
+    chip.style.color = (st === 'present') ? '' : meta.color;
     wrap.appendChild(chip);
   });
   return wrap;
