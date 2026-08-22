@@ -452,9 +452,12 @@
   .tv-bar { height: 1.1vh; border-radius: 1vh; background: var(--tv-bar); overflow: hidden; }
   .tv-bar > i { display: block; height: 100%; background: #22c55e; border-radius: 1vh; }
 
-  .tv-crew { display: flex; flex-wrap: wrap; gap: 0.7vw; }
+  /* Capped: the roll call may grow to a dozen people, and it was pushing the columns
+     off the bottom of the screen. It gets a third of the height at most and the work
+     keeps the rest. */
+  .tv-crew { display: flex; flex-wrap: wrap; gap: 0.6vw; max-height: 26vh; overflow: hidden; align-content: flex-start; }
   .tv-chip {
-    font-size: 1.35vw; font-weight: 800; padding: 0.7vh 1.1vw; border-radius: 0.9vw;
+    font-size: 1.2vw; font-weight: 800; padding: 0.55vh 0.9vw; border-radius: 0.8vw;
     background: var(--tv-chip); border: 0.18vw solid transparent; letter-spacing: 0.02em;
   }
   .tv-crewhead { display: flex; gap: 1.4vw; align-items: baseline; }
@@ -8052,8 +8055,12 @@ function tvCrewStrip() {
     // 6am round covered?" — so it takes the slot the word PRESENT was using.
     const at = tvArrival(p), left = tvLeft(p);
     // Gone home reads as gone: dimmed, and told in the words the roll call uses.
+    // Somebody who has gone home is told in one time, not two. Carrying both made
+    // every chip wide enough that twelve of them took four rows and pushed the board
+    // itself off the bottom of the screen — the roll call is the smaller question and
+    // must not crowd out the work. What time they arrived is on their column.
     const tail = (st !== 'present') ? meta.label
-      : left ? ('IN ' + at + ' · OUT ' + left)
+      : left ? ('LEFT ' + left)
       : at ? ('IN ' + at) : meta.label;
     const chip = el(`<div class="tv-chip${(st === 'present' && left) ? ' gone' : ''}"><span>${esc(tvName(p))}</span><span class="st">${esc(tail)}</span></div>`);
     chip.style.borderColor = meta.color;
