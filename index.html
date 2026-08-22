@@ -459,16 +459,20 @@
      off the bottom of the screen. It gets a third of the height at most and the work
      keeps the rest. */
   .tv-crew { display: flex; flex-wrap: wrap; gap: 0.6vw; max-height: 26vh; overflow: hidden; align-content: flex-start; }
+  /* Sized so a crew of a dozen lands in three rows. The cap below is a backstop
+     against a much bigger crew, not the thing that is supposed to fire — a roll call
+     with two people quietly cut off the bottom answers "who is still here?" wrongly,
+     which is worse than not asking. */
   .tv-chip {
-    font-size: 1.2vw; font-weight: 800; padding: 0.55vh 0.9vw; border-radius: 0.8vw;
+    font-size: 1.0vw; font-weight: 800; padding: 0.5vh 0.8vw; border-radius: 0.7vw;
     background: var(--tv-chip); border: 0.18vw solid transparent; letter-spacing: 0.02em;
   }
   .tv-crewhead { display: flex; gap: 1.4vw; align-items: baseline; }
-  .tv-crewhead .on { font-size: 1.15vw; font-weight: 800; letter-spacing: 0.1em; color: #22c55e; }
-  .tv-crewhead .off { font-size: 1.15vw; font-weight: 800; letter-spacing: 0.1em; color: var(--tv-muted); }
+  .tv-crewhead .on { font-size: 1.0vw; font-weight: 800; letter-spacing: 0.1em; color: #22c55e; }
+  .tv-crewhead .off { font-size: 1.0vw; font-weight: 800; letter-spacing: 0.1em; color: var(--tv-muted); }
   .tv-chip.gone { opacity: 0.5; }
   .tv-at.gone { color: var(--tv-muted); opacity: 0.9; }
-  .tv-chip .st { font-size: 0.95vw; font-weight: 700; opacity: 0.85; margin-left: 0.5vw; font-variant-numeric: tabular-nums; }
+  .tv-chip .st { font-size: 0.85vw; font-weight: 700; opacity: 0.85; margin-left: 0.5vw; font-variant-numeric: tabular-nums; }
 
   .tv-cols { --tvs: 1; flex: 1; display: grid; gap: calc(1.2vw * var(--tvs)); grid-auto-rows: minmax(0, 1fr); }
   /* overflow hidden as a backstop: type is sized to fit, but a freak name or a
