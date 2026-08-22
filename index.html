@@ -504,6 +504,8 @@
   .tv-airtime { font-size: 1.5vw; font-weight: 800; color: var(--tv-cover-fg); margin-top: 0.6vh; font-variant-numeric: tabular-nums; }
   .tv-airdone { font-size: 1.1vw; font-weight: 800; letter-spacing: 0.1em; color: var(--tv-done-fg); margin-top: 0.6vh; }
 
+  .tv-group { font-size: calc(0.95vw * var(--tvs)); font-weight: 800; letter-spacing: 0.12em;
+              color: var(--tv-muted); margin-top: calc(0.6vh * var(--tvs)); }
   .tv-empty { font-size: 1.4vw; font-weight: 700; color: var(--tv-empty); padding: 1vh 0; }
   .tv-pager { display: flex; gap: 0.6vw; justify-content: center; }
   .tv-dot { width: 0.8vw; height: 0.8vw; border-radius: 50%; background: var(--tv-dot); }
@@ -7903,6 +7905,15 @@ function tvJobsByPerson() {
 // a wall the whole office reads would be a promise the day cannot keep.
 const tvHere = (x) => AWAY.indexOf(state.attendance[x.id] || 'present') < 0;
 
+// ON ONE OF OUR TEAMS. Somebody carried as "Outside team" is not part of the round
+// this board is about, and their column was the emptiest thing on a screen otherwise
+// full of work. Matched on the word rather than a specific team name, so renaming the
+// team or adding a second outside crew does not quietly put them back on the wall.
+const tvOnTeam = (p) => {
+  const c = String((p && p.crew) || '').trim();
+  return !!c && !/outside/i.test(c);
+};
+
 // WHAT TIME SOMEBODY CAME IN. The badge data is already loaded for the roll call;
 // the board simply never showed it. Blank when there is no scan — Hik's Time Card
 // fills in through the morning (see the attendance-lag note), so "no time yet" and
@@ -7928,7 +7939,7 @@ function tvColumns() {
     cols.push({ key: '__none__', name: 'NOBODY YET', jobs: unassigned, none: true, out: false, status: null });
   }
   const seen = {};
-  cleaningStaff().filter((p) => worksToday(p)).forEach((p) => {
+  cleaningStaff().filter((p) => worksToday(p) && tvOnTeam(p)).forEach((p) => {
     seen[p.id] = true;
     const st = state.attendance[p.id] || 'present';
     cols.push({
@@ -7939,7 +7950,7 @@ function tvColumns() {
   });
   // Somebody off the rota still holding work has to show, or that work vanishes.
   (state.staff || []).forEach((p) => {
-    if (seen[p.id] || !(grouped.buckets[p.id] || []).length) return;
+    if (seen[p.id] || !tvOnTeam(p) || !(grouped.buckets[p.id] || []).length) return;
     const st = state.attendance[p.id] || 'present';
     cols.push({
       key: p.id, name: tvName(p), jobs: grouped.buckets[p.id],
@@ -7976,7 +7987,7 @@ function tvColumns() {
 
 function tvCrewStrip() {
   const wrap = el(`<div class="tv-crew"></div>`);
-  const crew = cleaningStaff().filter((p) => worksToday(p));
+  const crew = cleaningStaff().filter((p) => worksToday(p) && tvOnTeam(p));
   if (!crew.length) { wrap.appendChild(el(`<div class="tv-empty">Nobody is rostered on today</div>`)); return wrap; }
   // Away first: who is missing is the thing you want to read without hunting.
   crew.slice().sort((a, b) => {
@@ -8175,15 +8186,36 @@ function renderTV() {
       hd.appendChild(meta);
     }
     col.appendChild(hd);
-    const list = el(`<div class="tv-jobs"></div>`);
-    if (!c.jobs.length) list.appendChild(el(`<div class="tv-empty">—</div>`));
-    c.jobs.forEach((j) => {
+    // ROOMS AND COMMUNAL AREAS, SAID SEPARATELY. These used to run together in one
+    // list on the argument that a corridor is another thing somebody has to get
+    // through and splitting them hides half the load. True of the load, wrong for the
+    // question actually asked of this board — "are the offices done?" — which one
+    // mixed list cannot answer without counting. Two headed groups, and the count in
+    // the corner still totals both, so nothing about the load is hidden.
+    const chip = (j) => {
       // An away person's unfinished room is nobody's room until someone picks it
       // up, so it wears the same amber as work that was never handed out.
       const cls = j.done ? 'done' : (c.out || c.none) ? 'cover' : j.early ? 'early' : j.area ? 'area' : '';
-      list.appendChild(el(`<div class="tv-job ${cls}">${j.early && !j.done ? '🌅 ' : ''}${esc(j.label)}</div>`));
-    });
-    col.appendChild(list);
+      return el(`<div class="tv-job ${cls}">${j.early && !j.done ? '🌅 ' : ''}${esc(j.label)}</div>`);
+    };
+    const rooms = c.jobs.filter((j) => !j.area);
+    const areas = c.jobs.filter((j) => j.area);
+    if (!c.jobs.length) {
+      const list = el(`<div class="tv-jobs"></div>`);
+      list.appendChild(el(`<div class="tv-empty">—</div>`));
+      col.appendChild(list);
+    }
+    // Only headed when there is something to tell apart: one group on its own needs
+    // no label, and a heading over a single list is noise on a wall.
+    const group = (items, label) => {
+      if (!items.length) return;
+      if (rooms.length && areas.length) col.appendChild(el(`<div class="tv-group">${esc(label)}</div>`));
+      const list = el(`<div class="tv-jobs"></div>`);
+      items.forEach((j) => list.appendChild(chip(j)));
+      col.appendChild(list);
+    };
+    group(rooms, 'OFFICES');
+    group(areas, 'COMMUNAL');
     grid.appendChild(col);
   });
   wrap.appendChild(onAir ? tvAirGrid(air) : grid);
