@@ -435,7 +435,10 @@
 
   body.tv #app { min-height: 100vh; padding: 0; }
   ::-webkit-scrollbar { display: none; }
-  .tv-wrap { min-height: 100vh; padding: 3vh 3vw; display: flex; flex-direction: column; gap: 2vh; }
+  /* height, not min-height: the page must fit the screen exactly. With min-height a
+     tall board grew past the bottom of the television, where a TV crops rather than
+     scrolls and the last row simply was not there. */
+  .tv-wrap { height: 100vh; padding: 2.4vh 3vw; display: flex; flex-direction: column; gap: 1.4vh; overflow: hidden; }
   .tv-top { display: flex; align-items: flex-end; justify-content: space-between; gap: 2vw; }
   .tv-brand { font-size: 1.5vw; font-weight: 800; letter-spacing: 0.18em; color: var(--tv-muted); }
   .tv-date { font-size: 3vw; font-weight: 800; line-height: 1.05; }
@@ -468,7 +471,10 @@
   .tv-chip .st { font-size: 0.95vw; font-weight: 700; opacity: 0.85; margin-left: 0.5vw; font-variant-numeric: tabular-nums; }
 
   .tv-cols { --tvs: 1; flex: 1; display: grid; gap: calc(1.2vw * var(--tvs)); grid-auto-rows: minmax(0, 1fr); }
-  .tv-col { background: var(--tv-card); border-radius: 1vw; padding: calc(1.4vh * var(--tvs)) calc(1vw * var(--tvs)); display: flex; flex-direction: column; gap: calc(1vh * var(--tvs)); min-width: 0; min-height: 0; }
+  /* overflow hidden as a backstop: type is sized to fit, but a freak name or a
+     column with ten rooms in it must clip inside its own card rather than spill
+     down the screen and take the row below with it. */
+  .tv-col { background: var(--tv-card); border-radius: 1vw; padding: calc(1.4vh * var(--tvs)) calc(1vw * var(--tvs)); display: flex; flex-direction: column; gap: calc(0.8vh * var(--tvs)); min-width: 0; min-height: 0; overflow: hidden; }
   .tv-col-hd { border-bottom: 0.15vw solid var(--tv-line); padding-bottom: 0.9vh; }
   .tv-hd-row { display: flex; align-items: baseline; justify-content: space-between; gap: 0.6vw; }
   /* Wraps rather than clips: a name cut off at the column edge is the same failure
@@ -7852,7 +7858,10 @@ const TV_COLS_PER_PAGE = TV_MAX_ACROSS * TV_MAX_ROWS;
 
 // Shorter columns need smaller type, or the job chips spill out of them. Indexed by
 // row count so the single-row board is left at exactly the size it always was.
-const TV_ROW_SCALE = { 1: 1, 2: 0.72, 3: 0.55 };
+// Tuned against the real television rather than guessed: at 0.72 a two-row board
+// with both an OFFICES and a COMMUNAL group ran off the bottom of the screen, and
+// content falling off a wall display is worse than content being small on one.
+const TV_ROW_SCALE = { 1: 1, 2: 0.62, 3: 0.46 };
 
 // Squarest arrangement that holds n columns: 9 people is 5 across and 2 deep, not
 // 5 and then a row of 4 hanging off the end at a different width.
