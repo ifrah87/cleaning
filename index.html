@@ -425,6 +425,7 @@
   .tv-hd-row { display: flex; align-items: baseline; justify-content: space-between; gap: 0.6vw; }
   .tv-who { font-size: calc(1.9vw * var(--tvs)); font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
   .tv-count { font-size: calc(1.3vw * var(--tvs)); font-weight: 800; color: #6f8ab0; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .tv-with { font-size: calc(1vw * var(--tvs)); font-weight: 700; color: #6f8ab0; margin-top: 0.35vh; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .tv-sub { font-size: calc(1.05vw * var(--tvs)); font-weight: 800; letter-spacing: 0.06em; margin-top: 0.4vh; }
   .tv-jobs { display: flex; flex-wrap: wrap; gap: calc(0.5vw * var(--tvs)); align-content: start; }
   .tv-job {
@@ -7877,6 +7878,18 @@ function tvJobsByPerson() {
 // Columns: everyone rostered on today gets one even when they are empty-handed,
 // because an empty column is the useful bit of news. Unassigned work goes in an
 // amber column at the front — it is the only thing on the board nobody owns.
+// An assistant who has not turned up is not with anybody, and printing their name on
+// a wall the whole office reads would be a promise the day cannot keep.
+const tvHere = (x) => AWAY.indexOf(state.attendance[x.id] || 'present') < 0;
+
+// The shared withLabel() prints bare first names, which on this screen would undo the
+// thing tvName() exists to do: "with Mahad" above one column while another column is
+// headed Mahad A. is the same ambiguity in smaller type. Same sentence, TV names.
+function tvWithLabel(p) {
+  const a = assistantsFor(p, tvHere);
+  return a.length ? 'with ' + a.map(tvName).join(', ') : '';
+}
+
 function tvColumns() {
   const grouped = tvJobsByPerson();
   const cols = [];
@@ -7890,7 +7903,7 @@ function tvColumns() {
     const st = state.attendance[p.id] || 'present';
     cols.push({
       key: p.id, name: tvName(p), jobs: grouped.buckets[p.id] || [],
-      none: false, out: AWAY.indexOf(st) >= 0, status: st,
+      none: false, out: AWAY.indexOf(st) >= 0, status: st, with: tvWithLabel(p),
     });
   });
   // Somebody off the rota still holding work has to show, or that work vanishes.
@@ -7899,7 +7912,7 @@ function tvColumns() {
     const st = state.attendance[p.id] || 'present';
     cols.push({
       key: p.id, name: tvName(p), jobs: grouped.buckets[p.id],
-      none: false, out: AWAY.indexOf(st) >= 0, status: st,
+      none: false, out: AWAY.indexOf(st) >= 0, status: st, with: tvWithLabel(p),
     });
   });
   // Stranded work first. The board pages itself, and a sick cleaner's untouched
@@ -8015,6 +8028,11 @@ function renderTV() {
     } else if (c.none) {
       hd.appendChild(el(`<div class="tv-sub" style="color:#fbbf24">NOT HANDED OUT</div>`));
     }
+    // A leader's column is the team's column: the rooms underneath are worked by
+    // whoever is with them, and naming only the leader left the floor to be guessed
+    // at from across the office. Muted, because it answers a question about the
+    // heading rather than being another thing to read.
+    if (c.with) hd.appendChild(el(`<div class="tv-with">${esc(c.with)}</div>`));
     col.appendChild(hd);
     const list = el(`<div class="tv-jobs"></div>`);
     if (!c.jobs.length) list.appendChild(el(`<div class="tv-empty">—</div>`));
