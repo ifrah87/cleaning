@@ -6317,10 +6317,31 @@ function viewRollCall() {
         : noRecord ? 'No record of this room ever being cleaned'
         : who ? (signed ? 'Confirmed for ' + who.name : 'Suggested for ' + who.name + ' — not checked yet')
         : 'Not assigned yet');
-      const chip = el(`<button class="freqmini" style="flex:0 0 auto;padding:6px 10px;${tone}" title="${esc(tip)} — tap to see why it is on today">`
+      const chip = el(`<button class="freqmini" style="flex:0 0 auto;padding:6px 10px;${tone}" title="${esc(tip)} — tap to mark clean, hold to see why it is on today">`
         + `${flags(u)}${esc(u.unit)}`
         + `${done ? ' ✓' : who ? ' · ' + esc(who.name.split(' ')[0]) + (signed ? '' : ' ?') : ''}</button>`);
-      chip.onclick = () => showDueReason(u);
+      // TAP TICKS IT OFF. This screen is where the office actually stands while the
+      // round is running, and the thing they came to do is say a room is finished —
+      // which until now meant leaving here, finding the room on another tab and
+      // ticking it there. Tapping opened an explanation instead, which is a fine
+      // answer to a question nobody was asking at that moment.
+      //
+      // The explanation is kept, on a press-and-hold. "Why is this room here?" is a
+      // real question, just a rarer one than "that one's done", and the rarer of two
+      // actions is the one that should cost the extra half-second.
+      let held = false, holdT = null;
+      const startHold = () => {
+        held = false;
+        clearTimeout(holdT);
+        holdT = setTimeout(() => { held = true; showDueReason(u); }, 550);
+      };
+      const endHold = () => clearTimeout(holdT);
+      chip.addEventListener('pointerdown', startHold);
+      ['pointerup', 'pointerleave', 'pointercancel'].forEach((ev) => chip.addEventListener(ev, endHold));
+      chip.onclick = () => {
+        if (held) { held = false; return; }   // the hold already answered
+        toggleServicedDone(u.id);
+      };
       chips.appendChild(chip);
     });
     box.appendChild(chips);
