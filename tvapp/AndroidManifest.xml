@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Cleaning Ops — TV kiosk shell.
+
+  WHAT THIS IS, AND WHAT IT DELIBERATELY IS NOT
+  This is not a rewrite of the app. The app is index.html, served from
+  cleaning.orfanerealestate.so, and it stays there — one file, shipped several times
+  a day, exactly as before. This is a WebView in a box whose whole job is to point a
+  television at ?tv=1 and never let go: no address bar for anyone to type in, no
+  remote needed, no browser to fall asleep. Ship the site, the TV picks it up.
+
+  WHY NOT THE PLAY STORE
+  Google's TV review wants an app the viewer navigates with a d-pad. The board is not
+  navigated, it is glanced at from across the office. It would fail review for being
+  what it is on purpose. Sideloading is the same APK without the queue.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="so.orfanerealestate.cleaningtv"
+    android:versionCode="1"
+    android:versionName="1.0">
+
+  <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="34" />
+
+  <uses-permission android:name="android.permission.INTERNET" />
+  <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+  <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+  <!-- The board is a display, not a session. It must outlast the screen saver. -->
+  <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+  <!-- A television has no touchscreen and no telephony. Saying so is what makes the
+       TV's own launcher willing to show us at all. -->
+  <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+  <uses-feature android:name="android.software.leanback" android:required="false" />
+
+  <application
+      android:label="@string/app_name"
+      android:icon="@mipmap/ic_launcher"
+      android:banner="@drawable/banner"
+      android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
+      android:usesCleartextTraffic="false"
+      android:allowBackup="false">
+
+    <activity
+        android:name=".MainActivity"
+        android:exported="true"
+        android:launchMode="singleTask"
+        android:screenOrientation="landscape"
+        android:configChanges="orientation|screenSize|keyboardHidden|uiMode">
+      <!-- LEANBACK_LAUNCHER is the row of icons on the TV home screen. Without it the
+           app installs and is then invisible, which looks exactly like a failed
+           install and has fooled better people than us. -->
+      <intent-filter>
+        <action android:name="android.intent.action.MAIN" />
+        <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+        <category android:name="android.intent.category.LAUNCHER" />
+      </intent-filter>
+    </activity>
+
+    <!-- Comes back after a power cut without anyone finding the remote. Android 10+
+         is increasingly hostile to this; see BootReceiver for what to do when the TV
+         refuses. -->
+    <receiver
+        android:name=".BootReceiver"
+        android:exported="true"
+        android:enabled="true">
+      <intent-filter android:priority="1000">
+        <action android:name="android.intent.action.BOOT_COMPLETED" />
+        <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+        <!-- Some sets, TCL's among them, only ever send this one. -->
+        <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+        <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
+      </intent-filter>
+    </receiver>
+  </application>
+</manifest>

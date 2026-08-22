@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <!-- Same dark ground the TV board itself uses, so the launcher banner, the boot
+       moment and the loaded page are one continuous colour rather than a white flash
+       and then a dark screen. -->
+  <color name="tv_ground">#0b1220</color>
+</resources>

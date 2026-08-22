@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <!-- What the crew sees under the icon on the TV home screen. "Cleaning Board" and
+       not "Cleaning Ops": the TV only ever shows the board. -->
+  <string name="app_name">Cleaning Board</string>
+</resources>

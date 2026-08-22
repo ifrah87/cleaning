@@ -4,3 +4,7 @@ Thumbs.db
 *~
 supabase/.temp/
 node_modules/
+
+# TV kiosk build output, and the signing key it must never publish
+tvapp/build/
+tvapp/keystore/

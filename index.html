@@ -419,16 +419,16 @@
   }
   .tv-chip .st { font-size: 0.95vw; font-weight: 700; opacity: 0.85; margin-left: 0.5vw; }
 
-  .tv-cols { flex: 1; display: grid; gap: 1.2vw; grid-auto-rows: minmax(0, 1fr); }
-  .tv-col { background: #101c30; border-radius: 1vw; padding: 1.4vh 1vw; display: flex; flex-direction: column; gap: 1vh; min-width: 0; min-height: 0; }
+  .tv-cols { --tvs: 1; flex: 1; display: grid; gap: calc(1.2vw * var(--tvs)); grid-auto-rows: minmax(0, 1fr); }
+  .tv-col { background: #101c30; border-radius: 1vw; padding: calc(1.4vh * var(--tvs)) calc(1vw * var(--tvs)); display: flex; flex-direction: column; gap: calc(1vh * var(--tvs)); min-width: 0; min-height: 0; }
   .tv-col-hd { border-bottom: 0.15vw solid #1e2f4d; padding-bottom: 0.9vh; }
   .tv-hd-row { display: flex; align-items: baseline; justify-content: space-between; gap: 0.6vw; }
-  .tv-who { font-size: 1.9vw; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-  .tv-count { font-size: 1.3vw; font-weight: 800; color: #6f8ab0; font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .tv-sub { font-size: 1.05vw; font-weight: 800; letter-spacing: 0.06em; margin-top: 0.4vh; }
-  .tv-jobs { display: flex; flex-wrap: wrap; gap: 0.5vw; align-content: start; }
+  .tv-who { font-size: calc(1.9vw * var(--tvs)); font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .tv-count { font-size: calc(1.3vw * var(--tvs)); font-weight: 800; color: #6f8ab0; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .tv-sub { font-size: calc(1.05vw * var(--tvs)); font-weight: 800; letter-spacing: 0.06em; margin-top: 0.4vh; }
+  .tv-jobs { display: flex; flex-wrap: wrap; gap: calc(0.5vw * var(--tvs)); align-content: start; }
   .tv-job {
-    font-size: 2vw; font-weight: 800; padding: 1vh 1.1vw; border-radius: 0.6vw;
+    font-size: calc(2vw * var(--tvs)); font-weight: 800; padding: calc(1vh * var(--tvs)) calc(1.1vw * var(--tvs)); border-radius: 0.6vw;
     background: #1c2b45; color: #dce8f8; border-left: 0.35vw solid #3d557f;
   }
   /* Urgency reads as colour, and the order on screen is the instruction:
@@ -7770,7 +7770,27 @@ function backdateSheet() {
 // who is in, what each of them has, what is done. It redraws itself on a timer
 // and pulls from Supabase on its own, because there is no one to press refresh.
 const TV_MODE = /[?&]tv\b/.test(location.search) || /^#tv\b/.test(location.hash);
-const TV_COLS_PER_PAGE = 5;      // more than five columns on a TV and the names stop being readable
+// Five is as thin as a column can get before a name stops reading from the far side
+// of the office. That is a limit on how WIDE a column may be, though, and it had been
+// doing duty as a limit on how many people fit on the screen — so a crew of nine got
+// split across two pages that swapped every fifteen seconds, and nobody could answer
+// "who has 604?" without standing there waiting for the board to come back round.
+// The columns are two-thirds air (nobody holds more than about five jobs), so it
+// stacks into a second and third row instead, and only pages when even that is full.
+const TV_MAX_ACROSS = 5;
+const TV_MAX_ROWS = 3;
+const TV_COLS_PER_PAGE = TV_MAX_ACROSS * TV_MAX_ROWS;
+
+// Shorter columns need smaller type, or the job chips spill out of them. Indexed by
+// row count so the single-row board is left at exactly the size it always was.
+const TV_ROW_SCALE = { 1: 1, 2: 0.72, 3: 0.55 };
+
+// Squarest arrangement that holds n columns: 9 people is 5 across and 2 deep, not
+// 5 and then a row of 4 hanging off the end at a different width.
+function tvGrid(n) {
+  const rows = Math.min(TV_MAX_ROWS, Math.max(1, Math.ceil(n / TV_MAX_ACROSS)));
+  return { rows: rows, across: Math.max(1, Math.ceil(n / rows)), scale: TV_ROW_SCALE[rows] || 0.55 };
+}
 const TV_PAGE_MS = 15000;        // long enough to read a column before it moves
 const TV_TICK_MS = 20000;        // redraw: clock, and anything realtime already dropped into state
 const TV_PULL_MS = 60000;        // belt and braces — smart TV browsers drop websockets silently
@@ -7778,6 +7798,50 @@ let tvPage = 0;
 let tvLastData = 0;              // when the board last saw fresh numbers
 
 const tvFirst = (n) => String(n || '').trim().split(/\s+/)[0] || '—';
+
+// A first name is the right length for a television — until two of them are the same.
+// Two cleaners called Mahad give you two identical chips and two columns either of
+// them could be holding, and from across the office the only thing telling them apart
+// is which rooms are underneath, which is precisely the thing you were trying to read.
+// So the first name is kept while it is unambiguous and grown only as far as it must
+// be: an initial where that settles it, the whole second name where it does not.
+// Nobody gets a longer name because somebody else has a twin.
+function tvNamesFor(people) {
+  const parts = (n) => String(n || '').trim().split(/\s+/).filter(Boolean);
+  const out = {}, byFirst = {};
+  people.forEach((p) => {
+    const f = parts(p.name)[0] || '—';
+    (byFirst[f] = byFirst[f] || []).push(p);
+  });
+  Object.keys(byFirst).forEach((f) => {
+    const group = byFirst[f];
+    if (group.length === 1) { out[group[0].id] = f; return; }
+    const byInitial = {};
+    group.forEach((p) => {
+      const i = (parts(p.name)[1] || '').charAt(0).toUpperCase();
+      (byInitial[i] = byInitial[i] || []).push(p);
+    });
+    group.forEach((p) => {
+      const w = parts(p.name);
+      const i = (w[1] || '').charAt(0).toUpperCase();
+      // No second name to grow into: leave it be rather than print a bare full stop.
+      if (!i) { out[p.id] = f; return; }
+      out[p.id] = (byInitial[i].length === 1) ? (f + ' ' + i + '.') : (f + ' ' + w[1]);
+    });
+  });
+  return out;
+}
+
+// Rebuilt only when the roster actually changes: renderTV runs on a 20s timer and
+// this would otherwise recompute the same answer for the life of the board.
+let _tvNames = { sig: '', map: {} };
+function tvName(p) {
+  if (!p) return '—';
+  const people = (state.staff || []);
+  const sig = people.map((x) => x.id + ':' + x.name).join('|');
+  if (sig !== _tvNames.sig) _tvNames = { sig: sig, map: tvNamesFor(people) };
+  return _tvNames.map[p.id] || tvFirst(p.name);
+}
 
 // Every job on today's board, grouped by who is holding it. Rooms and communal
 // areas together: from across the room a walk is another thing somebody has to
@@ -7825,7 +7889,7 @@ function tvColumns() {
     seen[p.id] = true;
     const st = state.attendance[p.id] || 'present';
     cols.push({
-      key: p.id, name: tvFirst(p.name), jobs: grouped.buckets[p.id] || [],
+      key: p.id, name: tvName(p), jobs: grouped.buckets[p.id] || [],
       none: false, out: AWAY.indexOf(st) >= 0, status: st,
     });
   });
@@ -7834,7 +7898,7 @@ function tvColumns() {
     if (seen[p.id] || !(grouped.buckets[p.id] || []).length) return;
     const st = state.attendance[p.id] || 'present';
     cols.push({
-      key: p.id, name: tvFirst(p.name), jobs: grouped.buckets[p.id],
+      key: p.id, name: tvName(p), jobs: grouped.buckets[p.id],
       none: false, out: AWAY.indexOf(st) >= 0, status: st,
     });
   });
@@ -7857,7 +7921,7 @@ function tvCrewStrip() {
   }).forEach((p) => {
     const st = state.attendance[p.id] || 'present';
     const meta = STATUS[st] || STATUS.present;
-    const chip = el(`<div class="tv-chip"><span>${esc(tvFirst(p.name))}</span><span class="st">${esc(meta.label)}</span></div>`);
+    const chip = el(`<div class="tv-chip"><span>${esc(tvName(p))}</span><span class="st">${esc(meta.label)}</span></div>`);
     chip.style.borderColor = meta.color;
     chip.style.color = (st === 'present') ? '#eaf1fb' : meta.color;
     wrap.appendChild(chip);
@@ -7927,7 +7991,9 @@ function renderTV() {
   const shown = cols.slice(tvPage * perPage, tvPage * perPage + perPage);
 
   const grid = el(`<div class="tv-cols"></div>`);
-  grid.style.gridTemplateColumns = 'repeat(' + Math.max(1, shown.length) + ', minmax(0, 1fr))';
+  const g = tvGrid(shown.length);
+  grid.style.gridTemplateColumns = 'repeat(' + g.across + ', minmax(0, 1fr))';
+  grid.style.setProperty('--tvs', String(g.scale));
   if (!cols.length) {
     grid.appendChild(el(`<div class="tv-empty">Nothing on today's board yet</div>`));
   }
