@@ -2889,6 +2889,20 @@ function runAutoAssign(rooms, people, inIds, load, slotSeed, silent) {
     return !!owner && u.assignedTo === owner.id;
   };
   const freeToMove = (u) => !u.usualTo && timeSlot(u) === 'any' && !withFloorOwner(u);
+  // A MORNING PREFERENCE SAYS WHEN, NOT WHO. Rooms asking for early or late used to be
+  // frozen along with the pins, on the reading that a requested time is the customer's
+  // decision and not the app's to undo. The time is theirs — but moving the room to a
+  // different cleaner does not touch it. It is still on the early round, still sorted
+  // to the front, just carried by somebody who is not already holding five.
+  //
+  // This mattered more than it sounds: with every room in the building marked
+  // preferEarly, nothing at all was free to move and the levelling pass could not run
+  // even once. One person finished with two rooms while another still had five, and
+  // the code that existed to prevent exactly that was sitting there unable to act.
+  //
+  // Second in the order, so a room with no preference is always spent first and a
+  // preference is only disturbed when nothing else will close the gap.
+  const timedButMovable = (u) => !u.usualTo && !withFloorOwner(u) && timeSlot(u) !== 'any';
   let moved = 0;
   for (let guard = rooms.length * 4; guard > 0; guard -= 1) {
     const ranked = order.slice().sort((a, b) => load[a] - load[b]);
@@ -2896,7 +2910,7 @@ function runAutoAssign(rooms, people, inIds, load, slotSeed, silent) {
     if (load[hi] - load[ranked[0]] <= 1) break;             // as even as it can get
     let done = false;
     // Unpinned rooms first, everywhere they can help, before disturbing any pin.
-    for (const pass of [freeToMove]) {
+    for (const pass of [freeToMove, timedButMovable]) {
       for (const lo of ranked) {
         if (load[hi] - load[lo] <= 1) break;
         if (!underCap(lo)) continue;   // never level a room ONTO a leader who is full
