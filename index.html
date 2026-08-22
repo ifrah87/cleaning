@@ -2518,12 +2518,17 @@ function maybeAutoAssign() {
   // however they were assigned, or they sit with an absent name against them all
   // morning and are simply never done.
   const decided = (u) => (state.assignConfirmed || {})[u.id] === day && !isAway(u.assignedTo);
-  const rest = due.filter((u) => !(u.assignedTo && decided(u)));
+  // A PLAN MADE THE NIGHT BEFORE IS THE DECISION, NOT A SUGGESTION. If the office sat
+  // down and set who takes what, the morning hands out exactly that — it does not
+  // re-deal the day because the split is uneven or because more people turned up than
+  // the plan named. Only what the plan did NOT cover is dealt automatically.
+  const stuck = (u) => decided(u);
+  const rest = due.filter((u) => !(u.assignedTo && stuck(u)));
   if (!rest.length) { save(); render(); return; }              // the plan covered the whole morning
   // Count the rooms that are staying put against their cleaner, so the split stays
   // even across the morning as a whole and not merely across this one deal.
   const load = {}, slotLoad = { early: {}, late: {} };
-  due.filter((u) => u.assignedTo && decided(u)).forEach((u) => {
+  due.filter((u) => u.assignedTo && stuck(u)).forEach((u) => {
     load[u.assignedTo] = (load[u.assignedTo] || 0) + 1;
     const slot = timeSlot(u);
     if (slot !== 'any') slotLoad[slot][u.assignedTo] = (slotLoad[slot][u.assignedTo] || 0) + 1;
@@ -4971,8 +4976,19 @@ function mirrorPlanToBoard(day, key, keepBoard) {
       if (keepBoard && u.assignedTo) return;   // the board was changed since; it wins
       u.assignedTo = j.assignedTo || null;
       // Handing a room out on purpose is the sign-off, exactly as it is on the board.
-      if (j.assignedTo) state.assignConfirmed[u.id] = todayKey();
-      else delete state.assignConfirmed[u.id];
+      // Marked as having come from the PLAN, though, not from somebody at the screen:
+      // a plan is drawn for whoever is rostered, and the crew who actually turn up is
+      // a different set. Without the mark the morning could not tell the two apart and
+      // treated every planned room as a decision no automatic level was allowed to
+      // touch — which is how two early birds ended up holding eleven rooms each while
+      // three people stood there with nothing.
+      if (j.assignedTo) {
+        state.assignConfirmed[u.id] = todayKey();
+        state.planCarried = state.planCarried || {};
+        state.planCarried[u.id] = todayKey();
+      } else {
+        delete state.assignConfirmed[u.id];
+      }
     } else {
       const a = areasInterior().find((x) => x.id === j.refId);
       if (!a || (keepBoard && a.assignedTo)) return;

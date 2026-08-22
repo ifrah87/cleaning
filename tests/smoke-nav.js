@@ -112,8 +112,12 @@ for (const [label,vp] of [['PHONE',{width:420,height:900}],['DESKTOP',{width:144
  // eod rooms pinned to set days automatically
  const pinned=await page.evaluate(()=>(state.servicedUnits||[]).filter(u=>u.freq==='eod').map(u=>({unit:u.unit,days:u.days||null})));
  check('every-other-day rooms were put on set days on their own', pinned.every(x=>x.days&&x.days.length), JSON.stringify(pinned));
- const fri=new Date().getDay();
- check('a room cleaned today is not put on a set containing today', pinned.every(x=>!x.days||x.days.indexOf(fri)<0), 'today dow='+fri+' '+JSON.stringify(pinned));
+ // Which weekday set is right depends on what day it is — Sat/Mon/Wed/Fri runs
+ // Fri→Sat back to back, Sun/Tue/Thu runs Thu→Sun. So assert the RULE, not a set:
+ // whichever it picked, the next clean must land two days after the last one.
+ const gaps=await page.evaluate(()=>(state.servicedUnits||[]).filter(u=>u.freq==='eod'&&u.days&&u.lastCleaned)
+   .map(u=>{ for(let i=1;i<=7;i+=1){ const d=shiftDay(u.lastCleaned,i); if(u.days.indexOf(dowOf(d))>=0) return {unit:u.unit,gap:i}; } return {unit:u.unit,gap:null}; }));
+ check('the set it picks keeps the room two days apart', gaps.length>0&&gaps.every(g=>g.gap===2), JSON.stringify(gaps));
  // The search box has to stay reachable once the list is scrolled — that is the
  // whole point of pinning it under the header.
  await page.locator('.nav button').nth(1).click(); await page.waitForTimeout(500);
@@ -222,7 +226,8 @@ for (const [label,vp] of [['PHONE',{width:420,height:900}],['DESKTOP',{width:144
    freqStick.onList && freqStick.due.slice(1)==='XXXXXX', JSON.stringify(freqStick));
 
  const pinnedDays=await page.evaluate(()=>(state.servicedUnits||[]).filter(u=>u.freq==='eod').map(u=>u.unit+':'+(u.days||[]).join('')));
- check('rooms cleaned today go on Sun/Tue/Thu (next turn Sunday)', pinnedDays.every(x=>x.endsWith(':024')), pinnedDays.join(' '));
+ check('every eod room ends up on one of the two weekday sets',
+   pinnedDays.every(x=>/:(6135|024)$/.test(x)), pinnedDays.join(' '));
 
  // --- the whole point: the board re-deals as more people badge in ---
  await page.locator('.nav button').nth(0).click(); await page.waitForTimeout(600);
