@@ -54,6 +54,22 @@
         <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
         <category android:name="android.intent.category.LAUNCHER" />
       </intent-filter>
+      <!-- HOME: DECLARED, AND INERT ON THESE TELEVISIONS. Kept because it is correct
+           and costs nothing, but do not spend an afternoon trying to make it take.
+           Tried on TCL Google TV (Android 12), 2026-08-22:
+             · the category IS registered — `dumpsys package` shows it after install
+             · the system's HOME candidates still list only launcherx and setupwraith
+             · `cmd package set-home-activity` returns "Success" and changes nothing
+             · `cmd role add-role-holder android.app.role.HOME` — command does not exist
+             · HOME still resolves to launcherx.home.HomeActivity
+           Google TV does not permit a third-party launcher. Older Android TV did; this
+           is not that. What actually keeps the board up is the activity resuming from
+           standby (verified) and BootReceiver after a power cut. -->
+      <intent-filter>
+        <action android:name="android.intent.action.MAIN" />
+        <category android:name="android.intent.category.HOME" />
+        <category android:name="android.intent.category.DEFAULT" />
+      </intent-filter>
     </activity>
 
     <!-- Comes back after a power cut without anyone finding the remote. Android 10+

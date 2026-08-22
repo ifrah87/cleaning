@@ -213,6 +213,19 @@ public class MainActivity extends Activity {
    */
   @Override public boolean onKeyDown(int code, KeyEvent e) {
     if (code == KeyEvent.KEYCODE_BACK) return true;
+    // THE WAY OUT. This app is the television's home screen, so Home cannot be used to
+    // leave it — there is nowhere else to go. Without a door, changing a wifi password
+    // on these sets would mean fetching a laptop and adb, which is not a state to leave
+    // an office in. MENU opens Android's settings; everything else is reachable from
+    // there. Chosen because no cleaner walking past ever presses it, and anybody who
+    // needs it can be told one word.
+    if (code == KeyEvent.KEYCODE_MENU) {
+      try {
+        startActivity(new android.content.Intent(android.provider.Settings.ACTION_SETTINGS)
+            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK));
+      } catch (Exception ignored) { }
+      return true;
+    }
     return super.onKeyDown(code, e);
   }
 
