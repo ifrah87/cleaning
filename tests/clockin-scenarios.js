@@ -123,8 +123,14 @@ const head = (t) => console.log('\n\x1b[1m' + t + '\x1b[0m');
   // ---------------------------------------------------------- 1. NOBODY IN YET
   head('06:00 — nobody has badged in');
   let r = await poll(); show(r);
-  const unplanned = Object.entries(r.board).filter(([u]) => u !== '301');
-  check('no unplanned room is handed out before anyone clocks in', unplanned.every(([, v]) => v === null), JSON.stringify(r.board));
+  // 301 is on last night's plan and 104 is tied to Fatima permanently. Both are
+  // standing decisions, so both are on the board before anybody badges in; everything
+  // else waits for the crew to turn up.
+  const undecided = Object.entries(r.board).filter(([u]) => u !== '301' && u !== '104');
+  check('no room without a plan or a permanent cleaner is handed out before anyone clocks in',
+    undecided.every(([, v]) => v === null), JSON.stringify(r.board));
+  check('a room tied to one cleaner shows their name from the start', r.board['104'] === 'Fatima',
+    '104 -> ' + r.board['104']);
   // A plan made last night is written onto the board at load, so the crew sees it
   // without waiting for the first badge-in.
   check('a room planned last night is already on the board', r.board['301'] === 'Zahra', '301 -> ' + r.board['301']);
@@ -249,6 +255,22 @@ const head = (t) => console.log('\n\x1b[1m' + t + '\x1b[0m');
     return (state.servicedUnits || []).filter((u) => u.assignedTo).length;
   });
   check('a crew with no leader in still gets the rooms handed out', noLead > 0, 'rooms handed out: ' + noLead);
+
+  // A PIN OUTLASTS A PLAN. A plan made before the room was tied to somebody still
+  // carries the old name; it must not take the room off the person it belongs to.
+  const pinVsPlan = await page.evaluate(async () => {
+    (state.staff || []).forEach((p) => { p.crew = 'Team ' + p.id; p.isLeader = true; });
+    const u = (state.servicedUnits || []).find((x) => x.unit === '301');
+    u.usualTo = 'p2'; u.assignedTo = null;               // tied to Amina...
+    state.plans[todayKey()] = { 'unit:u301': { kind: 'unit', refId: 'u301', label: '301', assignedTo: 'p4' } };
+    state.assignConfirmed = {}; state.planCarried = {}; state.autoAssignedFor = null;
+    maybeAutoAssign(); render();
+    await new Promise((r) => setTimeout(r, 300));
+    const nameOf = (id) => { const p = (state.staff || []).find((x) => x.id === id); return p ? p.name.split(' ')[0] : null; };
+    return nameOf(u.assignedTo);
+  });
+  check('a plan naming somebody else does not take a pinned room off its cleaner',
+    pinVsPlan === 'Amina', '301 -> ' + pinVsPlan + ' (tied to Amina, planned for Zahra)');
 
   check('no console errors during the morning', errs.length === 0, errs.slice(0, 4).join('\n         '));
 

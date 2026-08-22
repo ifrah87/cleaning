@@ -2759,6 +2759,12 @@ function applyPlannedAssignments() {
     // to a leader. A room the office assigned by hand is a different thing and is not
     // touched here: that is somebody deciding, not the app guessing.
     if (isAssistant(staffById[j.assignedTo])) return;
+    // A PIN OUTLASTS A PLAN. Tying a room to one cleaner is a standing instruction —
+    // "only they clean this" — while a plan is one night's arrangement, and a plan
+    // drawn up before the pin existed still carries the old name. Carrying it would
+    // hand the room to somebody else on the very morning after it was pinned. The
+    // room is left for the deal, which gives it to the person it belongs to.
+    if (u.usualTo && u.usualTo !== j.assignedTo) return;
     if (u.assignedTo !== j.assignedTo) out.carried += 1;
     u.assignedTo = j.assignedTo;
     // Planned the night before is a decision, not a suggestion awaiting a yes/no.
@@ -5139,9 +5145,23 @@ function resyncPlanDay(day, addOnly) {
     added.push(k);
   });
 
+  // A ROOM TIED TO ONE CLEANER IS THEIRS ON EVERY DAY, INCLUDING THE ONES ALREADY
+  // DRAWN UP. A plan made before the pin existed keeps the old name for ever — the
+  // re-sync only ever added and removed rooms, it never revisited who was on them. So
+  // the morning after tying 503 to somebody, the plan still read out the previous
+  // cleaner, and the office had two answers to the same question.
+  let repinned = 0;
+  Object.keys(plan).forEach((k) => {
+    const j = plan[k];
+    if (j.kind !== 'unit') return;
+    const u = (state.servicedUnits || []).find((x) => x.id === j.refId);
+    if (!u || !u.usualTo || j.assignedTo === u.usualTo) return;
+    j.assignedTo = u.usualTo; repinned += 1;
+  });
+
   const assigned = assignNewPlanJobs(day, added);
-  if (removed || added.length) save();
-  return { added: added.length, removed, assigned };
+  if (removed || added.length || repinned) save();
+  return { added: added.length, removed, assigned, repinned };
 }
 
 // Hand out only the jobs just added, fitting them around what is already dealt.
@@ -5385,6 +5405,9 @@ function mirrorPlanToBoard(day, key, keepBoard) {
       // morning hands it to a leader. Assigning it to them on the board by hand still
       // works — that is somebody deciding, which the app does not overrule.
       if (j.assignedTo && isAssistant((state.staff || []).find((p) => p.id === j.assignedTo))) return;
+      // Same rule as the morning: a room tied to one cleaner is not the plan's to give
+      // away. Left alone here, it shows as unassigned until it reaches its own person.
+      if (j.assignedTo && u.usualTo && u.usualTo !== j.assignedTo) return;
       u.assignedTo = j.assignedTo || null;
       // Handing a room out on purpose is the sign-off, exactly as it is on the board.
       // Marked as having come from the PLAN, though, not from somebody at the screen:
