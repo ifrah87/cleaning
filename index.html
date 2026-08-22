@@ -7979,6 +7979,15 @@ function tvWithLabel(p, spare) {
   return a.length ? 'with ' + a.map(tvName).join(', ') : '';
 }
 
+// AN ASSISTANT AT ALL — regardless of whether they are holding rooms today. A cleaner
+// on a team that has a leader, who is not that leader, assists. Kept separate from
+// tvNamedElsewhere below, which asks the narrower question of whether somebody has
+// already been named under a leader and so needs no column.
+function tvIsAssistant(p) {
+  if (!p || !p.isCleaner || p.isLeader || !p.crew) return false;
+  return teamMembers(p.crew).some((x) => x.id !== p.id && x.isLeader);
+}
+
 // Named under somebody else, so not given a column of their own.
 function tvNamedElsewhere(p, spare) {
   if (!p || !p.isCleaner || p.isLeader || !p.crew || !spare(p) || !tvHere(p)) return false;
@@ -8044,7 +8053,11 @@ function tvColumns() {
 
 function tvCrewStrip() {
   const wrap = el(`<div class="tv-crew"></div>`);
-  const crew = cleaningStaff().filter((p) => worksToday(p) && tvOnTeam(p));
+  // THE ROLL CALL IS THE LEADERS. An assistant is there to assist the leader they are
+  // tagged under, and they are already named on that leader's column — putting them on
+  // the roll call as well made the strip a list of everybody, which is the one thing it
+  // was not meant to be. Whoever a leader has with them is read off their column.
+  const crew = cleaningStaff().filter((p) => worksToday(p) && tvOnTeam(p) && !tvIsAssistant(p));
   if (!crew.length) { wrap.appendChild(el(`<div class="tv-empty">Nobody is rostered on today</div>`)); return wrap; }
 
   // WHO IS STILL IN THE BUILDING. Counted before the chips, because "how many are
