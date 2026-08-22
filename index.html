@@ -491,6 +491,19 @@
   .tv-col.out { background: var(--tv-out-bg); }
   .tv-col.out .tv-who { color: var(--tv-out-fg); }
 
+  /* The separate job. Bigger cards than the board's chips because there are far
+     fewer of them and each carries a deadline somebody has to act on. */
+  .tv-air { flex: 1; display: grid; grid-template-columns: repeat(auto-fill, minmax(20vw, 1fr));
+            gap: 1.2vw; align-content: start; }
+  .tv-aircard { background: var(--tv-card); border-radius: 1vw; padding: 1.6vh 1.4vw;
+                border-left: 0.5vw solid var(--tv-cover-ln); min-width: 0; }
+  .tv-aircard.done { border-left-color: var(--tv-done-ln); opacity: 0.72; }
+  .tv-airunit { font-size: 3vw; font-weight: 800; line-height: 1; }
+  .tv-aircard.done .tv-airunit { text-decoration: line-through; text-decoration-thickness: 0.15vw; color: var(--tv-done-fg); }
+  .tv-airguest { font-size: 1.3vw; font-weight: 700; color: var(--tv-muted); margin-top: 0.6vh; overflow-wrap: anywhere; }
+  .tv-airtime { font-size: 1.5vw; font-weight: 800; color: var(--tv-cover-fg); margin-top: 0.6vh; font-variant-numeric: tabular-nums; }
+  .tv-airdone { font-size: 1.1vw; font-weight: 800; letter-spacing: 0.1em; color: var(--tv-done-fg); margin-top: 0.6vh; }
+
   .tv-empty { font-size: 1.4vw; font-weight: 700; color: var(--tv-empty); padding: 1vh 0; }
   .tv-pager { display: flex; gap: 0.6vw; justify-content: center; }
   .tv-dot { width: 0.8vw; height: 0.8vw; border-radius: 50%; background: var(--tv-dot); }
@@ -7986,6 +7999,61 @@ function tvCrewStrip() {
   return wrap;
 }
 
+// THE SEPARATE JOB, ON ITS OWN PAGE. Airbnb is cleaned by its own pair after the
+// offices and is deliberately kept off the morning roll call — so it has no business
+// sitting among the columns, where it would read as somebody's round. It is still
+// work owed today though, and a board that never mentions it is exactly how it gets
+// forgotten. So it alternates with the main board instead: same screen, own page.
+function tvOffRollCall() {
+  try {
+    // DUE, not merely PLANNED. The obvious source here was plannedOffRollCall(), which
+    // is what the roll call screen uses — but it reads today's plan, and on a building
+    // where the twelve Airbnb rooms are daily and nobody plans them one by one, that
+    // list is empty while all twelve are sitting there owed. The board would have shown
+    // a blank page under a confident heading, which is worse than no page.
+    //
+    // So: everything off the roll call that today's list wants, plus anything actually
+    // planned, deduped. Cleaned rooms stay on with a line through them — a list that
+    // shrinks as work gets done cannot be read as progress.
+    const seen = {}, out = [];
+    const take = (u) => {
+      if (!u || u.paused || seen[u.id] || onRollCall(u)) return;
+      seen[u.id] = 1; out.push(u);
+    };
+    (state.servicedUnits || []).forEach((u) => { if (onTodaysList(u)) take(u); });
+    plannedOffRollCall().forEach(take);
+    return out.sort((a, b) => String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }));
+  } catch (e) { return []; }
+}
+
+// Named after whatever is actually on it rather than hardcoded to "Airbnb" — the
+// off-roll-call list is a rule about roll call, not a room type, and the day the
+// office switches something else off this page should say so without being edited.
+function tvAirTitle(air) {
+  const kinds = [];
+  air.forEach((u) => {
+    const l = ((UNIT_TYPES[unitType(u)] || {}).label || 'Rooms');
+    if (kinds.indexOf(l) < 0) kinds.push(l);
+  });
+  return (kinds.join(' + ') + ' — a separate job').toUpperCase();
+}
+
+function tvAirGrid(air) {
+  const grid = el(`<div class="tv-air"></div>`);
+  air.forEach((u) => {
+    const isDone = cleanedToday(u);
+    const card = el(`<div class="tv-aircard${isDone ? ' done' : ''}"></div>`);
+    card.appendChild(el(`<div class="tv-airunit">${esc(u.unit)}</div>`));
+    // The guest is who the room is being turned around for, and the checkout is the
+    // deadline. Both are the reason this job cannot simply wait until tomorrow.
+    if (u.guest) card.appendChild(el(`<div class="tv-airguest">${esc(u.guest)}</div>`));
+    if (u.time) card.appendChild(el(`<div class="tv-airtime">OUT ${esc(u.time)}</div>`));
+    if (isDone) card.appendChild(el(`<div class="tv-airdone">DONE</div>`));
+    grid.appendChild(card);
+  });
+  return grid;
+}
+
 function renderTV() {
   const app = document.getElementById('app');
   document.body.classList.add('tv');
@@ -7997,14 +8065,23 @@ function renderTV() {
   const wrap = el(`<div class="tv-wrap"></div>`);
 
   const cols = tvColumns();
-  const jobs = cols.reduce((n, c) => n + c.jobs.length, 0);
-  const done = cols.reduce((n, c) => n + c.jobs.filter((j) => j.done).length, 0);
+  const air = tvOffRollCall();
+  const boardPages = Math.max(1, Math.ceil(cols.length / TV_COLS_PER_PAGE));
+  const tvPages = boardPages + (air.length ? 1 : 0);
+  if (tvPage >= tvPages) tvPage = 0;
+  const onAir = air.length > 0 && tvPage === tvPages - 1 && tvPages > boardPages;
+
+  // Every number at the top counts the page you are actually looking at, or the
+  // Airbnb page would sit under the offices' progress and read as its own.
+  const jobs = onAir ? air.length : cols.reduce((n, c) => n + c.jobs.length, 0);
+  const done = onAir ? air.filter((u) => cleanedToday(u)).length
+                     : cols.reduce((n, c) => n + c.jobs.filter((j) => j.done).length, 0);
   const pct = jobs ? Math.round((done / jobs) * 100) : 0;
 
   // --- top line ---
   const top = el(`<div class="tv-top"></div>`);
   const left = el(`<div></div>`);
-  left.appendChild(el(`<div class="tv-brand">CLEANING BOARD</div>`));
+  left.appendChild(el(`<div class="tv-brand">${onAir ? esc(tvAirTitle(air)) : 'CLEANING BOARD'}</div>`));
   left.appendChild(el(`<div class="tv-date">${esc(now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }))}</div>`));
   top.appendChild(left);
 
@@ -8023,13 +8100,14 @@ function renderTV() {
     return t;
   };
   mid.appendChild(tile(done, 'DONE', '#22c55e'));
-  mid.appendChild(tile(jobs, jobs === 1 ? 'JOB TODAY' : 'JOBS TODAY', null));
+  mid.appendChild(tile(jobs, onAir ? (jobs === 1 ? 'ROOM TODAY' : 'ROOMS TODAY')
+                                   : (jobs === 1 ? 'JOB TODAY' : 'JOBS TODAY'), null));
   // Work with nobody behind it gets its own number at the top. The columns turn
   // over on a timer, so the one thing that must never be on the page you missed
   // is how much of today is currently falling on the floor.
   const cover = cols.filter((c) => c.out || c.none)
     .reduce((n, c) => n + c.jobs.filter((j) => !j.done).length, 0);
-  if (cover) mid.appendChild(tile(cover, 'NEED COVER', '#f59e0b'));
+  if (cover && !onAir) mid.appendChild(tile(cover, 'NEED COVER', '#f59e0b'));
   top.appendChild(mid);
 
   const right = el(`<div></div>`);
@@ -8047,16 +8125,16 @@ function renderTV() {
   bar.firstChild.style.width = pct + '%';
   wrap.appendChild(bar);
 
-  wrap.appendChild(tvCrewStrip());
+  // The roll call is the morning's crew. Airbnb is not on it, so on that page the
+  // strip would be naming people who are not doing this work.
+  if (!onAir) wrap.appendChild(tvCrewStrip());
 
   // --- columns, a page at a time ---
   // Spread the columns evenly over the pages rather than filling each to the
   // brim: six people is 3+3, not 5 then a lonely 1, and the column width stops
   // jumping about every time the board turns over.
-  const pages = Math.max(1, Math.ceil(cols.length / TV_COLS_PER_PAGE));
-  const perPage = Math.max(1, Math.ceil(cols.length / pages));
-  if (tvPage >= pages) tvPage = 0;
-  const shown = cols.slice(tvPage * perPage, tvPage * perPage + perPage);
+  const perPage = Math.max(1, Math.ceil(cols.length / boardPages));
+  const shown = onAir ? [] : cols.slice(tvPage * perPage, tvPage * perPage + perPage);
 
   const grid = el(`<div class="tv-cols"></div>`);
   const g = tvGrid(shown.length);
@@ -8108,11 +8186,11 @@ function renderTV() {
     col.appendChild(list);
     grid.appendChild(col);
   });
-  wrap.appendChild(grid);
+  wrap.appendChild(onAir ? tvAirGrid(air) : grid);
 
-  if (pages > 1) {
+  if (tvPages > 1) {
     const pager = el(`<div class="tv-pager"></div>`);
-    for (let i = 0; i < pages; i++) pager.appendChild(el(`<div class="tv-dot${i === tvPage ? ' on' : ''}"></div>`));
+    for (let i = 0; i < tvPages; i++) pager.appendChild(el(`<div class="tv-dot${i === tvPage ? ' on' : ''}"></div>`));
     wrap.appendChild(pager);
   }
 
@@ -8122,7 +8200,8 @@ function renderTV() {
 // No hands on this screen, so the board has to keep itself alive: redraw on a
 // tick, turn the page on its own, and re-pull in case realtime quietly died.
 function startTVLoop() {
-  const pages = () => Math.max(1, Math.ceil(tvColumns().length / TV_COLS_PER_PAGE));
+  const pages = () => Math.max(1, Math.ceil(tvColumns().length / TV_COLS_PER_PAGE))
+    + (tvOffRollCall().length ? 1 : 0);
   // PICK UP NEW CODE WITHOUT ANYBODY WALKING TO THE TV. The board pulls fresh DATA
   // all day, but the JavaScript it is running is whatever it downloaded when the page
   // was opened — and this screen is opened once and left for weeks. Every fix shipped
