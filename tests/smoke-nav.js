@@ -25,8 +25,11 @@ const WORK_TODAY=(()=>{const d=new Date();if(d.getHours()<3)d.setDate(d.getDate(
 const DAY_BEFORE=(()=>{const d=new Date();d.setDate(d.getDate()-(d.getHours()<3?2:1));return key(d)})();
 const SESSION={access_token:'t',token_type:'bearer',expires_in:3600,expires_at:Math.floor(Date.now()/1000)+3600,refresh_token:'r',user:{id:'u1',email:'a@b.c',aud:'authenticated',role:'authenticated'}};
 const STAFF=[
- {id:'p1',name:'Amina Yusuf',crew:'Team A',isCleaner:true,floors:[1,2],hikPersonId:'h1'},
- {id:'p2',name:'Fatima Ali',crew:'Team A',isCleaner:true,floors:[3],hikPersonId:'h2'},
+ // Both leaders: rooms are dealt to leaders only, so a cleaner who is meant to run
+ // their own round has to be tagged as one. Zahra below stays an assistant on Hodan's
+ // team, which is what the pairing checks are about.
+ {id:'p1',name:'Amina Yusuf',crew:'Team A',isCleaner:true,isLeader:true,floors:[1,2],hikPersonId:'h1'},
+ {id:'p2',name:'Fatima Ali',crew:'Team A',isCleaner:true,isLeader:true,floors:[3],hikPersonId:'h2'},
  {id:'p3',name:'Hodan Omar',crew:'Team B',isCleaner:true,isLeader:true,floors:[],hikPersonId:'h3'},
  // Down as OFF today — the alternating Friday rest day. She turns up anyway and
  // never badges, which is the case the office had no way to record.

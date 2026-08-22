@@ -54,7 +54,10 @@ const UNITS = [
 const APP_STATE = {
   staff: STAFF, teams: TEAMS, servicedUnits: UNITS, floors: 11,
   completions: {}, assignConfirmed: {}, manualArrivals: {}, attendance: {},
-  plans: { [WORK_TODAY]: { 'unit:u301': { kind: 'unit', refId: 'u301', label: '301', assignedTo: 'p4' } } },
+  // byHand: the office moved this one themselves. A plan the APP drew up from the rota
+  // is only a starting point and the morning re-deals it; a room somebody moved by hand
+  // is a decision and is never re-dealt. This test is about the second kind.
+  plans: { [WORK_TODAY]: { 'unit:u301': { kind: 'unit', refId: 'u301', label: '301', assignedTo: 'p4', byHand: true } } },
 };
 
 // The Hik Time Card fills in through the morning; the test pushes rows into it.

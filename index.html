@@ -1486,6 +1486,16 @@ function applyRemote(saved) {
   // saved into the settings by the time the office said so, where a new default cannot
   // reach it. Same one-off treatment: set once, recorded, and changeable in Settings
   // afterwards like any other setting.
+  // ONE-OFF: Ahmed Daahir is dealt no rooms automatically. He badges in late enough
+  // that a hand-out driven by the door reader gets it wrong every morning, and the
+  // office was unpicking it by hand each time. Set once, by name, because the flag is
+  // new and cannot otherwise reach a roster that already exists — after this it is the
+  // "Rooms by hand only" switch on his card like anybody else's, and can be turned off.
+  if (!TV_MODE && !state.noAutoOnce) {
+    state.noAutoOnce = '2026-08-23';
+    const late = (state.staff || []).find((x) => String(x.name || '').trim().toLowerCase() === 'ahmed daahir');
+    if (late && !late.noAuto) { late.noAuto = true; markDirty(); }
+  }
   if (!TV_MODE && !state.earlyCapOnce) {
     state.earlyCapOnce = '2026-08-23';
     if (state.earlyCap !== EARLY_CAP_DEFAULT) { state.earlyCap = EARLY_CAP_DEFAULT; markDirty(); }
@@ -2789,7 +2799,7 @@ function applyPlannedAssignments() {
     // work the leader's round with them. The room is left for the deal, which hands it
     // to a leader. A room the office assigned by hand is a different thing and is not
     // touched here: that is somebody deciding, not the app guessing.
-    if (isAssistant(staffById[j.assignedTo])) return;
+    if (!(staffById[j.assignedTo] || {}).isLeader) return;
     // A PIN OUTLASTS A PLAN. Tying a room to one cleaner is a standing instruction —
     // "only they clean this" — while a plan is one night's arrangement, and a plan
     // drawn up before the pin existed still carries the old name. Carrying it would
@@ -2807,8 +2817,11 @@ function applyPlannedAssignments() {
         && (out.slotLoad.early[j.assignedTo] || 0) >= earlyCap()) return;
     if (u.assignedTo !== j.assignedTo) out.carried += 1;
     u.assignedTo = j.assignedTo;
-    // Planned the night before is a decision, not a suggestion awaiting a yes/no.
-    state.assignConfirmed[u.id] = stampDay;
+    // Planned BY HAND the night before is a decision, not a suggestion awaiting a
+    // yes/no. Planned by the app from the rota is only a starting point — see
+    // mirrorPlanToBoard — so it stays open and the morning can even it up.
+    if (j.byHand) state.assignConfirmed[u.id] = stampDay;
+    else delete state.assignConfirmed[u.id];
     state.planCarried[u.id] = stampDay;
     out.load[j.assignedTo] = (out.load[j.assignedTo] || 0) + 1;
     const slot = timeSlot(u);
@@ -2981,7 +2994,12 @@ function autoAssignRooms(onlyRooms, loadSeed, slotSeed, silent) {
   for (const p of (state.staff || [])) byId[p.id] = p;
   const arrived = Object.keys(hikArrivals)
     .filter((id) => byId[id] && !isAway(id));
-  const leaders = arrived.filter((id) => !isAssistant(byId[id]));
+  // ONLY A LEADER TAKES A ROUND. This used to ask "are they somebody's assistant?",
+  // which is a question about their TEAM — so a cleaner on a team with no leader at all
+  // was nobody's assistant and got a full round of their own. Mohamed Salaal and Nur Ali
+  // Sidow are both on Outside team, which has no leader, and both came up holding rooms.
+  // The office's rule is simpler than the model was: rooms go to leaders.
+  const leaders = arrived.filter((id) => byId[id] && byId[id].isLeader && !noAuto(byId[id]));
   // …unless nobody in today is anything but an assistant. A room still has to be
   // cleaned, and refusing to hand it to the only people in the building is not a rule
   // worth keeping — it just leaves the morning undone.
@@ -4249,6 +4267,18 @@ const ROLES = {
 };
 const ROLE_ORDER = ['leader', 'assistant', 'none'];
 const roleOf = (p) => (!p || !p.isCleaner) ? 'none' : (p.isLeader ? 'leader' : 'assistant');
+// NEVER DEAL THIS PERSON A ROOM. Somebody who is reliably late is worse than absent
+// to a hand-out that runs on badge-ins: they scan in at nine, the morning deals them a
+// round nobody has started, and the office has to unpick it. Marked here, they are
+// simply not part of any automatic deal — the office gives them their rooms by hand,
+// which is what they were doing anyway. Assigning to them by hand still works.
+const noAuto = (p) => !!(p && p.noAuto);
+function toggleNoAuto(id) {
+  const p = (state.staff || []).find((s) => s.id === id);
+  if (!p) return;
+  if (p.noAuto) delete p.noAuto; else p.noAuto = true;
+  save(); render();
+}
 function setRole(id, role) {
   const p = (state.staff || []).find((s) => s.id === id);
   if (!p) return;
@@ -5295,7 +5325,7 @@ function assignNewPlanJobs(day, keys, skip) {
   // them, so a plan must not name an assistant either — otherwise tomorrow is drawn up
   // one way and handed out another. Falls back to everybody when no leader is down to
   // work that day, because a plan with nobody on it is no plan.
-  const withLead = able.filter((p) => !isAssistant(p));
+  const withLead = able.filter((p) => p.isLeader && !noAuto(p));
   const crew = withLead.length ? withLead : able;
   if (!crew.length) return 0;
 
@@ -5527,7 +5557,7 @@ function mirrorPlanToBoard(day, key, keepBoard) {
       // put the room on the board against their name. The room stays free and the
       // morning hands it to a leader. Assigning it to them on the board by hand still
       // works — that is somebody deciding, which the app does not overrule.
-      if (j.assignedTo && isAssistant((state.staff || []).find((p) => p.id === j.assignedTo))) return;
+      if (j.assignedTo && !((state.staff || []).find((p) => p.id === j.assignedTo) || {}).isLeader) return;
       // Same rule as the morning: a room tied to one cleaner is not the plan's to give
       // away. Left alone here, it shows as unassigned until it reaches its own person.
       if (j.assignedTo && u.usualTo && u.usualTo !== j.assignedTo) return;
@@ -5540,7 +5570,16 @@ function mirrorPlanToBoard(day, key, keepBoard) {
       // touch — which is how two early birds ended up holding eleven rooms each while
       // three people stood there with nothing.
       if (j.assignedTo) {
-        state.assignConfirmed[u.id] = todayKey();
+        // A PLAN THE APP WROTE IS NOT A DECISION. Days ahead are laid out from the
+        // ROTA — who is down to work — and the crew who actually turn up is a different
+        // set. Stamping every planned room as signed off meant the whole day arrived
+        // already decided: fourteen of Sunday's fifteen rooms were the rota's guess,
+        // the morning was not allowed to touch any of them, and whoever badged in last
+        // got whatever the rota had left them, however lopsided. Only a room somebody
+        // moved BY HAND is a decision; the rest are a starting point the morning is
+        // free to deal again as people arrive.
+        if (j.byHand) state.assignConfirmed[u.id] = todayKey();
+        else delete state.assignConfirmed[u.id];
         state.planCarried = state.planCarried || {};
         state.planCarried[u.id] = todayKey();
       } else {
@@ -5588,7 +5627,7 @@ function autoAssignPlan(day) {
   const arrived = Object.keys(hikArrivals).filter(id => byId[id]);
   // The room is the leader's; the assistant works it with them. Same rule as every
   // other hand-out, with the same fallback when no leader is in.
-  const leadIn = arrived.filter((id) => !isAssistant(byId[id]));
+  const leadIn = arrived.filter((id) => byId[id] && byId[id].isLeader && !noAuto(byId[id]));
   const inIds = leadIn.length ? leadIn : arrived;
   if (!inIds.length) { hikSyncMsg = { err: true, text: 'No one clocked in yet to assign these jobs to.' }; render(); return; }
   const jobs = planJobs(day);
@@ -6525,7 +6564,7 @@ function servicedCard(u, isDue) {
   // list of twenty — and an assistant should never be the answer, because the room is
   // the leader's and the assistant is there to work it with them. Naming the assistant
   // here would quietly move the room off the leader it belongs to.
-  cleaningStaff().filter(p => canCleanUnit(p, u) && !isAssistant(p)).forEach(p => {
+  cleaningStaff().filter(p => canCleanUnit(p, u) && p.isLeader).forEach(p => {
     const o = el(`<option value="${esc(p.id)}">${esc(p.name)}</option>`);
     if (u.assignedTo === p.id) o.setAttribute('selected', '');
     asel.appendChild(o);
@@ -7493,7 +7532,10 @@ function viewSettings() {
 
   // --- Room assignments (permanent) ---
   const raCleaners = (state.staff || []).filter(p => p.isCleaner);
-  const raPool = raCleaners.length ? raCleaners : (state.staff || []);
+  // Only leaders. A room belongs to a leader and their assistant works it with them, so
+  // offering the whole roster here is offering the wrong answer twenty times over.
+  const raLeaders = raCleaners.filter((p) => p.isLeader);
+  const raPool = raLeaders.length ? raLeaders : (raCleaners.length ? raCleaners : (state.staff || []));
   const rooms = (state.servicedUnits || []).slice()
     .sort((a, b) => String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }));
   wrap.appendChild(el(`<div class="section-label" style="margin-top:22px">Room assignments</div>`));
@@ -7861,6 +7903,22 @@ function employeeCard(p) {
   });
   card.appendChild(roleRow);
   card.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin-top:-4px">${esc(ROLES[role].hint)}</div>`));
+
+  // "Never deal them rooms" — for somebody who turns up late enough that a hand-out
+  // based on badge-ins gets it wrong every time.
+  if (p.isCleaner) {
+    const naRow = el(`<div style="display:flex;align-items:center;gap:8px;margin-top:6px"></div>`);
+    const on = noAuto(p);
+    const nb = el(`<button class="freqmini ${on ? 'on' : ''}" style="flex:0 0 auto;padding:6px 10px;font-size:11px`
+      + (on ? ';border-color:#b45309;color:#b45309;font-weight:800' : '') + `">`
+      + `${on ? '✓ ' : ''}Rooms by hand only</button>`);
+    nb.onclick = () => toggleNoAuto(p.id);
+    naRow.appendChild(nb);
+    naRow.appendChild(el(`<div style="font-size:11px;color:#5f7189;flex:1">`
+      + (on ? 'Never dealt rooms automatically — you give them theirs.'
+            : 'Include them in the morning hand-out.') + `</div>`));
+    card.appendChild(naRow);
+  }
 
   // TEAM: changed here, not three taps away inside Edit.
   const teamRow = el(`<div style="display:flex;align-items:center;gap:8px"></div>`);
