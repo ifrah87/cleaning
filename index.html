@@ -457,6 +457,11 @@
     font-size: 1.35vw; font-weight: 800; padding: 0.7vh 1.1vw; border-radius: 0.9vw;
     background: var(--tv-chip); border: 0.18vw solid transparent; letter-spacing: 0.02em;
   }
+  .tv-crewhead { display: flex; gap: 1.4vw; align-items: baseline; }
+  .tv-crewhead .on { font-size: 1.15vw; font-weight: 800; letter-spacing: 0.1em; color: #22c55e; }
+  .tv-crewhead .off { font-size: 1.15vw; font-weight: 800; letter-spacing: 0.1em; color: var(--tv-muted); }
+  .tv-chip.gone { opacity: 0.5; }
+  .tv-at.gone { color: var(--tv-muted); opacity: 0.9; }
   .tv-chip .st { font-size: 0.95vw; font-weight: 700; opacity: 0.85; margin-left: 0.5vw; font-variant-numeric: tabular-nums; }
 
   .tv-cols { --tvs: 1; flex: 1; display: grid; gap: calc(1.2vw * var(--tvs)); grid-auto-rows: minmax(0, 1fr); }
@@ -7928,7 +7933,19 @@ const tvOnTeam = (p) => {
 // "did not come in" are different things and the board must not conflate them.
 function tvArrival(p) {
   const a = p && hikArrivals && hikArrivals[p.id];
-  return (a && a.time) ? fmtEventTime(a.time) : '';
+  // Already formatted by arrivalsForDay(); running it through fmtEventTime again
+  // happened to be harmless but was one refactor away from not being.
+  return (a && a.time) ? String(a.time) : '';
+}
+
+// GONE HOME. The last badge scan of the day, which arrivalsForDay already works out.
+// Worth being honest about what this is: the reader records a scan, not a direction,
+// so somebody who steps out to the shop and back has a last scan that is really a
+// re-entry. It is the best the door can tell us, and on a crew that badges out at the
+// end of a shift it is right nearly always — but it is "last seen", not a promise.
+function tvLeft(p) {
+  const a = p && hikArrivals && hikArrivals[p.id];
+  return (a && a.out) ? String(a.out) : '';
 }
 
 // The shared withLabel() prints bare first names, which on this screen would undo the
@@ -7968,7 +7985,7 @@ function tvColumns() {
     cols.push({
       key: p.id, name: tvName(p), jobs: grouped.buckets[p.id] || [],
       none: false, out: AWAY.indexOf(st) >= 0, status: st, with: tvWithLabel(p, spare),
-      team: tvTeam(p), at: tvArrival(p),
+      team: tvTeam(p), at: tvArrival(p), left: tvLeft(p),
     });
   });
   // Somebody off the rota still holding work has to show, or that work vanishes.
@@ -7978,7 +7995,7 @@ function tvColumns() {
     cols.push({
       key: p.id, name: tvName(p), jobs: grouped.buckets[p.id],
       none: false, out: AWAY.indexOf(st) >= 0, status: st, with: tvWithLabel(p, spare),
-      team: tvTeam(p), at: tvArrival(p),
+      team: tvTeam(p), at: tvArrival(p), left: tvLeft(p),
     });
   });
   // Stranded work first, then TEAMS TOGETHER. The first rule is unchanged: work with
@@ -8012,18 +8029,33 @@ function tvCrewStrip() {
   const wrap = el(`<div class="tv-crew"></div>`);
   const crew = cleaningStaff().filter((p) => worksToday(p) && tvOnTeam(p));
   if (!crew.length) { wrap.appendChild(el(`<div class="tv-empty">Nobody is rostered on today</div>`)); return wrap; }
-  // Away first: who is missing is the thing you want to read without hunting.
+
+  // WHO IS STILL IN THE BUILDING. Counted before the chips, because "how many are
+  // still here" is a question people were answering by counting green outlines.
+  const here = crew.filter((p) => !tvLeft(p) && AWAY.indexOf(state.attendance[p.id] || 'present') < 0);
+  const gone = crew.filter((p) => tvLeft(p));
+  const head = el(`<div class="tv-crewhead"></div>`);
+  head.appendChild(el(`<span class="on">${here.length} STILL HERE</span>`));
+  if (gone.length) head.appendChild(el(`<span class="off">${gone.length} LEFT</span>`));
+  wrap.appendChild(head);
+
+  // Away first — who is missing is what you want without hunting. Then the people
+  // still in, then the ones who have gone home: the board reads down the day.
   crew.slice().sort((a, b) => {
-    const rank = (p) => AWAY.indexOf(state.attendance[p.id] || 'present') >= 0 ? 0 : 1;
+    const rank = (p) => AWAY.indexOf(state.attendance[p.id] || 'present') >= 0 ? 0
+      : tvLeft(p) ? 2 : 1;
     return rank(a) - rank(b) || String(a.name).localeCompare(String(b.name));
   }).forEach((p) => {
     const st = state.attendance[p.id] || 'present';
     const meta = STATUS[st] || STATUS.present;
     // The time is the more useful fact when somebody is in — it answers "was the
     // 6am round covered?" — so it takes the slot the word PRESENT was using.
-    const at = tvArrival(p);
-    const tail = (st === 'present' && at) ? at : meta.label;
-    const chip = el(`<div class="tv-chip"><span>${esc(tvName(p))}</span><span class="st">${esc(tail)}</span></div>`);
+    const at = tvArrival(p), left = tvLeft(p);
+    // Gone home reads as gone: dimmed, and told in the words the roll call uses.
+    const tail = (st !== 'present') ? meta.label
+      : left ? ('IN ' + at + ' · OUT ' + left)
+      : at ? ('IN ' + at) : meta.label;
+    const chip = el(`<div class="tv-chip${(st === 'present' && left) ? ' gone' : ''}"><span>${esc(tvName(p))}</span><span class="st">${esc(tail)}</span></div>`);
     chip.style.borderColor = meta.color;
     // Present takes the board's own text colour rather than a hardcoded near-white:
     // on the light ground that was white-on-white and the whole roll call vanished.
@@ -8205,7 +8237,7 @@ function renderTV() {
     if (c.team || c.at) {
       const meta = el(`<div class="tv-meta"></div>`);
       meta.appendChild(el(`<div class="tv-team">${c.team ? esc(c.team) : ''}</div>`));
-      if (c.at) meta.appendChild(el(`<div class="tv-at">IN ${esc(c.at)}</div>`));
+      if (c.at) meta.appendChild(el(`<div class="tv-at${c.left ? ' gone' : ''}">${c.left ? 'OUT ' + esc(c.left) : 'IN ' + esc(c.at)}</div>`));
       hd.appendChild(meta);
     }
     col.appendChild(hd);
