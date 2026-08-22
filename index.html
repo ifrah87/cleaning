@@ -395,61 +395,106 @@
     body:not(.tv) .sheet { max-width: 900px; margin: auto auto 0; width: 100%; }
   }
 
-  body.tv { background: #0a1220; color: #eaf1fb; }
+  /* ---------------------------------------------------------------------------
+     TWO GROUNDS, ONE BOARD. Every colour below is a variable so the light version
+     is a palette swap and not a second stylesheet drifting out of step with this
+     one. Dark is still the default and still for the reason it always was — a
+     white screen left on all day is a lamp on the office wall — but the app is
+     paper-white, and being able to put the two side by side on the actual TV is
+     worth more than the argument about which is right.
+     --------------------------------------------------------------------------- */
+  body.tv {
+    --tv-bg: #0a1220;      --tv-fg: #eaf1fb;      --tv-muted: #6f8ab0;
+    --tv-card: #101c30;    --tv-line: #1e2f4d;    --tv-chip: #16233a;
+    --tv-bar: #1b2942;     --tv-empty: #56698a;   --tv-accent: #7ea6dc;
+    --tv-dot: #24344f;     --tv-job-bg: #1c2b45;  --tv-job-fg: #dce8f8;  --tv-job-ln: #3d557f;
+    --tv-early-bg: #4a1414; --tv-early-fg: #ffd9d9; --tv-early-ln: #ef4444;
+    --tv-done-bg: #123020;  --tv-done-fg: #86efac;  --tv-done-ln: #22c55e;
+    --tv-area-bg: #1a2438;  --tv-area-fg: #b7c8de;  --tv-area-ln: #64748b;
+    --tv-cover-bg: #3d2c08; --tv-cover-fg: #fde68a; --tv-cover-ln: #f59e0b;
+    --tv-none-bg: #2b2008;  --tv-none-fg: #fbbf24;
+    --tv-out-bg: #241a06;   --tv-out-fg: #fcd34d;
+    background: var(--tv-bg); color: var(--tv-fg);
+  }
+  /* The app's own paper: same #f4f7fb ground, white cards, same urgency hues at
+     the tints a light background needs to keep them legible. */
+  body.tv.tvlight {
+    --tv-bg: #f4f7fb;      --tv-fg: #0f172a;      --tv-muted: #5f7189;
+    --tv-card: #ffffff;    --tv-line: #e7ecf3;    --tv-chip: #ffffff;
+    --tv-bar: #e2e8f0;     --tv-empty: #94a3b8;   --tv-accent: #0284c7;
+    --tv-dot: #cbd5e1;     --tv-job-bg: #eef3fa;  --tv-job-fg: #16324f;  --tv-job-ln: #94a9c9;
+    --tv-early-bg: #fee2e2; --tv-early-fg: #991b1b; --tv-early-ln: #ef4444;
+    --tv-done-bg: #dcfce7;  --tv-done-fg: #166534;  --tv-done-ln: #16a34a;
+    --tv-area-bg: #f1f5f9;  --tv-area-fg: #475569;  --tv-area-ln: #64748b;
+    --tv-cover-bg: #fef3c7; --tv-cover-fg: #92400e; --tv-cover-ln: #f59e0b;
+    --tv-none-bg: #fff7ed;  --tv-none-fg: #b45309;
+    --tv-out-bg: #fffbeb;   --tv-out-fg: #b45309;
+  }
+  body.tv.tvlight .tv-col { box-shadow: 0 0 0 1px var(--tv-line); }
+  body.tv.tvlight .tv-chip { box-shadow: 0 0 0 1px var(--tv-line); }
+
   body.tv #app { min-height: 100vh; padding: 0; }
   ::-webkit-scrollbar { display: none; }
   .tv-wrap { min-height: 100vh; padding: 3vh 3vw; display: flex; flex-direction: column; gap: 2vh; }
   .tv-top { display: flex; align-items: flex-end; justify-content: space-between; gap: 2vw; }
-  .tv-brand { font-size: 1.5vw; font-weight: 800; letter-spacing: 0.18em; color: #6f8ab0; }
+  .tv-brand { font-size: 1.5vw; font-weight: 800; letter-spacing: 0.18em; color: var(--tv-muted); }
   .tv-date { font-size: 3vw; font-weight: 800; line-height: 1.05; }
   .tv-clock { font-size: 5vw; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; }
-  .tv-stamp { font-size: 1.2vw; font-weight: 600; color: #6f8ab0; text-align: right; margin-top: 0.4vh; }
+  .tv-stamp { font-size: 1.2vw; font-weight: 600; color: var(--tv-muted); text-align: right; margin-top: 0.4vh; }
   .tv-stale { color: #f59e0b; }
 
-  .tv-progress { display: flex; align-items: baseline; gap: 0.8vw; }
-  .tv-progress .n { font-size: 5vw; font-weight: 800; line-height: 1; color: #22c55e; }
-  .tv-progress .of { font-size: 2vw; font-weight: 700; color: #6f8ab0; }
-  .tv-bar { height: 1.1vh; border-radius: 1vh; background: #1b2942; overflow: hidden; }
+  /* Each number over its own word, so none of them can be read as part of the one
+     next to it. This is the fix for "1 of 28 done", which nobody could parse. */
+  .tv-progress { display: flex; align-items: flex-end; gap: 2.4vw; }
+  .tv-tile { display: flex; flex-direction: column; align-items: center; }
+  .tv-tile .n { font-size: 4.6vw; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; }
+  .tv-tile .cap { font-size: 1.05vw; font-weight: 800; letter-spacing: 0.12em; color: var(--tv-muted); margin-top: 0.3vh; white-space: nowrap; }
+  .tv-bar { height: 1.1vh; border-radius: 1vh; background: var(--tv-bar); overflow: hidden; }
   .tv-bar > i { display: block; height: 100%; background: #22c55e; border-radius: 1vh; }
 
   .tv-crew { display: flex; flex-wrap: wrap; gap: 0.7vw; }
   .tv-chip {
     font-size: 1.35vw; font-weight: 800; padding: 0.7vh 1.1vw; border-radius: 0.9vw;
-    background: #16233a; border: 0.18vw solid transparent; letter-spacing: 0.02em;
+    background: var(--tv-chip); border: 0.18vw solid transparent; letter-spacing: 0.02em;
   }
-  .tv-chip .st { font-size: 0.95vw; font-weight: 700; opacity: 0.85; margin-left: 0.5vw; }
+  .tv-chip .st { font-size: 0.95vw; font-weight: 700; opacity: 0.85; margin-left: 0.5vw; font-variant-numeric: tabular-nums; }
 
   .tv-cols { --tvs: 1; flex: 1; display: grid; gap: calc(1.2vw * var(--tvs)); grid-auto-rows: minmax(0, 1fr); }
-  .tv-col { background: #101c30; border-radius: 1vw; padding: calc(1.4vh * var(--tvs)) calc(1vw * var(--tvs)); display: flex; flex-direction: column; gap: calc(1vh * var(--tvs)); min-width: 0; min-height: 0; }
-  .tv-col-hd { border-bottom: 0.15vw solid #1e2f4d; padding-bottom: 0.9vh; }
+  .tv-col { background: var(--tv-card); border-radius: 1vw; padding: calc(1.4vh * var(--tvs)) calc(1vw * var(--tvs)); display: flex; flex-direction: column; gap: calc(1vh * var(--tvs)); min-width: 0; min-height: 0; }
+  .tv-col-hd { border-bottom: 0.15vw solid var(--tv-line); padding-bottom: 0.9vh; }
   .tv-hd-row { display: flex; align-items: baseline; justify-content: space-between; gap: 0.6vw; }
-  .tv-who { font-size: calc(1.9vw * var(--tvs)); font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-  .tv-count { font-size: calc(1.3vw * var(--tvs)); font-weight: 800; color: #6f8ab0; font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .tv-with { font-size: calc(1vw * var(--tvs)); font-weight: 700; color: #6f8ab0; margin-top: 0.35vh; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* Wraps rather than clips: a name cut off at the column edge is the same failure
+     as a name cut to its first word, which is what this board just stopped doing. */
+  .tv-who { font-size: calc(1.7vw * var(--tvs)); font-weight: 800; line-height: 1.12; min-width: 0; overflow-wrap: anywhere; }
+  .tv-count { font-size: calc(1.3vw * var(--tvs)); font-weight: 800; color: var(--tv-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .tv-with { font-size: calc(1vw * var(--tvs)); font-weight: 700; color: var(--tv-muted); margin-top: 0.35vh; overflow-wrap: anywhere; }
+  .tv-meta { display: flex; align-items: baseline; justify-content: space-between; gap: 0.6vw; margin-top: 0.4vh; }
+  .tv-team { font-size: calc(1vw * var(--tvs)); font-weight: 800; letter-spacing: 0.06em; color: var(--tv-accent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tv-at { font-size: calc(1vw * var(--tvs)); font-weight: 800; color: var(--tv-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
   .tv-sub { font-size: calc(1.05vw * var(--tvs)); font-weight: 800; letter-spacing: 0.06em; margin-top: 0.4vh; }
   .tv-jobs { display: flex; flex-wrap: wrap; gap: calc(0.5vw * var(--tvs)); align-content: start; }
   .tv-job {
     font-size: calc(2vw * var(--tvs)); font-weight: 800; padding: calc(1vh * var(--tvs)) calc(1.1vw * var(--tvs)); border-radius: 0.6vw;
-    background: #1c2b45; color: #dce8f8; border-left: 0.35vw solid #3d557f;
+    background: var(--tv-job-bg); color: var(--tv-job-fg); border-left: 0.35vw solid var(--tv-job-ln);
   }
   /* Urgency reads as colour, and the order on screen is the instruction:
      early rooms red and at the front, done green, nobody-assigned amber. */
-  .tv-job.early { background: #4a1414; color: #ffd9d9; border-left-color: #ef4444; }
-  .tv-job.done  { background: #123020; color: #86efac; border-left-color: #22c55e; text-decoration: line-through; text-decoration-thickness: 0.15vw; opacity: 0.75; }
-  .tv-job.area  { background: #1a2438; color: #b7c8de; border-left-color: #64748b; font-weight: 700; }
+  .tv-job.early { background: var(--tv-early-bg); color: var(--tv-early-fg); border-left-color: var(--tv-early-ln); }
+  .tv-job.done  { background: var(--tv-done-bg); color: var(--tv-done-fg); border-left-color: var(--tv-done-ln); text-decoration: line-through; text-decoration-thickness: 0.15vw; opacity: 0.75; }
+  .tv-job.area  { background: var(--tv-area-bg); color: var(--tv-area-fg); border-left-color: var(--tv-area-ln); font-weight: 700; }
   /* Amber is the colour of work with no one behind it — whether it was never
      handed out, or the person it was handed to is off sick. Same colour either
      way, because from across the room they are the same problem. */
-  .tv-job.cover { background: #3d2c08; color: #fde68a; border-left-color: #f59e0b; }
-  .tv-col.none { background: #2b2008; }
-  .tv-col.none .tv-who, .tv-col.none .tv-count { color: #fbbf24; }
-  .tv-col.out { background: #241a06; }
-  .tv-col.out .tv-who { color: #fcd34d; }
+  .tv-job.cover { background: var(--tv-cover-bg); color: var(--tv-cover-fg); border-left-color: var(--tv-cover-ln); }
+  .tv-col.none { background: var(--tv-none-bg); }
+  .tv-col.none .tv-who, .tv-col.none .tv-count { color: var(--tv-none-fg); }
+  .tv-col.out { background: var(--tv-out-bg); }
+  .tv-col.out .tv-who { color: var(--tv-out-fg); }
 
-  .tv-empty { font-size: 1.4vw; font-weight: 700; color: #56698a; padding: 1vh 0; }
+  .tv-empty { font-size: 1.4vw; font-weight: 700; color: var(--tv-empty); padding: 1vh 0; }
   .tv-pager { display: flex; gap: 0.6vw; justify-content: center; }
-  .tv-dot { width: 0.8vw; height: 0.8vw; border-radius: 50%; background: #24344f; }
-  .tv-dot.on { background: #7ea6dc; }
+  .tv-dot { width: 0.8vw; height: 0.8vw; border-radius: 50%; background: var(--tv-dot); }
+  .tv-dot.on { background: var(--tv-accent); }
 </style>
 </head>
 <body>
@@ -7798,51 +7843,14 @@ const TV_PULL_MS = 60000;        // belt and braces — smart TV browsers drop w
 let tvPage = 0;
 let tvLastData = 0;              // when the board last saw fresh numbers
 
-const tvFirst = (n) => String(n || '').trim().split(/\s+/)[0] || '—';
-
-// A first name is the right length for a television — until two of them are the same.
-// Two cleaners called Mahad give you two identical chips and two columns either of
-// them could be holding, and from across the office the only thing telling them apart
-// is which rooms are underneath, which is precisely the thing you were trying to read.
-// So the first name is kept while it is unambiguous and grown only as far as it must
-// be: an initial where that settles it, the whole second name where it does not.
-// Nobody gets a longer name because somebody else has a twin.
-function tvNamesFor(people) {
-  const parts = (n) => String(n || '').trim().split(/\s+/).filter(Boolean);
-  const out = {}, byFirst = {};
-  people.forEach((p) => {
-    const f = parts(p.name)[0] || '—';
-    (byFirst[f] = byFirst[f] || []).push(p);
-  });
-  Object.keys(byFirst).forEach((f) => {
-    const group = byFirst[f];
-    if (group.length === 1) { out[group[0].id] = f; return; }
-    const byInitial = {};
-    group.forEach((p) => {
-      const i = (parts(p.name)[1] || '').charAt(0).toUpperCase();
-      (byInitial[i] = byInitial[i] || []).push(p);
-    });
-    group.forEach((p) => {
-      const w = parts(p.name);
-      const i = (w[1] || '').charAt(0).toUpperCase();
-      // No second name to grow into: leave it be rather than print a bare full stop.
-      if (!i) { out[p.id] = f; return; }
-      out[p.id] = (byInitial[i].length === 1) ? (f + ' ' + i + '.') : (f + ' ' + w[1]);
-    });
-  });
-  return out;
-}
-
-// Rebuilt only when the roster actually changes: renderTV runs on a 20s timer and
-// this would otherwise recompute the same answer for the life of the board.
-let _tvNames = { sig: '', map: {} };
-function tvName(p) {
-  if (!p) return '—';
-  const people = (state.staff || []);
-  const sig = people.map((x) => x.id + ':' + x.name).join('|');
-  if (sig !== _tvNames.sig) _tvNames = { sig: sig, map: tvNamesFor(people) };
-  return _tvNames.map[p.id] || tvFirst(p.name);
-}
+// FULL NAMES. An earlier board cut every name to its first word to buy column
+// width, which made two cleaners called Mahad into two identical headings. The
+// office asked for the whole name and the team beside it: the board is the thing
+// people point at when they are working out who is where, and half a name is the
+// half of that question it cannot answer. Names wrap to a second line rather than
+// being clipped — a truncated name is the same problem in a different disguise.
+const tvName = (p) => String((p && p.name) || '').trim() || '—';
+const tvTeam = (p) => String((p && p.crew) || '').trim();
 
 // Every job on today's board, grouped by who is holding it. Rooms and communal
 // areas together: from across the room a walk is another thing somebody has to
@@ -7882,6 +7890,15 @@ function tvJobsByPerson() {
 // a wall the whole office reads would be a promise the day cannot keep.
 const tvHere = (x) => AWAY.indexOf(state.attendance[x.id] || 'present') < 0;
 
+// WHAT TIME SOMEBODY CAME IN. The badge data is already loaded for the roll call;
+// the board simply never showed it. Blank when there is no scan — Hik's Time Card
+// fills in through the morning (see the attendance-lag note), so "no time yet" and
+// "did not come in" are different things and the board must not conflate them.
+function tvArrival(p) {
+  const a = p && hikArrivals && hikArrivals[p.id];
+  return (a && a.time) ? fmtEventTime(a.time) : '';
+}
+
 // The shared withLabel() prints bare first names, which on this screen would undo the
 // thing tvName() exists to do: "with Mahad" above one column while another column is
 // headed Mahad A. is the same ambiguity in smaller type. Same sentence, TV names.
@@ -7904,6 +7921,7 @@ function tvColumns() {
     cols.push({
       key: p.id, name: tvName(p), jobs: grouped.buckets[p.id] || [],
       none: false, out: AWAY.indexOf(st) >= 0, status: st, with: tvWithLabel(p),
+      team: tvTeam(p), at: tvArrival(p),
     });
   });
   // Somebody off the rota still holding work has to show, or that work vanishes.
@@ -7913,6 +7931,7 @@ function tvColumns() {
     cols.push({
       key: p.id, name: tvName(p), jobs: grouped.buckets[p.id],
       none: false, out: AWAY.indexOf(st) >= 0, status: st, with: tvWithLabel(p),
+      team: tvTeam(p), at: tvArrival(p),
     });
   });
   // Stranded work first. The board pages itself, and a sick cleaner's untouched
@@ -7934,7 +7953,11 @@ function tvCrewStrip() {
   }).forEach((p) => {
     const st = state.attendance[p.id] || 'present';
     const meta = STATUS[st] || STATUS.present;
-    const chip = el(`<div class="tv-chip"><span>${esc(tvName(p))}</span><span class="st">${esc(meta.label)}</span></div>`);
+    // The time is the more useful fact when somebody is in — it answers "was the
+    // 6am round covered?" — so it takes the slot the word PRESENT was using.
+    const at = tvArrival(p);
+    const tail = (st === 'present' && at) ? at : meta.label;
+    const chip = el(`<div class="tv-chip"><span>${esc(tvName(p))}</span><span class="st">${esc(tail)}</span></div>`);
     chip.style.borderColor = meta.color;
     chip.style.color = (st === 'present') ? '#eaf1fb' : meta.color;
     wrap.appendChild(chip);
@@ -7945,6 +7968,9 @@ function tvCrewStrip() {
 function renderTV() {
   const app = document.getElementById('app');
   document.body.classList.add('tv');
+  // ?tv=1&light=1 — the same board on the app's own paper-white ground, so the two
+  // can be looked at on the actual wall rather than argued about in the abstract.
+  document.body.classList.toggle('tvlight', /[?&]light\b/.test(location.search));
   app.innerHTML = '';
   const now = new Date();
   const wrap = el(`<div class="tv-wrap"></div>`);
@@ -7961,20 +7987,28 @@ function renderTV() {
   left.appendChild(el(`<div class="tv-date">${esc(now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }))}</div>`));
   top.appendChild(left);
 
+  // THREE NUMBERS, EACH SAYING WHAT IT IS. This used to read "1 of 28 done", which
+  // is a sentence broken across two type sizes and was reliably misread — people
+  // asked whether 28 was the total, the target, or the rooms left. Each number now
+  // carries its own label underneath it and means only one thing.
   const mid = el(`<div class="tv-progress"></div>`);
-  mid.appendChild(el(`<div class="n">${done}</div>`));
-  mid.appendChild(el(`<div class="of">of ${jobs} done</div>`));
+  const tile = (n, label, color) => {
+    const t = el(`<div class="tv-tile"></div>`);
+    const num = el(`<div class="n">${n}</div>`);
+    if (color) num.style.color = color;
+    const cap = el(`<div class="cap">${esc(label)}</div>`);
+    if (color) cap.style.color = color;
+    t.appendChild(num); t.appendChild(cap);
+    return t;
+  };
+  mid.appendChild(tile(done, 'DONE', '#22c55e'));
+  mid.appendChild(tile(jobs, jobs === 1 ? 'JOB TODAY' : 'JOBS TODAY', null));
   // Work with nobody behind it gets its own number at the top. The columns turn
   // over on a timer, so the one thing that must never be on the page you missed
   // is how much of today is currently falling on the floor.
   const cover = cols.filter((c) => c.out || c.none)
     .reduce((n, c) => n + c.jobs.filter((j) => !j.done).length, 0);
-  if (cover) {
-    const warn = el(`<div class="tv-progress" style="margin-left:2vw"></div>`);
-    warn.appendChild(el(`<div class="n" style="color:#f59e0b">${cover}</div>`));
-    warn.appendChild(el(`<div class="of" style="color:#f59e0b">need cover</div>`));
-    mid.appendChild(warn);
-  }
+  if (cover) mid.appendChild(tile(cover, 'NEED COVER', '#f59e0b'));
   top.appendChild(mid);
 
   const right = el(`<div></div>`);
@@ -8033,6 +8067,14 @@ function renderTV() {
     // at from across the office. Muted, because it answers a question about the
     // heading rather than being another thing to read.
     if (c.with) hd.appendChild(el(`<div class="tv-with">${esc(c.with)}</div>`));
+    // Team on the left, the time they badged in on the right: the two questions
+    // asked of a name on this board that the name alone cannot answer.
+    if (c.team || c.at) {
+      const meta = el(`<div class="tv-meta"></div>`);
+      meta.appendChild(el(`<div class="tv-team">${c.team ? esc(c.team) : ''}</div>`));
+      if (c.at) meta.appendChild(el(`<div class="tv-at">IN ${esc(c.at)}</div>`));
+      hd.appendChild(meta);
+    }
     col.appendChild(hd);
     const list = el(`<div class="tv-jobs"></div>`);
     if (!c.jobs.length) list.appendChild(el(`<div class="tv-empty">—</div>`));
@@ -8082,7 +8124,13 @@ function startTVLoop() {
   setInterval(() => renderTV(), TV_TICK_MS);
   setInterval(() => { tvPage = (tvPage + 1) % pages(); renderTV(); }, TV_PAGE_MS);
   setInterval(() => {
-    remotePull().then(() => { tvLastData = Date.now(); renderTV(); }).catch(() => {});
+    // Arrivals as well as the board. Hik's Time Card fills in through the morning,
+    // so a 06:40 badge-in is routinely not in the data when the board first loads,
+    // and a board that asked once at boot would show an empty roll call all day.
+    Promise.all([
+      remotePull(),
+      Promise.resolve().then(() => loadHikArrivals()).catch(() => {}),
+    ]).then(() => { tvLastData = Date.now(); renderTV(); }).catch(() => {});
   }, TV_PULL_MS);
   // A TV that sleeps at 10am is a blank wall. Wake Lock is refused by most TV
   // browsers, so this is a try-and-shrug, not a guarantee — turn the screensaver
