@@ -194,6 +194,31 @@ for (const [label,vp] of [['PHONE',{width:420,height:900}],['DESKTOP',{width:144
  check('a pinned daily room cleaned yesterday is still due today',
    pinnedRecent.dailyToday===true, JSON.stringify(pinnedRecent));
 
+ // ROLL CALL AND PLAN A DAY ARE THE SAME BUILDING ON THE SAME DAY. Today was the one
+ // day the week-ahead loop never laid out, so the plan for it was empty while the roll
+ // call showed a full morning; and the plan dropped a room the moment it was cleaned,
+ // where the roll call keeps it with a tick.
+ const agree=await page.evaluate(()=>{
+   const day=workToday();
+   const rc=todaysRoomList().map(u=>u.unit).sort();
+   const pl=planJobs(day).filter(j=>j.kind==='unit')
+     .map(j=>String(j.label).replace(/^Unit /,'')).sort();
+   return {day, rc, pl, planExists:!!(state.plans||{})[day],
+           onlyRC:rc.filter(x=>!pl.includes(x)), onlyPlan:pl.filter(x=>!rc.includes(x))};
+ });
+ check('today gets a plan like every other day', agree.planExists && agree.pl.length>0,
+   `${agree.pl.length} jobs on today's plan`);
+ check('roll call and the plan show the same rooms for today',
+   agree.onlyRC.length===0 && agree.onlyPlan.length===0,
+   `roll call only: ${JSON.stringify(agree.onlyRC)} · plan only: ${JSON.stringify(agree.onlyPlan)}`);
+ check('and the same number of them', agree.rc.length===agree.pl.length,
+   `${agree.rc.length} vs ${agree.pl.length}`);
+ // Plan a Day opens on the day the roll call is showing, not on tomorrow.
+ await page.locator('.nav button').nth(2).click(); await page.waitForTimeout(700);
+ const planHdr=await page.locator('.h-date').first().textContent();
+ check('Plan a Day opens on today', /TODAY/.test(planHdr), planHdr);
+ await page.locator('.nav button').nth(0).click(); await page.waitForTimeout(500);
+
  // A DAILY ROOM COMES UP EVERY DAY, MARKED OR NOT.
  const dailyBeat=await page.evaluate(()=>{
    const days=Array.from({length:7},(_,i)=>shiftDay(workToday(),i));
@@ -233,9 +258,17 @@ for (const [label,vp] of [['PHONE',{width:420,height:900}],['DESKTOP',{width:144
  await page.locator('.nav button').nth(0).click(); await page.waitForTimeout(600);
  const boardOf=()=>page.evaluate(()=>{const o={};(state.servicedUnits||[]).forEach(u=>{if(u.assignedTo)o[u.unit]=u.assignedTo});return o});
  const first=await boardOf();
- // Only the leader is in, so every room the plan did NOT already name goes to them.
+ // Only the leader is in. Everything the plan did not already name goes to them —
+ // and nothing may be handed to somebody who is not here, which is what left rooms
+ // sitting all morning under the name of a cleaner who had not turned up.
+ const inNow=await page.evaluate(()=>Object.keys(hikArrivals));
+ const planned=await page.evaluate(()=>Object.values((state.plans||{})[workToday()]||{})
+   .filter(j=>j.assignedTo).map(j=>j.assignedTo));
+ const strays=Object.entries(first).filter(([,who])=>!inNow.includes(who)&&!planned.includes(who));
+ check('no room is handed to somebody who has not badged in',
+   strays.length===0, 'in: '+JSON.stringify(inNow)+' board: '+JSON.stringify(first));
  check('the rooms nobody planned go to the one person who is in',
-   first['101']==='p1'&&first['601']==='p2'&&first['A1']==='p3', JSON.stringify(first));
+   first['101']==='p3'&&first['A1']==='p3', JSON.stringify(first));
  // The Friday case: the add list must offer people the rota says are OFF, in their
  // own group, as well as the ones who are simply not in yet.
  const groups=await page.evaluate(()=>{

@@ -4321,15 +4321,25 @@ let planMore = false;
 // Anchored to the work day, not the clock day: at 00:20 the crew is still on the
 // round that started last night, so "tomorrow" must not skip a day under them.
 const tomorrowKey = () => shiftDay(workToday(), 1);
-function curPlanDay() { return planDay || tomorrowKey(); }
+// OPENS ON THE DAY THE ROLL CALL IS SHOWING. It opened on tomorrow, so tapping Plan
+// from the morning board landed you on a different day's rooms with a warning that
+// these are not today's — two screens about the same building that never agreed.
+// Tomorrow is one tap along, and the button under the picker plans it.
+function curPlanDay() { return planDay || workToday(); }
 // Tomorrow's list, computed from the schedule instead of typed in by hand. Rooms
 // come from their own cycle (daily / every other day / weekly), interior areas
 // from whether their period is still outstanding. Overdue work is carried in and
 // flagged rather than quietly dropped.
 function suggestedJobsFor(day) {
   const out = [];
+  // TODAY'S PLAN IS TODAY'S WORK, INCLUDING WHAT IS ALREADY DONE. The roll call keeps
+  // a cleaned room on the list with a tick so the morning does not shrink as the crew
+  // work through it; the plan dropped it the moment it stopped being due. Same day,
+  // same building, two different lists and two different totals — 22 rooms on one
+  // screen and 13 on the other. A room cleaned today belongs on today's plan, ticked.
+  const isToday = day === workToday();
   (state.servicedUnits || []).forEach(u => {
-    if (!dueOnDay(u, day)) return;
+    if (!dueOnDay(u, day) && !(isToday && cleanedToday(u))) return;
     const due = lastCleanDate(u) ? nextDueDate(u) : null;
     out.push({
       kind: 'unit', id: u.id, label: 'Unit ' + u.unit,
@@ -4570,7 +4580,15 @@ function topUpTodayPlan() { return resyncPlanDay(workToday(), true); }
 function ensureWeekPlanned(nDays) {
   const span = nDays || PLAN_AHEAD_DAYS;
   let jobs = 0, assigned = 0, days = 0;
-  for (let i = 1; i <= span; i += 1) {
+  // FROM TODAY, NOT FROM TOMORROW. Every day ahead was laid out and today was skipped,
+  // so today was the one day that never had a plan at all: Plan a Day showed an empty
+  // screen for it while Roll Call showed twenty-two rooms, and the roll call carried a
+  // standing warning that there was no plan for today and it was falling back to the
+  // raw schedule. topUpTodayPlan could not rescue it either — it re-syncs an existing
+  // plan, and bails on an empty one so that a day cleared on purpose stays cleared.
+  // Seeding today is safe: seedPlanOnce deliberately does not hand today's rooms round
+  // from the rota, because the door reader decides who is actually in.
+  for (let i = 0; i <= span; i += 1) {
     const r = ensureDayPlanned(shiftDay(workToday(), i));
     const n = (r.seeded || 0) + (r.added || 0);
     if (n || r.assigned) days += 1;
