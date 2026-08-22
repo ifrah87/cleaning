@@ -7945,7 +7945,13 @@ function tvColumns() {
   // hidden for fifteen seconds at a time, ordering had to fight to get the urgent onto
   // the visible page. Everybody is on one screen now, so ordering can group instead.
   return cols.sort((a, b) => {
-    const rank = (c) => (c.none ? 0 : (c.out && c.jobs.some((j) => !j.done)) ? 1 : 2);
+    // An empty column is not work, it is the absence of it, and it was landing second
+    // on the board purely because "Outside team" sorts before "Team A". Somebody in
+    // with nothing on them is worth showing — it is how you notice a spare pair of
+    // hands — but at the end, not in the place the eye lands first.
+    const rank = (c) => c.none ? 0
+      : (c.out && c.jobs.some((j) => !j.done)) ? 1
+      : c.jobs.length ? 2 : 3;
     // Teamless people sort last rather than under an empty heading, so "Outside team"
     // sits at the end where it reads as the exception it is.
     const teamKey = (c) => (c.team ? '0' + c.team.toLowerCase() : '1');
