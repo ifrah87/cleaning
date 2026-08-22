@@ -7878,9 +7878,10 @@ const TV_PAGE_MS = 15000;        // long enough to read a column before it moves
 // the separate job is a glance to confirm nothing has been forgotten. Equal airtime
 // gave a twelve-room checklist the same standing as the whole morning round, and the
 // page people actually needed was off screen half the time.
+// Kept for the record rather than used: the board no longer rotates at all. These
+// were the dwell times back when it did, and they are here so that anyone thinking of
+// bringing rotation back knows what was tried and that it was turned off on purpose.
 const TV_AIR_PAGE_MS = 6000;
-// After somebody turns the page by hand, hold it. Being shunted off a page you just
-// chose is worse than not being able to choose at all.
 const TV_HOLD_MS = 45000;
 const TV_TICK_MS = 20000;        // redraw: clock, and anything realtime already dropped into state
 const TV_PULL_MS = 60000;        // belt and braces — smart TV browsers drop websockets silently
@@ -8329,25 +8330,18 @@ function startTVLoop() {
     location.reload();
   }, 60000);
   setInterval(() => renderTV(), TV_TICK_MS);
-  // Self-rescheduling rather than a fixed interval, so each page can be given the
-  // time it is worth instead of every page being worth fifteen seconds.
-  let _turn = null;
-  const boardPageCount = () => Math.max(1, Math.ceil(tvColumns().length / TV_COLS_PER_PAGE));
-  const dwell = () => (tvPage >= boardPageCount() ? TV_AIR_PAGE_MS : TV_PAGE_MS);
-  const scheduleTurn = (ms) => {
-    clearTimeout(_turn);
-    _turn = setTimeout(() => {
-      tvPage = (tvPage + 1) % pages();
-      renderTV();
-      scheduleTurn();
-    }, ms === undefined ? dwell() : ms);
-  };
-  scheduleTurn();
-
-  // THE REMOTE TURNS THE PAGE. Left and right on the d-pad. The board is still a
-  // display and nothing on it can be clicked, but "show me the other page now"
-  // is a fair thing to ask of a screen on a wall, and waiting out a timer for it
-  // is the kind of small helplessness that makes people stop using a board.
+  // THE BOARD DOES NOT TURN ITSELF. It used to rotate — fifteen seconds of board,
+  // six of Airbnb, round and round — and that was wrong for a screen on a wall: a
+  // board that moves while you are reading it makes you wait for your own information
+  // to come back, and movement in the corner of a room is a thing people learn to
+  // ignore. The office asked for it to stay still, which is also the honest default:
+  // the main board is the page that matters and it is now simply always up.
+  //
+  // The other pages have not gone anywhere. Right and left on the remote reach them,
+  // and the board stays wherever it is put — no timer waiting to take the screen back
+  // off whoever is standing in front of it. A reload returns to page one on its own,
+  // so a page left open overnight is corrected by the 3am refresh without anyone
+  // having to remember.
   document.addEventListener('keydown', (e) => {
     const n = pages();
     if (n < 2) return;
@@ -8356,7 +8350,6 @@ function startTVLoop() {
     else return;
     e.preventDefault();
     renderTV();
-    scheduleTurn(TV_HOLD_MS);   // they are reading it; leave it alone for a while
   });
   setInterval(() => {
     // Arrivals as well as the board. Hik's Time Card fills in through the morning,
