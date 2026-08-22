@@ -21,12 +21,17 @@ const SESSION = { access_token: 't', token_type: 'bearer', expires_in: 3600, exp
 
 // Five cleaners. Hodan leads (capped at 4 rooms, owed 2 early ones). Amina owns
 // floor 2 personally; Team B owns floor 3. Sagal turns up an hour and a half late.
+// EVERYBODY HERE RUNS THEIR OWN ROUND. A cleaner tagged under a leader is that
+// leader's assistant and works the round with them rather than holding rooms of their
+// own — so a crew of one leader and four assistants would leave four people with
+// nothing, correctly, and tell us nothing about how the work is split. The assistant
+// rule has its own scenario at the end.
 const STAFF = [
   { id: 'p1', name: 'Hodan Omar',  crew: 'Team A', isCleaner: true, isLeader: true, floors: [] },
-  { id: 'p2', name: 'Amina Yusuf', crew: 'Team A', isCleaner: true, floors: [2] },
-  { id: 'p3', name: 'Fatima Ali',  crew: 'Team A', isCleaner: true, floors: [] },
-  { id: 'p4', name: 'Zahra Ahmed', crew: 'Team B', isCleaner: true, floors: [] },
-  { id: 'p5', name: 'Sagal Nur',   crew: 'Team B', isCleaner: true, floors: [] },
+  { id: 'p2', name: 'Amina Yusuf', crew: 'Team A', isCleaner: true, isLeader: true, floors: [2] },
+  { id: 'p3', name: 'Fatima Ali',  crew: 'Team A', isCleaner: true, isLeader: true, floors: [] },
+  { id: 'p4', name: 'Zahra Ahmed', crew: 'Team B', isCleaner: true, isLeader: true, floors: [] },
+  { id: 'p5', name: 'Sagal Nur',   crew: 'Team B', isCleaner: true, isLeader: true, floors: [] },
 ];
 const TEAMS = [ { name: 'Team A', color: '#0284c7', floors: [] }, { name: 'Team B', color: '#15803d', floors: [3] } ];
 
@@ -89,8 +94,11 @@ const head = (t) => console.log('\n\x1b[1m' + t + '\x1b[0m');
   await ctx.addInitScript(([h, ss]) => { localStorage.setItem('sb-' + h.split('.')[0] + '-auth-token', JSON.stringify(ss)); }, [SUPA_HOST, SESSION]);
   const page = await ctx.newPage();
   const errs = [];
-  page.on('console', (x) => { if (x.type() === 'error') errs.push(x.text()); });
-  page.on('pageerror', (e) => errs.push('pageerror: ' + e.message));
+  // The realtime socket cannot connect from the harness — every request to Supabase is
+  // answered locally and there is no network. That is the test working, not a fault.
+  const noise = (t) => /realtime\/v1\/websocket|ERR_NAME_NOT_RESOLVED/.test(t);
+  page.on('console', (x) => { if (x.type() === 'error' && !noise(x.text())) errs.push(x.text()); });
+  page.on('pageerror', (e) => { if (!noise(e.message)) errs.push('pageerror: ' + e.message); });
   await page.goto(`http://127.0.0.1:${port}/index.html`, { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('.nav', { timeout: 20000 });
   await page.waitForTimeout(2500);
@@ -211,6 +219,36 @@ const head = (t) => console.log('\n\x1b[1m' + t + '\x1b[0m');
 
   check('and those rooms are picked up by the crew who are in, not left blank',
     orphans.length === 0, 'nobody on: ' + orphans.join(', '));
+
+  // AN ASSISTANT WORKS THE LEADER'S ROUND WITH THEM. Rooms go to the leader; the
+  // assistant is never given one of their own.
+  const asst = await page.evaluate(async () => {
+    (state.staff || []).forEach((p) => { p.crew = 'Team A'; p.isLeader = p.id === 'p1'; });
+    state.attendance = {};
+    (state.servicedUnits || []).forEach((u) => { u.assignedTo = null; u.usualTo = null; });
+    state.assignConfirmed = {}; state.planCarried = {}; state.autoAssignedFor = null;
+    maybeAutoAssign(); render();
+    await new Promise((r) => setTimeout(r, 300));
+    const nameOf = (id) => { const p = (state.staff || []).find((x) => x.id === id); return p ? p.name.split(' ')[0] : null; };
+    const held = {};
+    (state.servicedUnits || []).forEach((u) => { if (u.assignedTo) held[nameOf(u.assignedTo)] = (held[nameOf(u.assignedTo)] || 0) + 1; });
+    return { held, leader: 'Hodan' };
+  });
+  console.log('    rooms per person: ' + JSON.stringify(asst.held));
+  check('only the leader is given rooms when everyone else is their assistant',
+    Object.keys(asst.held).length === 1 && asst.held['Hodan'] > 0, JSON.stringify(asst.held));
+
+  // …but a crew with no leader at all still gets the work — a rule that leaves the
+  // morning undone is worse than no rule.
+  const noLead = await page.evaluate(async () => {
+    (state.staff || []).forEach((p) => { p.isLeader = false; });
+    (state.servicedUnits || []).forEach((u) => { u.assignedTo = null; });
+    state.assignConfirmed = {}; state.planCarried = {}; state.autoAssignedFor = null;
+    maybeAutoAssign(); render();
+    await new Promise((r) => setTimeout(r, 300));
+    return (state.servicedUnits || []).filter((u) => u.assignedTo).length;
+  });
+  check('a crew with no leader in still gets the rooms handed out', noLead > 0, 'rooms handed out: ' + noLead);
 
   check('no console errors during the morning', errs.length === 0, errs.slice(0, 4).join('\n         '));
 

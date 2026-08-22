@@ -2754,6 +2754,11 @@ function applyPlannedAssignments() {
       return;
     }
     if (!canCleanUnit(staffById[j.assignedTo], u)) return;
+    // A plan drawn up automatically must not put a room on an assistant either — they
+    // work the leader's round with them. The room is left for the deal, which hands it
+    // to a leader. A room the office assigned by hand is a different thing and is not
+    // touched here: that is somebody deciding, not the app guessing.
+    if (isAssistant(staffById[j.assignedTo])) return;
     if (u.assignedTo !== j.assignedTo) out.carried += 1;
     u.assignedTo = j.assignedTo;
     // Planned the night before is a decision, not a suggestion awaiting a yes/no.
@@ -2920,8 +2925,21 @@ function autoAssignRooms(onlyRooms, loadSeed, slotSeed, silent) {
   // sick an hour later, and the office marks them away — but the hand-out read the
   // Time Card alone, so it kept dealing rooms to a person who had gone. Those rooms
   // sat with a name against them all morning and were simply never cleaned.
-  const people = Object.keys(hikArrivals)
-    .filter((id) => (state.staff || []).some((s) => s.id === id) && !isAway(id))
+  // A ROOM GOES TO A LEADER, NOT TO THEIR ASSISTANT. An assistant is there to work the
+  // round WITH the leader they are tagged under — the room is the leader's and the
+  // pair do it together, which is why the room picker has always refused to offer an
+  // assistant. The hand-out did not know that, so it dealt them rooms of their own and
+  // the same flat had two people answering for it. Somebody whose team has no leader
+  // is not an assistant and still takes rooms; see isAssistant.
+  const byId = {};
+  for (const p of (state.staff || [])) byId[p.id] = p;
+  const arrived = Object.keys(hikArrivals)
+    .filter((id) => byId[id] && !isAway(id));
+  const leaders = arrived.filter((id) => !isAssistant(byId[id]));
+  // …unless nobody in today is anything but an assistant. A room still has to be
+  // cleaned, and refusing to hand it to the only people in the building is not a rule
+  // worth keeping — it just leaves the morning undone.
+  const people = (leaders.length ? leaders : arrived)
     .map((id) => ({ id, raw: hikArrivals[id].raw }))
     .sort((a, b) => String(a.raw || '').localeCompare(String(b.raw || '')));   // earliest badge-in first
   if (!people.length) { if (silent) return; hikSyncMsg = { err: true, text: 'No one clocked in to assign rooms to.' }; render(); return; }
@@ -5135,9 +5153,15 @@ function assignNewPlanJobs(day, keys, skip) {
   // skip = whoever cannot take work today, so somebody off sick does not get handed
   // their own rooms straight back.
   const out = skip instanceof Set ? skip : new Set(skip ? [skip] : []);
-  const crew = cleaningStaff().filter((p) => worksOnDay(p, day) && !out.has(p.id)
+  const able = cleaningStaff().filter((p) => worksOnDay(p, day) && !out.has(p.id)
       && !(day === todayKey() && isAway(p.id)))
     .slice().sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  // Same rule as the morning: the room is the leader's and the assistant works it with
+  // them, so a plan must not name an assistant either — otherwise tomorrow is drawn up
+  // one way and handed out another. Falls back to everybody when no leader is down to
+  // work that day, because a plan with nobody on it is no plan.
+  const withLead = able.filter((p) => !isAssistant(p));
+  const crew = withLead.length ? withLead : able;
   if (!crew.length) return 0;
 
   const unitById = {};
@@ -5356,6 +5380,11 @@ function mirrorPlanToBoard(day, key, keepBoard) {
       const u = (state.servicedUnits || []).find((x) => x.id === j.refId);
       if (!u) return;
       if (keepBoard && u.assignedTo) return;   // the board was changed since; it wins
+      // An assistant works the leader's round with them, so a plan naming one must not
+      // put the room on the board against their name. The room stays free and the
+      // morning hands it to a leader. Assigning it to them on the board by hand still
+      // works — that is somebody deciding, which the app does not overrule.
+      if (j.assignedTo && isAssistant((state.staff || []).find((p) => p.id === j.assignedTo))) return;
       u.assignedTo = j.assignedTo || null;
       // Handing a room out on purpose is the sign-off, exactly as it is on the board.
       // Marked as having come from the PLAN, though, not from somebody at the screen:
@@ -5410,7 +5439,13 @@ function planJobDone(j) {
 function clearPlanDay(day) { showConfirm('Clear this day’s plan?', 'Removes every planned job for ' + day + '.', () => { if (state.plans) delete state.plans[day]; save(); render(); }); }
 // Auto-spread the planned jobs evenly across whoever's clocked in.
 function autoAssignPlan(day) {
-  const inIds = Object.keys(hikArrivals).filter(id => (state.staff || []).some(s => s.id === id));
+  const byId = {};
+  for (const p of (state.staff || [])) byId[p.id] = p;
+  const arrived = Object.keys(hikArrivals).filter(id => byId[id]);
+  // The room is the leader's; the assistant works it with them. Same rule as every
+  // other hand-out, with the same fallback when no leader is in.
+  const leadIn = arrived.filter((id) => !isAssistant(byId[id]));
+  const inIds = leadIn.length ? leadIn : arrived;
   if (!inIds.length) { hikSyncMsg = { err: true, text: 'No one clocked in yet to assign these jobs to.' }; render(); return; }
   const jobs = planJobs(day);
   if (!jobs.length) { hikSyncMsg = { err: true, text: 'No jobs planned for this day yet — add some below.' }; render(); return; }
