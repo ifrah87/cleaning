@@ -272,6 +272,20 @@ const head = (t) => console.log('\n\x1b[1m' + t + '\x1b[0m');
   check('a plan naming somebody else does not take a pinned room off its cleaner',
     pinVsPlan === 'Amina', '301 -> ' + pinVsPlan + ' (tied to Amina, planned for Zahra)');
 
+  // THE MORNING HAND-OUT TURNS ITSELF BACK ON, ONCE. The switch lives in the saved
+  // state, so a new build cannot reach it — this clears it on the next open and
+  // records that it has, so switching it off afterwards sticks.
+  const migrated = await page.evaluate(() => ({ auto: state.autoAssign, once: state.autoAssignOnce }));
+  check('the hand-out is switched back on when the app opens',
+    migrated.auto !== false && !!migrated.once, JSON.stringify(migrated));
+  const staysOff = await page.evaluate(() => {
+    state.autoAssign = false;          // the office switches it off again, deliberately
+    applyRemote(JSON.parse(JSON.stringify(state)));   // …and the app pulls the state down again
+    return state.autoAssign;
+  });
+  check('switching it off after that sticks — the one-off does not run twice',
+    staysOff === false, 'autoAssign is now ' + staysOff);
+
   check('no console errors during the morning', errs.length === 0, errs.slice(0, 4).join('\n         '));
 
   await browser.close(); s.close();

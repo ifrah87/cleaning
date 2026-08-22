@@ -1471,6 +1471,17 @@ function applyRemote(saved) {
   Object.keys(localSeeded).forEach((d) => { if (mergedPlans[d]) mergedSeeded[d] = mergedSeeded[d] || localSeeded[d]; });
 
   state = { ...state, ...saved, tab: keepTab, pendingCover: null, editingUnit: null, editingArea: null, editingEmp: null };
+  // TURN THE MORNING HAND-OUT BACK ON, ONCE. It was switched off at some point and the
+  // office has asked for the rooms to be dealt automatically again — but a setting lives
+  // in the saved state, where no new build can reach it. Done here, on the settings as
+  // they come off the server: finalizeState also runs against the empty default state a
+  // moment earlier, and stamping the job done there marked it finished against settings
+  // that had not arrived yet. Recorded so it is a one-off — switch it off after this and
+  // it stays off, which is what a setting means.
+  if (!TV_MODE && !state.autoAssignOnce) {
+    state.autoAssignOnce = '2026-08-22';
+    if (state.autoAssign === false) { delete state.autoAssign; markDirty(); }
+  }
   state.plans = mergedPlans;
   state.planSeeded = mergedSeeded;
   state.removedUnits = gone;
