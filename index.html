@@ -482,6 +482,8 @@
                   font-variant-numeric: tabular-nums; margin-left: 0.25vw; }
   .tv-also .gone { opacity: 0.55; }
   .tv-with .tv-noscan { color: #fbbf24; font-weight: 800; }
+  .tv-note { font-size: 0.82vw; font-weight: 800; color: #fbbf24; letter-spacing: 0.02em;
+             margin-top: 0.2vh; }
   .tv-chip.noscan { opacity: 0.92; }
   .tv-chip.gone { opacity: 0.5; }
   .tv-at.gone { color: var(--tv-muted); opacity: 0.9; }
@@ -4414,6 +4416,18 @@ function editEmployee(id, name, crew, floorsStr) {
   state.editingEmp = null;
   save(); render();
 }
+// A LINE OF PLAIN ENGLISH ABOUT A PERSON. The board can say where somebody is on
+// the floor plan and whether the door has seen them, and neither answers "Ahmed is
+// at the other building today". That is not a status, a team or a floor - it is a
+// sentence, and there was nowhere to put one. Kept short deliberately: it goes on a
+// wall next to a name, not in a file.
+function setEmpNote(id, text) {
+  const p = (state.staff || []).find((x) => x.id === id);
+  if (!p) return;
+  const t = String(text || '').trim().slice(0, 60);
+  if (t) p.note = t; else delete p.note;
+  save(); render();
+}
 function startEditEmp(id) { state.editingEmp = id; render(); }
 function cancelEditEmp() { state.editingEmp = null; render(); }
 // ONE ROLE PER PERSON. "Cleaner" and "Leader" were two independent switches, so a
@@ -8039,6 +8053,12 @@ function employeeCard(p) {
     // amber number is a floor somebody else has; tapping it moves the floor over.
     card.appendChild(el(`<div style="font-size:11px;color:#5b6a7f;font-weight:600;margin-top:8px">Floors</div>`));
     card.appendChild(floorGrid(p));
+    // Free text, shown on their column on the wall. Blank it to take it off again.
+    card.appendChild(el(`<div style="font-size:11px;color:#5b6a7f;font-weight:600;margin-top:8px">Note on the board</div>`));
+    const noteIn = el(`<input value="${esc(p.note || '')}" maxlength="60" placeholder="e.g. Offsite - 2 Dhagax" `
+      + `style="width:100%;font-size:13px;padding:7px 9px;border:1px solid #d8e0ea;border-radius:8px">`);
+    noteIn.onchange = (e) => setEmpNote(p.id, e.target.value);
+    card.appendChild(noteIn);
     // What this person is cleared to clean. Trainees are commonly kept off offices.
     card.appendChild(el(`<div style="font-size:11px;color:#5b6a7f;font-weight:600;margin-top:8px">Cleared to clean</div>`));
     const canRow = el(`<div style="display:flex;gap:6px;flex-wrap:wrap"></div>`);
@@ -8797,7 +8817,7 @@ function tvColumns() {
     cols.push({
       key: p.id, name: tvName(p), jobs: grouped.buckets[p.id] || [],
       none: false, out: AWAY.indexOf(st) >= 0, status: st, with: tvWithLabel(p, spare),
-      team: tvTeam(p), at: tvArrival(p), left: tvLeft(p),
+      team: tvTeam(p), at: tvArrival(p), left: tvLeft(p), note: p.note || '',
     });
   });
   // Somebody off the rota still holding work has to show, or that work vanishes.
@@ -8807,7 +8827,7 @@ function tvColumns() {
     cols.push({
       key: p.id, name: tvName(p), jobs: grouped.buckets[p.id],
       none: false, out: AWAY.indexOf(st) >= 0, status: st, with: tvWithLabel(p, spare),
-      team: tvTeam(p), at: tvArrival(p), left: tvLeft(p),
+      team: tvTeam(p), at: tvArrival(p), left: tvLeft(p), note: p.note || '',
     });
   });
   // Stranded work first, then TEAMS TOGETHER. The first rule is unchanged: work with
@@ -9137,6 +9157,9 @@ function renderTV() {
     // at from across the office. Muted, because it answers a question about the
     // heading rather than being another thing to read.
     if (c.with) hd.appendChild(el(`<div class="tv-with">${c.with}</div>`));   // pre-escaped in tvWithLabel
+    // Amber, and above the team line: it is the exception to everything else the
+    // column says, so it should be read before the routine facts and not after them.
+    if (c.note) hd.appendChild(el(`<div class="tv-note">${esc(c.note)}</div>`));
     // Team on the left, the time they badged in on the right: the two questions
     // asked of a name on this board that the name alone cannot answer.
     if (c.team || c.at) {
