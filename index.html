@@ -8935,10 +8935,16 @@ function tvAlsoStrip() {
   const wrap = el(`<div class="tv-also"></div>`);
   wrap.appendChild(el(`<span class="lab">ALSO IN</span>`));
   who.forEach((p) => {
-    const left = tvLeft(p);
+    const at = tvArrival(p), left = tvLeft(p);
     const row = el(`<span class="who${left ? ' gone' : ''}"></span>`);
     row.appendChild(el(`<span>${esc(tvName(p))}</span>`));
-    row.appendChild(el(`<span class="at">${left ? 'LEFT ' + esc(left) : esc(tvArrival(p))}</span>`));
+    // BOTH TIMES HERE, unlike the roll call above. The crew chips deliberately carry
+    // one time and not two - twelve of them at double width took four rows and pushed
+    // the board off the bottom of the screen. This line is text rather than chips and
+    // there are only ever a handful of names on it, so the full shift fits: these are
+    // the people nobody is tracking through the morning, and "was he here at eight?"
+    // is the whole reason the line exists.
+    row.appendChild(el(`<span class="at">${esc(at)}${left ? ' \u2192 ' + esc(left) : ''}</span>`));
     wrap.appendChild(row);
   });
   return wrap;
