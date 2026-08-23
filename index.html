@@ -8653,7 +8653,28 @@ let tvLastData = 0;              // when the board last saw fresh numbers
 // half of that question it cannot answer. Names wrap to a second line rather than
 // being clipped — a truncated name is the same problem in a different disguise.
 const tvName = (p) => String((p && p.name) || '').trim() || '—';
-const tvTeam = (p) => String((p && p.crew) || '').trim();
+// TEAM AND FLOOR, IN ONE LINE. The team letter says who somebody works with; the
+// floor says where they are, which is the thing an office actually shouts across a
+// room ("who's got six?"). The board had the first and not the second, so the floor
+// allocation existed in Settings and nowhere anybody looked. Contiguous floors are
+// written as a range - "Floors 8-9", not "Floors 8, 9" - because that is how a
+// building is spoken about.
+const tvFloorLabel = (p) => {
+  const f = (p && Array.isArray(p.floors) ? p.floors : []).slice().sort((a, b) => a - b);
+  if (!f.length) return '';
+  const runs = [];
+  f.forEach((n) => {
+    const last = runs[runs.length - 1];
+    if (last && n === last[1] + 1) last[1] = n; else runs.push([n, n]);
+  });
+  const txt = runs.map(([a, b]) => (a === b ? a : a + '-' + b)).join(', ');
+  return (f.length > 1 ? 'Floors ' : 'Floor ') + txt;
+};
+const tvTeam = (p) => {
+  const crew = String((p && p.crew) || '').trim();
+  const fl = tvFloorLabel(p);
+  return fl ? (crew ? crew + ' \u00b7 ' + fl : fl) : crew;
+};
 
 // Every job on today's board, grouped by who is holding it. Rooms and communal
 // areas together: from across the room a walk is another thing somebody has to
