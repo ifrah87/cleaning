@@ -1276,7 +1276,10 @@ function save() {
   // since it last looked. It keeps its own local copy so the screen stays right; it
   // just never sends it. Nothing is lost — every figure on that board was saved by
   // whichever device actually did the work.
-  if (TV_MODE) return;
+  // …EXCEPT THE ONE BOARD THAT DECIDES. The dealer TV works the morning out, so it
+  // is the device that "actually did the work" and its answer has to reach everyone
+  // else. Every other board still never writes.
+  if (!CAN_WRITE) return;
   markDirty();
   remotePush();
 }
@@ -1323,7 +1326,7 @@ function remotePush() {
 
 // Send the current state to the server. Resolves true only when the row is written.
 async function pushNow() {
-  if (!db || _pushing || TV_MODE) return false;   // the board is a display, not a writer
+  if (!db || _pushing || !CAN_WRITE) return false;   // a display board is not a writer
   clearTimeout(_pushTimer);    // a pending debounce is now redundant
   clearTimeout(_retryTimer);
   _pushing = true;
@@ -1420,7 +1423,7 @@ function applyRemote(saved) {
   const serialized = JSON.stringify(saved);
   if (serialized === _lastRemoteJSON) return;   // this is our own write echoing back
   // Never discard a change this device has not delivered yet; send ours instead.
-  if (isDirty() && !TV_MODE) { pushNow(); return; }   // the board has nothing of its own to send
+  if (isDirty() && CAN_WRITE) { pushNow(); return; }   // a display board has nothing of its own to send
   _lastRemoteJSON = serialized;
   const keepTab = state.tab;
   // A DAY THAT ONLY THIS DEVICE HAS SEEN SURVIVES THE PULL.
@@ -1507,7 +1510,7 @@ function applyRemote(saved) {
   // moment earlier, and stamping the job done there marked it finished against settings
   // that had not arrived yet. Recorded so it is a one-off — switch it off after this and
   // it stays off, which is what a setting means.
-  if (!TV_MODE && !state.autoAssignOnce) {
+  if (CAN_WRITE && !state.autoAssignOnce) {
     state.autoAssignOnce = '2026-08-22';
     if (state.autoAssign === false) { delete state.autoAssign; markDirty(); }
   }
@@ -1520,12 +1523,12 @@ function applyRemote(saved) {
   // office was unpicking it by hand each time. Set once, by name, because the flag is
   // new and cannot otherwise reach a roster that already exists — after this it is the
   // "Rooms by hand only" switch on his card like anybody else's, and can be turned off.
-  if (!TV_MODE && !state.noAutoOnce) {
+  if (CAN_WRITE && !state.noAutoOnce) {
     state.noAutoOnce = '2026-08-23';
     const late = (state.staff || []).find((x) => String(x.name || '').trim().toLowerCase() === 'ahmed daahir');
     if (late && !late.noAuto) { late.noAuto = true; markDirty(); }
   }
-  if (!TV_MODE && !state.earlyCapOnce) {
+  if (CAN_WRITE && !state.earlyCapOnce) {
     state.earlyCapOnce = '2026-08-23';
     if (state.earlyCap !== EARLY_CAP_DEFAULT) { state.earlyCap = EARLY_CAP_DEFAULT; markDirty(); }
   }
@@ -1535,13 +1538,13 @@ function applyRemote(saved) {
   state.completions = mergedDone;
   state.untick = untick;
   if (mergedUnits) state.servicedUnits = mergedUnits;
-  if ((rescued || unitsKept || ticksKept) && !TV_MODE) markDirty();   // ours to deliver — the server has not got these
+  if ((rescued || unitsKept || ticksKept) && CAN_WRITE) markDirty();   // ours to deliver — the server has not got these
   if (state.coverageDay !== todayKey()) { state.coverage = {}; state.unitCover = {}; state.pendingCover = null; state.coverageDay = todayKey(); }
   finalizeState();
   try { localStorage.setItem(STORE, JSON.stringify(state)); } catch (e) {}
   stampSynced();             // fresh from the server counts as in sync, same as a push
   tvLastData = Date.now();   // the TV board dates itself off the last thing it heard
-  if ((rescued || unitsKept || ticksKept) && !TV_MODE) remotePush();  // get them up before anything overwrites them
+  if ((rescued || unitsKept || ticksKept) && CAN_WRITE) remotePush();  // get them up before anything overwrites them
   route();
 }
 
@@ -2300,7 +2303,7 @@ function applyEodLevel(plan) {
 // is on. A schedule that rearranges itself silently is one nobody trusts, so what
 // moved is kept for the week-ahead panel to say.
 function autoLevelEodDays() {
-  if (TV_MODE) return { moves: 0 };
+  if (!CAN_WRITE) return { moves: 0 };
   // ITS OWN SWITCH, ON UNLESS SWITCHED OFF. It used to ride on "Keep the week level",
   // which is off on the live building — so the one pass that clears Friday and splits
   // the every-other-day rooms never ran. That switch is about granting rooms an EXTRA
@@ -2356,7 +2359,7 @@ function levelEodDaysConfirm() {
 // now, once a day, and only ever on rooms that are on a frequency with NO days set:
 // a room somebody has put on days is a decision and is never overruled.
 function autoPinDaysFromFreq() {
-  if (TV_MODE) return { pinned: 0 };                 // the board cannot write
+  if (!CAN_WRITE) return { pinned: 0 };              // a display board cannot write
   if (state.autoDays === false) return { pinned: 0 };
   if (state.autoDaysOn === todayKey()) return { pinned: 0 };
   state.autoDaysOn = todayKey();
@@ -2860,10 +2863,12 @@ function applyPlannedAssignments() {
 }
 
 function maybeAutoAssign() {
-  // The board cannot write, so a hand-out it worked out would exist only on the TV:
-  // rooms with names against them that nobody else can see, until the next pull wipes
-  // them. Dealing is for devices that can actually save the result.
-  if (TV_MODE) return;
+  // ONE SCREEN DEALS. A hand-out worked out on a device that cannot write would exist
+  // only there — rooms with names against them nobody else can see, until the next
+  // pull wipes them. Worse, a hand-out worked out on EVERY device meant three screens
+  // each re-dealing the morning from its own half-filled copy of the badge-ins and
+  // overwriting the others. The dealer board does this now; see isDealer().
+  if (!isDealer()) return;
   if (state.autoAssign === false) return;                      // switched off in Settings
   const day = todayKey();
   // WHO IS IN CHANGES ALL MORNING. Hik's Time Card fills in over hours, so the crew
@@ -2886,6 +2891,10 @@ function maybeAutoAssign() {
   if (!due.length) return;
   applyPlannedAssignments();                                   // last night's plan wins over a fresh deal
   state.autoAssignedFor = forCrew;
+  // WHEN, AND BY WHICH SCREEN. This is what lets the backup phone tell a board that
+  // is quietly dead from one that simply has nothing new to deal — see isDealer().
+  state.dealtAt = Date.now();
+  state.dealtBy = DEALER_TV ? 'board' : 'backup';
   autoLevelIfLopsided();    // level the week before handing today's rooms out
   // A room the office assigned by hand, and a room carried in from last night's plan,
   // both carry today's sign-off stamp. Those are decisions and a decision is never
@@ -7514,6 +7523,39 @@ function viewSettings() {
     row.appendChild(btns);
     autoBox.appendChild(row);
   }
+  // WHAT THIS PARTICULAR DEVICE IS FOR. The morning is dealt by one screen — the
+  // office board — and everything else shows what it decided. This says which of the
+  // two THIS device is, and it is deliberately not part of the shared state: a synced
+  // setting would answer for every phone in the building at once, which is exactly
+  // the fault it exists to prevent. Set it on the one phone that should cover for the
+  // board, and leave every other device alone.
+  {
+    const backup = deviceRole() === 'backup';
+    const row = el(`<div style="padding:10px 0;border-top:1px solid #e7ecf3"></div>`);
+    row.appendChild(el(`<div style="font-size:14px;font-weight:600;color:#0f1a27">This device</div>`));
+    row.appendChild(el(`<div style="font-size:11px;color:#5f7189;line-height:1.5;margin-top:2px">`
+      + `The office board deals the rooms each morning; everything else shows what it decided. `
+      + `Set this to <b>Backup</b> on ONE phone and it will deal the morning itself if the board `
+      + `has not done it within ${Math.round(DEAL_GRACE_MS / 60000)} minutes — for a TV that is off or off the wifi. `
+      + `The board takes over again the moment it is back. Applies to this device only.</div>`));
+    const btns = el(`<div style="display:flex;gap:6px;margin-top:8px"></div>`);
+    [['display', 'Shows the board'], ['backup', 'Backup — deals if the board is down']].forEach(([rk, label]) => {
+      const on = (rk === 'backup') === backup;
+      const b = el(`<button class="freqmini ${on ? 'on' : ''}" style="flex:1;padding:9px 4px">${on ? '✓ ' : ''}${label}</button>`);
+      b.onclick = () => { setDeviceRole(rk); render(); };
+      btns.appendChild(b);
+    });
+    row.appendChild(btns);
+    if (backup) {
+      const when = Number(state.dealtAt) || 0;
+      row.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin-top:6px">`
+        + (when
+            ? `Last hand-out ${new Date(when).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+              + ` by ${state.dealtBy === 'backup' ? 'this backup' : 'the board'}.`
+            : `The board has not dealt a morning yet.`) + `</div>`));
+    }
+    autoBox.appendChild(row);
+  }
   autoBox.appendChild(el(`<div style="font-size:11px;color:#5f7189;line-height:1.5;padding-top:10px;border-top:1px solid #e7ecf3;margin-top:4px">`
     + `<b>Marking rooms cleaned is never automatic</b> — only someone who saw it done can say so.</div>`));
   wrap.appendChild(autoBox);
@@ -8477,6 +8519,48 @@ function backdateSheet() {
 // who is in, what each of them has, what is done. It redraws itself on a timer
 // and pulls from Supabase on its own, because there is no one to press refresh.
 const TV_MODE = /[?&]tv\b/.test(location.search) || /^#tv\b/.test(location.hash);
+// ============================================================
+// WHICH SCREEN DECIDES THE MORNING
+// ============================================================
+// Every device used to work the hand-out out for itself, from its own copy of the
+// badge-ins, and then write the WHOLE state back over everyone else's. Hik's Time
+// Card fills in over the morning, so no two devices ever held the same arrival list
+// — the phone dealt two early rooms each, the laptop pulled, disagreed about who was
+// in, re-dealt, and pushed its answer over the top. The TV then showed whichever
+// device happened to save last. Three screens, three answers, one row in the table.
+//
+// So the deal has ONE owner. The board at ?tv=1&deal=1 is it: the office TV is the
+// only screen reliably awake and in the building at half six, which is the whole
+// reason it was chosen over a phone somebody might not have opened yet.
+const DEALER_TV = TV_MODE && /[?&]deal\b/.test(location.search);
+// The other board is a display and nothing else, exactly as both boards were before.
+// A TV that cannot write cannot join the argument.
+const CAN_WRITE = !TV_MODE || DEALER_TV;
+// THE BACKUP IS NAMED, NOT GUESSED. A phone and a laptop are the same thing to this
+// code — same URL, same browser — so "the phone takes over if the TV is down" cannot
+// be inferred, it has to be marked on the device itself. Kept in localStorage rather
+// than in the shared state: a synced flag would name every device at once, which is
+// the bug this whole change exists to end.
+const DEVICE_ROLE_KEY = 'cleaning.deviceRole';
+const deviceRole = () => { try { return localStorage.getItem(DEVICE_ROLE_KEY) || 'display'; } catch (e) { return 'display'; } };
+const setDeviceRole = (r) => { try { localStorage.setItem(DEVICE_ROLE_KEY, r); } catch (e) {} };
+// How long the board may go without dealing before the backup phone steps in. The
+// crew badges in from about half six; fifteen minutes is long enough that a slow
+// boot or a dropped hotspot is not a takeover, and short enough that a genuinely
+// dead TV does not cost the morning.
+const DEAL_GRACE_MS = 15 * 60 * 1000;
+// The board is primary whenever it is alive. Every deal stamps state.dealtAt, so
+// "is the TV still dealing?" is answered by the shared state itself and needs no
+// heartbeat — no extra write, no extra broadcast to every screen in the building.
+// TV alive -> dealtAt keeps moving -> the backup never fires. TV gone -> dealtAt goes
+// stale -> the backup takes over and starts stamping it instead. If the TV comes
+// back it resumes and the backup falls quiet again, because the TV never defers.
+function isDealer() {
+  if (DEALER_TV) return true;
+  if (TV_MODE) return false;                    // the second board only ever displays
+  if (deviceRole() !== 'backup') return false;  // an unmarked phone or laptop displays
+  return (Date.now() - (Number(state.dealtAt) || 0)) > DEAL_GRACE_MS;
+}
 // Five is as thin as a column can get before a name stops reading from the far side
 // of the office. That is a limit on how WIDE a column may be, though, and it had been
 // doing duty as a limit on how many people fit on the screen — so a crew of nine got
