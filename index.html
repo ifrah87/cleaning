@@ -4198,8 +4198,11 @@ function areaWorkCard(a, opts) {
   sel.appendChild(el(`<option value="">Unassigned</option>`));
   // On a morning where attendance hasn't landed yet, an empty list would leave the
   // office unable to allocate at all — fall back to the full roster.
-  const present = cleaningStaff().filter(p => hikArrivals[p.id]);
-  const pool = (presentOnly && present.length) ? present : cleaningStaff();
+  // Leaders only here too. An area is a leader's job and an assistant works it with
+  // them, so offering the assistant is offering a way to get it wrong.
+  const leaders = cleaningStaff().filter(p => p.isLeader);
+  const present = leaders.filter(p => hikArrivals[p.id]);
+  const pool = (presentOnly && present.length) ? present : leaders;
   pool.forEach(p => {
     const o = el(`<option value="${esc(p.id)}">${esc(p.name)}</option>`);
     if (a.assignedTo === p.id) o.setAttribute('selected', '');
@@ -5764,6 +5767,13 @@ function mirrorPlanToBoard(day, key, keepBoard) {
     } else {
       const a = areasInterior().find((x) => x.id === j.refId);
       if (!a || (keepBoard && a.assignedTo)) return;
+      // AN AREA IS A LEADER'S, EXACTLY AS A ROOM IS. The unit branch above has
+      // refused to hand a planned room to an assistant since the beginning - "the
+      // room is the leader's and the assistant is there to work it with them" - and
+      // this branch never got the same line. So the corridors could be planned onto
+      // somebody's assistant, and on 24 Aug Interior Windows was: Abdirisaq Ahmed Nur
+      // holding a job of his own while the leader he works with held none of it.
+      if (j.assignedTo && !((state.staff || []).find((x) => x.id === j.assignedTo) || {}).isLeader) return;
       a.assignedTo = j.assignedTo || null;
     }
   });
@@ -7874,7 +7884,9 @@ function areaCard(a) {
   const assignRow = el(`<div style="display:flex;gap:6px;margin-top:8px;align-items:center"></div>`);
   const sel = el(`<select class="area-select"></select>`);
   sel.appendChild(el(`<option value="">Unassigned</option>`));
-  cleaningStaff().forEach(p => {
+  // Leaders only, for the same reason the room picker is: naming an assistant here
+  // quietly moves the job off the leader whose round it belongs to.
+  cleaningStaff().filter(p => p.isLeader).forEach(p => {
     const o = el(`<option value="${p.id}">${esc(p.name)}</option>`);
     if (a.assignedTo===p.id) o.setAttribute('selected','');
     sel.appendChild(o);
