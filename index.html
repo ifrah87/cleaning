@@ -2924,14 +2924,32 @@ function maybeAutoAssign() {
   });
   autoAssignRooms(rest, load, slotLoad, true);
 }
-function openAssignPicker(id) { _assignPick = { unitId: id }; render(); }
+function openAssignPicker(id) { _assignPick = { unitId: id, pin: false }; render(); }
+// Off every time the picker opens. A pin that stayed ticked from the last room would
+// be the same accident in a new shape.
+function toggleAssignPin() { if (_assignPick) { _assignPick.pin = !_assignPick.pin; render(); } }
 function dismissAssignPicker() { _assignPick = null; render(); }
-function setUnitAssignee(id, pid) {
+// MOVING A ROOM IS NOT THE SAME AS RE-WRITING THE ROTA. Picking a cleaner by hand
+// used to make them that room's permanent cleaner every single time, so an office
+// fixing this morning's board was quietly changing every morning after it — pins
+// piled up that nobody had decided to have, and the work stopped rotating. Nobody
+// asked for that; it was a side effect of the only tool available for "not him,
+// her, today".
+//
+// So the two things are now separate. Moving a room is for today. Pinning is a
+// standing decision and has to be asked for, which is the tick in the picker.
+//
+// Putting a room BACK in the pool still clears the pin — that is how a pin is
+// undone one room at a time, and it is what the amber button in the picker has
+// always meant.
+function setUnitAssignee(id, pid, pin) {
   const u = state.servicedUnits.find(x => x.id === id);
   if (u) {
     u.assignedTo = pid || null;   // '' → auto (by floor owner)
-    // Remember this as the room's "usual" cleaner so auto-assign keeps the same person here.
-    if (pid) u.usualTo = pid; else u.usualTo = null;
+    if (!pid) u.usualTo = null;   // back in the pool: no cleaner, no standing decision
+    else if (pin) u.usualTo = pid;
+    // pid without pin: today only. Any existing pin is left exactly as it was, so
+    // covering one morning does not quietly re-cut the rota.
   }
   // Choosing a cleaner by hand IS the sign-off; taking the room off someone
   // leaves nothing to sign off on.
@@ -7432,10 +7450,27 @@ function viewRollCall() {
       const b = el(`<button class="cover-opt ${isCur ? 'on' : ''}">${esc(p.name)}`
         + `<span class="cover-load">${n} room${n === 1 ? '' : 's'}`
         + `${lightest && p.id === lightest.id && !isCur ? ' · lightest' : ''}${isCur ? ' · suggested' : ''}</span></button>`);
-      b.onclick = () => setUnitAssignee(u.id, p.id);
+      b.onclick = () => setUnitAssignee(u.id, p.id, !!_assignPick.pin);
       picker.appendChild(b);
     });
     modal.appendChild(picker);
+    // THE STANDING DECISION, ASKED FOR RATHER THAN ASSUMED. Off by default: the
+    // common case is covering one morning, and that is the one that must not cost
+    // anybody a permanent change they did not ask for.
+    {
+      const pinned = u.usualTo ? (state.staff || []).find((x) => x.id === u.usualTo) : null;
+      const on = !!_assignPick.pin;
+      const pinBtn = el(`<button class="freqmini ${on ? 'on' : ''}" style="width:100%;padding:10px;margin-top:12px">`
+        + `${on ? '✓ ' : ''}Make them ${esc(u.unit)}'s cleaner every day</button>`);
+      pinBtn.onclick = () => toggleAssignPin();
+      modal.appendChild(pinBtn);
+      modal.appendChild(el(`<div style="font-size:11px;color:#5f7189;line-height:1.5;margin-top:6px">`
+        + (on
+            ? `This room goes to them every morning from now on, ahead of the even split.`
+            : `Just for today — the rota is unchanged.`)
+        + (pinned ? ` Currently ${esc(pinned.name)}'s room every day.` : '')
+        + `</div>`));
+    }
     const btnRow = el('<div class="modal-btns"></div>');
     const back = el('<button class="modal-confirm" style="background:#b45309">Put it back in the pool</button>');
     back.onclick = () => setUnitAssignee(u.id, '');
