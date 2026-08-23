@@ -2742,6 +2742,16 @@ function runUnassignAll(rooms) {
     confirmed: rooms.reduce((m, u) => { if (state.assignConfirmed[u.id]) m[u.id] = state.assignConfirmed[u.id]; return m; }, {}),
   };
   rooms.forEach((u) => { u.assignedTo = null; delete state.assignConfirmed[u.id]; });
+  // AND LET THE MORNING DEAL AGAIN. autoAssignedFor is the morning's "already done
+  // this crew" mark, and putting the rooms back used to leave it standing — so the
+  // next pass saw the same people badged in, decided the deal had already happened,
+  // and returned without touching the pool. The rooms simply sat there with nobody
+  // against them until somebody new walked through the door, which on a crew that is
+  // all in by seven can be never. 201 and 301 spent a morning like that.
+  //
+  // Clearing it is the whole point of the button: the office is asking for the
+  // morning to be worked out again, and this is what lets it.
+  state.autoAssignedFor = null;
   hikSyncMsg = { text: rooms.length + ' room' + (rooms.length === 1 ? ' is' : 's are') + ' back in the pool.' };
   save(); render();
 }
