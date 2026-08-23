@@ -1364,6 +1364,35 @@ function flushBeforeHide() {
   pushNow();
 }
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushBeforeHide(); });
+// ============================================================
+// A PHONE IN A POCKET IS NOT A TV ON A WALL
+// ============================================================
+// remotePull() ran exactly twice on a phone or a laptop: once at boot, and never
+// again. Everything after that arrived down the realtime websocket — and a phone
+// browser kills that socket the moment the screen locks or you switch apps. So the
+// office unlocked their phone to a board frozen at whenever they last opened it,
+// with no banner saying so, waiting on an event that was never coming. The wall TV
+// never had this problem because startTVLoop() re-pulls every minute regardless;
+// its comment says why — "smart TV browsers drop websockets silently". Phones do
+// exactly the same thing and simply never got the same treatment.
+//
+// Two belts, same reasoning as the board: pull on coming back to the foreground,
+// which is the moment somebody is actually looking, and a slow pull behind it for a
+// tab left open all morning. Reads only — applyRemote() already refuses to overwrite
+// anything this device has not delivered yet, so a refresh can never lose work.
+const APP_PULL_MS = 60000;
+let _appPull = null;
+function startStatePolling() {
+  if (TV_MODE) return;                       // the board has its own, see startTVLoop()
+  clearInterval(_appPull);
+  _appPull = setInterval(() => { if (!offlineMode) remotePull(); }, APP_PULL_MS);
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && !TV_MODE && !offlineMode) remotePull();
+});
+// Safari on iOS restores a backgrounded tab from its page cache without ever firing
+// visibilitychange, so the board would come back exactly as stale as it went away.
+window.addEventListener('pageshow', () => { if (!TV_MODE && !offlineMode) remotePull(); });
 window.addEventListener('pagehide', flushBeforeHide);
 window.addEventListener('online', () => { if (isDirty()) { _retryDelay = 0; pushNow(); } });
 
@@ -9321,6 +9350,7 @@ async function boot() {
   startArrivalPolling();
   startDayWatch();
   subscribeRealtime();
+  startStatePolling();   // the socket is the fast path, not the only one
   refreshHistory();
   subscribeHistory();
   if (TV_MODE) startTVLoop();
