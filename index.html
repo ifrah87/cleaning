@@ -470,6 +470,8 @@
   .tv-crewhead { display: flex; gap: 1.4vw; align-items: baseline; }
   .tv-crewhead .on { font-size: 1.0vw; font-weight: 800; letter-spacing: 0.1em; color: #22c55e; }
   .tv-crewhead .off { font-size: 1.0vw; font-weight: 800; letter-spacing: 0.1em; color: var(--tv-muted); }
+  .tv-crewhead .noscan { font-size: 1.0vw; font-weight: 800; letter-spacing: 0.1em; color: #fbbf24; }
+  .tv-chip.noscan { opacity: 0.92; }
   .tv-chip.gone { opacity: 0.5; }
   .tv-at.gone { color: var(--tv-muted); opacity: 0.9; }
   .tv-chip .st { font-size: 0.85vw; font-weight: 700; opacity: 0.85; margin-left: 0.5vw; font-variant-numeric: tabular-nums; }
@@ -1233,6 +1235,22 @@ function finalizeState() {
   refreshTeamColors();
   STAFF.forEach(p => { if (!state.attendance[p.id]) state.attendance[p.id] = 'present'; });
 }
+// Is this device holding the starter board rather than the office's real one?
+// finalizeState() fills a missing roster from DEFAULT_STAFF so the app is never
+// broken on first open — which is right for a new building and catastrophic as
+// something to upload, because it is indistinguishable from a real save. The test
+// is deliberately narrow: the demo ids are p1..p6 and no real person has ever had
+// one (they come from Hik, and are eighteen digits), so a roster made only of those
+// is the seed and nothing else. An empty room list says the same thing more simply.
+function looksLikeSeedState() {
+  const staff = state.staff || [];
+  const rooms = state.servicedUnits || [];
+  if (!rooms.length) return true;
+  if (!staff.length) return true;
+  const seedIds = new Set(DEFAULT_STAFF.map((p) => p.id));
+  return staff.every((p) => seedIds.has(p.id));
+}
+
 // Self-heal: collapse any rooms that share a unit number down to one record,
 // carrying over an assignment/priority from whichever copy has it. Runs on every
 // load so a stale device that re-added duplicates can't leave them behind.
@@ -1299,6 +1317,12 @@ function save() {
 // ============================================================
 const DIRTY_KEY = STORE + '_dirty';   // survives a reload, so an unsent change is replayed
 let _lastRemoteJSON = null;   // dedupe realtime echoes of our own writes
+// Has this copy of the board ever actually come from the server? Not "are we signed
+// in" and not "is the network up" — whether these rooms and these people were ever
+// downloaded rather than invented locally by finalizeState(). It gates writing, see
+// pushNow(). Deliberately NOT persisted: a fresh page load has not synced yet, and
+// that is precisely the window this exists to cover.
+let _everSynced = false;
 let _pushTimer = null;
 let _retryTimer = null;
 let _retryDelay = 0;
@@ -1324,6 +1348,27 @@ function remotePush() {
 // Send the current state to the server. Resolves true only when the row is written.
 async function pushNow() {
   if (!db || _pushing || TV_MODE) return false;   // the board is a display, not a writer
+  // A DEVICE MAY NOT UPLOAD A BOARD IT HAS NEVER DOWNLOADED.
+  // The seed guard in remotePull() only covers one way in, and on 2026-08-23 that was
+  // not the way in. Every other path to here — a tap calling save(), the flush when a
+  // phone is pocketed, the retry timer, the dirty-first branch at the top of
+  // remotePull() — will happily send whatever the device is holding, and after a
+  // cleared localStorage plus one failed first pull what it is holding is
+  // DEFAULT_STAFF: six invented people, all auto-marked present. That uploads exactly
+  // like a real save, because by then it IS the state.
+  //
+  // The missing idea was never a permission check, it was provenance: nothing recorded
+  // whether this copy of the board had ever come from the server. _everSynced does,
+  // and a starter board that has never synced is refused rather than sent.
+  //
+  // The dirty flag is cleared with it, deliberately. What is being dropped is an edit
+  // made on top of demo data, worth nothing — and leaving it owed would stop
+  // remotePull() ever pulling again, stranding the device on the fiction for good.
+  if (!_everSynced && looksLikeSeedState()) {
+    clearDirty();
+    showStorageWarn('This device has not loaded the board yet, so it will not send its starter copy. Reload the page, or sign in again.');
+    return false;
+  }
   clearTimeout(_pushTimer);    // a pending debounce is now redundant
   clearTimeout(_retryTimer);
   _pushing = true;
@@ -1406,9 +1451,38 @@ async function remotePull() {
     if (error) throw error;
     if (data && data.data && Object.keys(data.data).length) {
       applyRemote(data.data);
-    } else {
-      await pushNow();         // server empty → seed it with what this device has
+      _everSynced = true;      // these people came from the server; this copy is real
+      hideStorageWarn();
+      return true;             // and only this path may say the board is up to date
     }
+    // AN EMPTY READ IS NOT AN EMPTY SERVER.
+    // RLS is authenticated-only (supabase-lockdown.sql), and a row the caller is not
+    // allowed to see comes back as no row at all — with no error. That is character
+    // for character what a building nobody has set up yet looks like, so this branch
+    // used to seed the server from whatever the device happened to be holding.
+    //
+    // On 2026-08-23 at 11:15 that cost the office its roster. A device whose session
+    // had lapsed read nothing, concluded the server was blank, and pushed up the
+    // DEFAULT_STAFF demo seed — Sofia Reyes and five others, all auto-marked present —
+    // over thirty real people, the teams, the areas and the morning's attendance.
+    // Both televisions then displayed it faithfully all morning, because a board that
+    // cannot write can only ever adopt.
+    //
+    // So seeding now has to earn it twice: the device must know it is signed in, and
+    // it must be holding something worth sending. Neither test is clever, and that is
+    // the point — the failure they exist to stop was a guess made confidently.
+    let signedIn = false;
+    try { const { data: s } = await db.auth.getSession(); signedIn = !!(s && s.session); } catch (e) {}
+    if (!signedIn) {
+      showStorageWarn('Signed out, so the board cannot be read. Showing this device\'s saved copy — sign in to sync.');
+      return;
+    }
+    if (looksLikeSeedState()) {
+      showStorageWarn('This device is holding an empty starter board, so it will not be sent to the server. Reload, or sign in again.');
+      return;
+    }
+    _everSynced = true;      // signed in, and the emptiness is real rather than refused
+    await pushNow();         // genuinely empty server, and we have something real to put in it
     hideStorageWarn();
   } catch (e) {
     showStorageWarn('Cannot reach the server (' + (e.message || e) + '). Showing this device\'s saved copy.');
@@ -8649,7 +8723,17 @@ function tvLeft(p) {
 // This is the rule the hand-out sheet has always used; the TV simply never had it.
 function tvWithLabel(p, spare) {
   const a = assistantsFor(p, (x) => tvHere(x) && spare(x));
-  return a.length ? 'with ' + a.map(tvName).join(', ') : '';
+  // A NAME HERE IS A PROMISE THAT SOMEBODY IS ON THE FLOOR. tvHere() only asks the
+  // attendance status, and finalizeState defaults every person on the roster to
+  // 'present' - so an assistant the door has never seen today was being printed
+  // alongside their leader as though they had turned up. On 23 Aug that was Abukar
+  // Daud Osman, last scanned the previous afternoon, named on the wall all day.
+  //
+  // Flagged rather than dropped: Hik fills in through the morning, so a missing scan
+  // early is usually late data rather than a missing person, and quietly deleting the
+  // name would replace one wrong answer with another. The leader is still shown as
+  // having them - with the one thing the board actually knows attached.
+  return a.length ? 'with ' + a.map((x) => tvName(x) + (tvArrival(x) ? '' : ' (no scan)')).join(', ') : '';
 }
 
 // Named under somebody else, so not given a column of their own.
@@ -8731,6 +8815,16 @@ function tvCrewStrip() {
   const head = el(`<div class="tv-crewhead"></div>`);
   head.appendChild(el(`<span class="on">${here.length} STILL HERE</span>`));
   if (gone.length) head.appendChild(el(`<span class="off">${gone.length} LEFT</span>`));
+  // Counted at the top for the same reason NEED COVER is: it is the thing you want to
+  // know without reading every chip, and the answer to "who is missing?" at 7am.
+  // Assistants count here even though they get no chip of their own. The roll call is
+  // deliberately leaders-only, but "who has not punched in?" is a question about every
+  // pair of hands expected today, and an assistant is exactly the person whose absence
+  // is otherwise invisible - their name simply rides along on a leader's column.
+  const noScanCrew = cleaningStaff().filter((p) => worksToday(p) && tvOnTeam(p)
+    && !tvArrival(p) && !tvLeft(p)
+    && AWAY.indexOf(state.attendance[p.id] || 'present') < 0);
+  if (noScanCrew.length) head.appendChild(el(`<span class="noscan">${noScanCrew.length} NO SCAN</span>`));
   wrap.appendChild(head);
 
   // Away first — who is missing is what you want without hunting. Then the people
@@ -8750,14 +8844,25 @@ function tvCrewStrip() {
     // every chip wide enough that twelve of them took four rows and pushed the board
     // itself off the bottom of the screen — the roll call is the smaller question and
     // must not crowd out the work. What time they arrived is on their column.
+    // PRESENT IS A CLAIM NOBODY MADE. Attendance defaults to 'present' for everyone on
+    // the roster - finalizeState does it so a new person is not born absent - so the
+    // word was being printed against people the door has never seen today. It reads as
+    // a confirmation and it is the opposite: it is the absence of one. Say so.
+    //
+    // "NO SCAN YET", not "NOT IN": Hik's Time Card fills in through the morning, so an
+    // early blank is far more often data that has not arrived than a person who has
+    // not. The board should report what it knows - no scan - and let the office decide
+    // what that means at 6am versus at 11am.
+    const noScan = (st === 'present' && !left && !at);
     const tail = (st !== 'present') ? meta.label
       : left ? ('LEFT ' + left)
-      : at ? ('IN ' + at) : meta.label;
-    const chip = el(`<div class="tv-chip${(st === 'present' && left) ? ' gone' : ''}"><span>${esc(tvName(p))}</span><span class="st">${esc(tail)}</span></div>`);
-    chip.style.borderColor = meta.color;
+      : at ? ('IN ' + at) : 'NO SCAN YET';
+    const chip = el(`<div class="tv-chip${(st === 'present' && left) ? ' gone' : ''}${noScan ? ' noscan' : ''}"><span>${esc(tvName(p))}</span><span class="st">${esc(tail)}</span></div>`);
+    if (noScan) chip.style.borderColor = '#fbbf24';
+    if (!noScan) chip.style.borderColor = meta.color;
     // Present takes the board's own text colour rather than a hardcoded near-white:
     // on the light ground that was white-on-white and the whole roll call vanished.
-    chip.style.color = (st === 'present') ? '' : meta.color;
+    chip.style.color = noScan ? '#fbbf24' : (st === 'present') ? '' : meta.color;
     wrap.appendChild(chip);
   });
   return wrap;
@@ -9035,7 +9140,7 @@ function startTVLoop() {
     Promise.all([
       remotePull(),
       Promise.resolve().then(() => loadHikArrivals()).catch(() => {}),
-    ]).then(() => { tvLastData = Date.now(); renderTV(); }).catch(() => {});
+    ]).then(([pulled]) => { if (pulled) tvLastData = Date.now(); renderTV(); }).catch(() => {});
   }, TV_PULL_MS);
   // A TV that sleeps at 10am is a blank wall. Wake Lock is refused by most TV
   // browsers, so this is a try-and-shrug, not a guarantee — turn the screensaver
@@ -9371,6 +9476,19 @@ function renderLogin() {
 // So the chain lives in its own function and a watcher re-runs it when the work day
 // changes, with nobody touching anything.
 function planningPass() {
+  // THE BOARD PLANS NOTHING. maybeAutoAssign() has always known this — "a hand-out it
+  // worked out would exist only on the TV, until the next pull wipes them" — but the
+  // guard was on the dealing and not on the planning, and everything below this line
+  // also writes: ensureWeekPlanned seeds days, topUpTodayPlan adds rooms to today, and
+  // carryPlanToBoardOnOpen mirrors the plan onto the rooms and calls save().
+  //
+  // save() writes localStorage and then returns without pushing, so the television
+  // built a private plan every minute that no phone and no other TV ever saw, and the
+  // next pull sixty seconds later overwrote it. That is the churn in the 23 Aug
+  // photos: 305 moving from nobody to Mahamed Nur Hassan, 1103 going Abdiwakiil →
+  // Hassan Elmi → nobody. Nobody reassigned those rooms. The screen was arguing with
+  // the server, once a minute, in front of the crew.
+  if (TV_MODE) return;
   // Level first — it decides which rooms fall on which day, and planning ahead of it
   // would lay out days it is about to move.
   autoLevelIfLopsided();
@@ -9404,8 +9522,13 @@ function startDayWatch() {
 async function boot() {
   load();
   route();              // login → app
-  await remotePull();   // wait for the staff roster before matching arrivals
-  tvLastData = Date.now();
+  // "up to date" is a claim about DATA, not about having called the function. This
+  // used to stamp unconditionally, and remotePull() swallows its own errors — so the
+  // televisions spent the morning of 23 Aug reporting "up to date" in the corner
+  // while showing a demo roster. A board nobody can tell is stale is worse than no
+  // board; one that insists it is fresh is worse again.
+  const pulled = await remotePull();   // wait for the staff roster before matching arrivals
+  if (pulled) tvLastData = Date.now();
   _plannedForDay = workToday();
   // Days first: the planning pass reads the schedule, so the rooms need to be ON
   // their days before it runs, not after. It is a property of the rota rather than
