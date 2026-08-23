@@ -471,6 +471,16 @@
   .tv-crewhead .on { font-size: 1.0vw; font-weight: 800; letter-spacing: 0.1em; color: #22c55e; }
   .tv-crewhead .off { font-size: 1.0vw; font-weight: 800; letter-spacing: 0.1em; color: var(--tv-muted); }
   .tv-crewhead .noscan { font-size: 1.0vw; font-weight: 800; letter-spacing: 0.1em; color: #fbbf24; }
+  /* The people who are in but not on the round. Quieter than the roll call in every
+     way - smaller, dimmer, no border - because it answers "who else is about?" and
+     must never compete with the crew who actually have the morning. */
+  .tv-also { display: flex; flex-wrap: wrap; gap: 0.4vw 0.9vw; align-items: baseline;
+             margin-top: 0.5vh; opacity: 0.72; }
+  .tv-also .lab { font-size: 0.8vw; font-weight: 800; letter-spacing: 0.1em; color: var(--tv-muted); }
+  .tv-also .who { font-size: 0.85vw; font-weight: 700; color: var(--tv-ink); }
+  .tv-also .at  { font-size: 0.8vw; font-weight: 700; color: var(--tv-muted);
+                  font-variant-numeric: tabular-nums; margin-left: 0.25vw; }
+  .tv-also .gone { opacity: 0.55; }
   .tv-with .tv-noscan { color: #fbbf24; font-weight: 800; }
   .tv-chip.noscan { opacity: 0.92; }
   .tv-chip.gone { opacity: 0.5; }
@@ -8875,6 +8885,44 @@ function tvCrewStrip() {
   return wrap;
 }
 
+// WHO ELSE IS IN THE BUILDING. The board is built round the office round, and
+// tvOnTeam() drops anybody carried as "Outside team" - correctly, because they are
+// not doing this work and an empty column for them would be the emptiest thing on a
+// screen full of jobs. The cost was that nine people could be in the building on a
+// Sunday and the board would not admit one of them existed.
+//
+// So they get a line rather than a column: name, time, nothing else. No rooms are
+// dealt to them and the round is untouched; it answers "who else is about if I need
+// a hand?" - which on a morning where somebody is off is the first question asked.
+//
+// OPT IN, NOT OPT OUT. The first cut of this hid named individuals, which makes the
+// board a list somebody has to maintain for ever - every new starter appears on the
+// wall until a person notices and hides them. The app already has the right idea in
+// isCleaner: the office says who is crew, once, on their card, and everyone else -
+// drivers, office staff, a contractor passing the reader - is simply not in the set.
+// A one-minute scan on the way past is then not a rule to write, it is somebody who
+// was never a cleaner.
+function tvAlsoIn() {
+  return cleaningStaff()
+    .filter((p) => p && !tvOnTeam(p) && tvArrival(p))
+    .sort((a, b) => String(tvArrival(a)).localeCompare(String(tvArrival(b))));
+}
+
+function tvAlsoStrip() {
+  const who = tvAlsoIn();
+  if (!who.length) return null;
+  const wrap = el(`<div class="tv-also"></div>`);
+  wrap.appendChild(el(`<span class="lab">ALSO IN</span>`));
+  who.forEach((p) => {
+    const left = tvLeft(p);
+    const row = el(`<span class="who${left ? ' gone' : ''}"></span>`);
+    row.appendChild(el(`<span>${esc(tvName(p))}</span>`));
+    row.appendChild(el(`<span class="at">${left ? 'LEFT ' + esc(left) : esc(tvArrival(p))}</span>`));
+    wrap.appendChild(row);
+  });
+  return wrap;
+}
+
 // THE SEPARATE JOB, ON ITS OWN PAGE. Airbnb is cleaned by its own pair after the
 // offices and is deliberately kept off the morning roll call — so it has no business
 // sitting among the columns, where it would read as somebody's round. It is still
@@ -9003,7 +9051,11 @@ function renderTV() {
 
   // The roll call is the morning's crew. Airbnb is not on it, so on that page the
   // strip would be naming people who are not doing this work.
-  if (!onAir) wrap.appendChild(tvCrewStrip());
+  if (!onAir) {
+    wrap.appendChild(tvCrewStrip());
+    const also = tvAlsoStrip();
+    if (also) wrap.appendChild(also);
+  }
 
   // --- columns, a page at a time ---
   // Spread the columns evenly over the pages rather than filling each to the
