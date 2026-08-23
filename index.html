@@ -9183,6 +9183,38 @@ function startTVLoop() {
   // blink of a page load costs nothing. Only after six hours up, so a reload cannot
   // loop, and never while something is still waiting to be delivered.
   const bootedAt = Date.now();
+
+  // SHIP A FIX, AND THE WALL HAS IT IN FIVE MINUTES.
+  // The nightly reload below is the backstop; this is the thing that stops anybody
+  // walking to a television. The board pulls fresh DATA all day but runs whatever
+  // JAVASCRIPT it downloaded when the page opened, so every fix shipped since then
+  // simply never arrives - and on 23 Aug that meant the planner guard was live on the
+  // server while both screens carried on churning, because nobody had power-cycled
+  // them yet.
+  //
+  // A HEAD request, not a fetch of the page: the board is half a megabyte and asking
+  // for it every few minutes to see whether it changed would move more data than the
+  // board itself uses in a day. Last-Modified is all that is needed, and the server
+  // already sends it.
+  //
+  // Only after ten minutes up, so a bad deploy cannot put every screen in the office
+  // into a reload loop faster than somebody can revert it.
+  let _builtAt = null;
+  const checkBuild = () => {
+    fetch(location.href, { method: 'HEAD', cache: 'no-store' })
+      .then((r) => {
+        const stamp = r.headers.get('last-modified') || r.headers.get('etag');
+        if (!stamp) return;                       // nothing to compare - leave it alone
+        if (_builtAt === null) { _builtAt = stamp; return; }
+        if (stamp === _builtAt) return;
+        if (Date.now() - bootedAt < 10 * 60 * 1000) return;
+        location.reload();
+      })
+      .catch(() => {});                           // offline: the retry loop already covers it
+  };
+  checkBuild();
+  setInterval(checkBuild, 5 * 60 * 1000);
+
   setInterval(() => {
     const h = new Date().getHours(), m = new Date().getMinutes();
     const quiet = h === WORKDAY_CUTOFF_HOUR && m >= 30 && m < 40;
