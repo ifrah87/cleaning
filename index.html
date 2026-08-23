@@ -8867,10 +8867,21 @@ function tvCrewStrip() {
 
   // Away first — who is missing is what you want without hunting. Then the people
   // still in, then the ones who have gone home: the board reads down the day.
+  // CHRONOLOGICAL. This used to group away / in / gone and then sort each group by
+  // name, which put a 05:53 arrival after an 07:25 one because of the alphabet. The
+  // strip is a record of the morning arriving, so it reads in the order the morning
+  // actually happened.
+  //
+  // The two cases with no time keep their place at the front: somebody marked away,
+  // and somebody the door has not seen. Neither has a clock reading to sort by, and
+  // both are the thing you want to notice before you start reading times.
   crew.slice().sort((a, b) => {
     const rank = (p) => AWAY.indexOf(state.attendance[p.id] || 'present') >= 0 ? 0
-      : tvLeft(p) ? 2 : 1;
-    return rank(a) - rank(b) || String(a.name).localeCompare(String(b.name));
+      : !tvArrival(p) ? 1 : 2;
+    const r = rank(a) - rank(b);
+    if (r) return r;
+    return String(tvArrival(a)).localeCompare(String(tvArrival(b)))
+      || String(a.name).localeCompare(String(b.name));
   }).forEach((p) => {
     const st = state.attendance[p.id] || 'present';
     const meta = STATUS[st] || STATUS.present;
@@ -8938,6 +8949,11 @@ function tvAlsoStrip() {
     const at = tvArrival(p), left = tvLeft(p);
     const row = el(`<span class="who${left ? ' gone' : ''}"></span>`);
     row.appendChild(el(`<span>${esc(tvName(p))}</span>`));
+    // Off the round does not always mean off the building's floor plan - somebody can
+    // hold a floor and still not be on this morning's office round. Where they do,
+    // say which, because "who is on six?" is the question this line gets asked.
+    const fl = tvFloorLabel(p);
+    if (fl) row.appendChild(el(`<span class="at">${esc(fl)}</span>`));
     // BOTH TIMES HERE, unlike the roll call above. The crew chips deliberately carry
     // one time and not two - twelve of them at double width took four rows and pushed
     // the board off the bottom of the screen. This line is text rather than chips and
