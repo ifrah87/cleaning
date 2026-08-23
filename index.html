@@ -3126,6 +3126,26 @@ function runAutoAssign(rooms, people, inIds, load, slotSeed, silent) {
     load[id] = (load[id] || 0) + 1;
     const sl = timeSlot(u);
     if (sl !== 'any') slotLoad[sl][id] = (slotLoad[sl][id] || 0) + 1;
+    // A ROOM STAYS WHERE IT LANDS. The morning re-deals every time somebody new badges
+    // in, and everything not signed off went back in the pool each time — so a board
+    // watched from the wall rearranged itself all morning and nobody could tell whether
+    // a room had been done, moved, or lost. Stamping it as it is dealt makes the deal a
+    // decision rather than a suggestion, and the next re-deal leaves it alone.
+    //
+    // THE COST, STATED: the crew arrives over about two hours, so the people in first
+    // fill up to their caps and lock those rooms, and whoever arrives at eight gets only
+    // what is still loose. The morning no longer levels itself as people come in, so a
+    // day that starts lopsided stays lopsided. That is the office's call — switched off
+    // in Settings if a morning proves it wrong — and the caps are what stop the first
+    // arrival taking the whole board.
+    //
+    // The one escape is deliberate and lives in maybeAutoAssign's decided(): a room
+    // held by somebody marked away is not a decision any more, it is a gap, so their
+    // rooms come free however they were stamped.
+    if (state.lockOnDeal !== false) {
+      if (!state.assignConfirmed) state.assignConfirmed = {};
+      state.assignConfirmed[u.id] = todayKey();
+    }
   };
   const ableFor = (u) => {
     const all = order.filter((id) => canCleanUnit(staffById[id], u) && !overEarly(u, id));
@@ -7450,6 +7470,10 @@ function viewSettings() {
      'Shared out as the crew badge in, and again each time somebody new arrives. Rooms you handed out yourself stay put.'],
     ['autoConfirm', 'Hand them out without asking',
      'No list to approve each morning. You can still move any room by tapping it.', false],
+    ['lockOnDeal', 'Keep rooms where they land',
+     'Once a room is handed out it stays with that cleaner for the day, instead of being '
+     + 'reshuffled each time somebody new badges in. Anyone marked away still frees theirs, '
+     + 'and you can always move a room by tapping it.'],
     ['autoDays', 'Put rooms on set days',
      'Every-other-day and weekly rooms get fixed weekdays, split so no day is heavier. Days you set yourself are never changed.'],
     ['autoBalance', 'Keep the week level',
