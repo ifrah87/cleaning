@@ -8528,6 +8528,26 @@ const tvTeam = (p) => String((p && p.crew) || '').trim();
 // Every job on today's board, grouped by who is holding it. Rooms and communal
 // areas together: from across the room a walk is another thing somebody has to
 // get through, and splitting them into two lists hides half the load.
+// NOBODY IS BEHIND THIS ROOM. A job sitting under the name of somebody who is not
+// coming reads as covered when it is not: the office glances at the wall, sees the
+// room against a person, and moves on. It is the one kind of work nobody notices,
+// which is exactly what the NOBODY YET column exists to catch — so work held by
+// somebody off the rota, or marked away, is shown there instead of under their name.
+//
+// WHAT THIS DELIBERATELY DOES NOT DO is treat "has not badged in yet" as absent.
+// Hik's Time Card fills in over the whole morning, so at 06:49 most of a crew who
+// are already upstairs cleaning still have no scan against them — see tvArrival().
+// Reading that as "not here" would empty every column into this one and hide the
+// real orphans among thirty rooms that were never orphaned at all. Absence has to be
+// something somebody stated: off today's rota, or marked away by the office.
+const tvUnmanned = (id) => {
+  if (!id) return true;
+  const p = (state.staff || []).find((x) => x.id === id);
+  if (!p) return true;                                                   // assigned to somebody gone from the roster
+  if (!worksToday(p)) return true;                                       // not on today's rota
+  return AWAY.indexOf(state.attendance[p.id] || 'present') >= 0;         // office marked them away
+};
+
 function tvJobsByPerson() {
   const buckets = {}, order = [];
   const bucket = (id) => {
@@ -8536,7 +8556,7 @@ function tvJobsByPerson() {
     return buckets[k];
   };
   todaysRoomList().forEach((u) => {
-    bucket(u.assignedTo).push({
+    bucket(tvUnmanned(u.assignedTo) ? null : u.assignedTo).push({
       label: u.unit,
       done: cleanedToday(u),
       early: timeSlot(u) === 'early',
@@ -8544,7 +8564,7 @@ function tvJobsByPerson() {
     });
   });
   areasInterior().forEach((a) => {
-    bucket(a.assignedTo).push({ label: a.label, done: areaDone(a), early: false, area: true });
+    bucket(tvUnmanned(a.assignedTo) ? null : a.assignedTo).push({ label: a.label, done: areaDone(a), early: false, area: true });
   });
   // Red first, then whatever is still open, then the finished ones out of the way.
   Object.keys(buckets).forEach((k) => {
