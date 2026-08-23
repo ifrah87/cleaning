@@ -8055,10 +8055,22 @@ function employeeCard(p) {
     card.appendChild(floorGrid(p));
     // Free text, shown on their column on the wall. Blank it to take it off again.
     card.appendChild(el(`<div style="font-size:11px;color:#5b6a7f;font-weight:600;margin-top:8px">Note on the board</div>`));
+    const noteRow = el(`<div style="display:flex;gap:6px;align-items:center"></div>`);
     const noteIn = el(`<input value="${esc(p.note || '')}" maxlength="60" placeholder="e.g. Offsite - 2 Dhagax" `
-      + `style="width:100%;font-size:13px;padding:7px 9px;border:1px solid #d8e0ea;border-radius:8px">`);
+      + `style="flex:1;min-width:0;font-size:13px;padding:7px 9px;border:1px solid #d8e0ea;border-radius:8px">`);
     noteIn.onchange = (e) => setEmpNote(p.id, e.target.value);
-    card.appendChild(noteIn);
+    // OFFSITE IS THE ONE THAT KEEPS BEING TYPED. It is still office work, just at
+    // another of the buildings, so it is not a status and not a team - it is the same
+    // note every time. One tap writes the word and leaves the cursor to add which
+    // building, because "Offsite" alone answers half the question people ask.
+    const offBtn = el(`<button class="freqmini" style="flex:0 0 auto;padding:7px 11px">Offsite</button>`);
+    offBtn.onclick = () => {
+      const cur = String(p.note || '');
+      setEmpNote(p.id, /^offsite/i.test(cur) ? '' : (cur ? 'Offsite - ' + cur : 'Offsite - '));
+    };
+    if (/^offsite/i.test(String(p.note || ''))) offBtn.classList.add('on');
+    noteRow.appendChild(noteIn); noteRow.appendChild(offBtn);
+    card.appendChild(noteRow);
     // What this person is cleared to clean. Trainees are commonly kept off offices.
     card.appendChild(el(`<div style="font-size:11px;color:#5b6a7f;font-weight:600;margin-top:8px">Cleared to clean</div>`));
     const canRow = el(`<div style="display:flex;gap:6px;flex-wrap:wrap"></div>`);
