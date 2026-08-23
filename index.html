@@ -471,6 +471,7 @@
   .tv-crewhead .on { font-size: 1.0vw; font-weight: 800; letter-spacing: 0.1em; color: #22c55e; }
   .tv-crewhead .off { font-size: 1.0vw; font-weight: 800; letter-spacing: 0.1em; color: var(--tv-muted); }
   .tv-crewhead .noscan { font-size: 1.0vw; font-weight: 800; letter-spacing: 0.1em; color: #fbbf24; }
+  .tv-with .tv-noscan { color: #fbbf24; font-weight: 800; }
   .tv-chip.noscan { opacity: 0.92; }
   .tv-chip.gone { opacity: 0.5; }
   .tv-at.gone { color: var(--tv-muted); opacity: 0.9; }
@@ -8733,7 +8734,13 @@ function tvWithLabel(p, spare) {
   // early is usually late data rather than a missing person, and quietly deleting the
   // name would replace one wrong answer with another. The leader is still shown as
   // having them - with the one thing the board actually knows attached.
-  return a.length ? 'with ' + a.map((x) => tvName(x) + (tvArrival(x) ? '' : ' (no scan)')).join(', ') : '';
+  if (!a.length) return '';
+  // Returns MARKUP, not text - the caller inserts it unescaped - so every name has to
+  // be escaped right here. The amber is doing real work: the sentence reads as
+  // reassurance ("Mahad has Abukar with him") and the one word that contradicts it
+  // must not be the same colour as the rest.
+  return 'with ' + a.map((x) => esc(tvName(x))
+    + (tvArrival(x) ? '' : ' <span class="tv-noscan">(no scan)</span>')).join(', ');
 }
 
 // Named under somebody else, so not given a column of their own.
@@ -9034,7 +9041,7 @@ function renderTV() {
     // whoever is with them, and naming only the leader left the floor to be guessed
     // at from across the office. Muted, because it answers a question about the
     // heading rather than being another thing to read.
-    if (c.with) hd.appendChild(el(`<div class="tv-with">${esc(c.with)}</div>`));
+    if (c.with) hd.appendChild(el(`<div class="tv-with">${c.with}</div>`));   // pre-escaped in tvWithLabel
     // Team on the left, the time they badged in on the right: the two questions
     // asked of a name on this board that the name alone cannot answer.
     if (c.team || c.at) {
