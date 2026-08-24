@@ -6858,6 +6858,63 @@ function viewRooms() {
 // who has what.
 let _giveTo = null;        // whose card is showing the "give them more work" list
 
+// MOVING A JOB ONTO A PERSON.
+// On a desktop this is a drag: pick the flat up with the mouse and drop it on whoever
+// cleaned it. On a phone it cannot be — a finger dragging down the screen is a scroll,
+// and a page that refuses to scroll because you started on a chip is worse than no
+// dragging at all. So the same gesture degrades honestly: TAP the job to pick it up,
+// tap the person to put it down. One rule, two devices, and the tap works on both.
+let _picked = null;        // { kind, id, label } — a job in the hand, waiting for a name
+function assignPicked(kind, id, pid) {
+  if (kind === 'area') setAreaAssign(id, pid);
+  else setUnitAssignee(id, pid);
+  _picked = null;
+}
+function dragToAssign(node, kind, id, label) {
+  let from = null, ghost = null, moved = false;
+  const kill = () => { if (ghost) { ghost.remove(); ghost = null; } };
+  node.addEventListener('pointerdown', (e) => {
+    from = { x: e.clientX, y: e.clientY, mouse: e.pointerType === 'mouse' };
+    moved = false;
+    if (from.mouse && node.setPointerCapture) node.setPointerCapture(e.pointerId);
+  });
+  node.addEventListener('pointermove', (e) => {
+    if (!from || !from.mouse) return;                 // a finger moving is the page scrolling
+    if (!moved && Math.abs(e.clientX - from.x) + Math.abs(e.clientY - from.y) < 8) return;
+    moved = true;
+    if (!ghost) {
+      ghost = el(`<div style="position:fixed;z-index:9999;pointer-events:none;padding:8px 12px;`
+        + `border-radius:8px;background:#0284c7;color:#fff;font-weight:800;font-size:13px;`
+        + `box-shadow:0 6px 18px rgba(0,0,0,0.25)">${esc(label)}</div>`);
+      document.body.appendChild(ghost);
+    }
+    ghost.style.left = (e.clientX + 12) + 'px';
+    ghost.style.top = (e.clientY - 14) + 'px';
+    e.preventDefault();
+  });
+  node.addEventListener('pointerup', (e) => {
+    kill();
+    if (moved) {
+      // Whatever is under the pointer, or the nearest thing above it that accepts a job.
+      const t = document.elementFromPoint(e.clientX, e.clientY);
+      const drop = t && t.closest && t.closest('[data-drop]');
+      if (drop) assignPicked(kind, id, drop.getAttribute('data-drop'));
+      else render();
+    } else {
+      // A tap: pick it up, or put down the one already in hand.
+      _picked = (_picked && _picked.id === id) ? null : { kind, id, label };
+      render();
+    }
+    from = null; moved = false;
+  });
+  node.addEventListener('pointercancel', () => { kill(); from = null; moved = false; });
+}
+// Anything that can be given a job says so, once, in one place.
+function makeDropTarget(node, pid) {
+  node.setAttribute('data-drop', pid);
+  node.addEventListener('click', () => { if (_picked) assignPicked(_picked.kind, _picked.id, pid); });
+}
+
 function viewTick() {
   const wrap = el('<div class="body"></div>');
   const cols = tvColumns();
@@ -7852,6 +7909,42 @@ function viewRollCall() {
     body.appendChild(abox);
   }
 
+  // THE GUEST FLATS, ON THE MORNING SCREEN, MOVED BY HAND.
+  // Which flats were done and by whom is decided by who checked out and who was free —
+  // never by a schedule — so it is always somebody moving work onto somebody. That was
+  // a dropdown inside a card you had to find first. Here they are, all of them, and a
+  // flat goes to a person by being dropped on them or tapped onto them.
+  {
+    const flats = (state.servicedUnits || []).filter((u) => !u.paused && unitType(u) === 'airbnb')
+      .sort((a, b) => String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }));
+    if (flats.length) {
+      const fbox = el('<div style="margin-bottom:18px"></div>');
+      const doneN = flats.filter(cleanedToday).length;
+      fbox.appendChild(el(`<div class="section-label">🏠 Airbnb (${doneN}/${flats.length} done)</div>`));
+      fbox.appendChild(el(`<div style="font-size:12px;color:#5f7189;font-weight:600;margin:-6px 0 10px">`
+        + (_picked
+            ? `<b style="color:#0369a1">${esc(_picked.label)} is in your hand</b> — tap whoever cleaned it, below. Tap it again to put it down.`
+            : `Tap a flat, then tap whoever cleaned it. On a computer you can drag it onto them.`)
+        + `</div>`));
+      const chips = el('<div style="display:flex;flex-wrap:wrap;gap:6px"></div>');
+      flats.forEach((u) => {
+        const done = cleanedToday(u);
+        const who = (state.staff || []).find((p) => p.id === u.assignedTo);
+        const held = _picked && _picked.id === u.id;
+        const chip = el(`<button class="freqmini" style="flex:0 0 auto;padding:9px 12px;font-size:13px;`
+          + `touch-action:manipulation;`
+          + (held ? 'background:#0284c7;border-color:#0284c7;color:#ffffff;font-weight:800'
+             : done ? 'background:#eaf7ee;border-color:#bfe3ca;color:#15803d'
+             : 'background:#f3efff;border-color:#ddd0fb;color:#6d28d9;font-weight:700') + `">`
+          + `${esc(u.unit)}${done ? ' ✓' : ''}${who ? ' · ' + esc(who.name.split(' ')[0]) : ''}</button>`);
+        dragToAssign(chip, 'unit', u.id, u.unit);
+        chips.appendChild(chip);
+      });
+      fbox.appendChild(chips);
+      body.appendChild(fbox);
+    }
+  }
+
   // WHO'S IN TODAY — only people who badged in, with clock-in times + room assignment.
   const whoIn = el('<div style="margin-bottom:18px"></div>');
   const dayLbl = (selectedDay && selectedDay !== todayKey()) ? ('on ' + selectedDay) : 'today';
@@ -7936,6 +8029,10 @@ function viewRollCall() {
       .forEach(({ s, t, out }) => {
         const manual = hikArrivals[s.id] && hikArrivals[s.id].manual;
         const card = el('<div class="person" style="flex-direction:column;align-items:stretch;gap:8px"></div>');
+        // Somebody who is in can be given a job: dropped on with a mouse, or tapped
+        // while a job is in hand. The card is the target because the card is the person.
+        makeDropTarget(card, s.id);
+        if (_picked) card.style.outline = '2px dashed #93c5fd';
         const info = el('<div class="person-info"></div>');
         const lead = s.isLeader ? ` <span style="color:#d97706;font-size:12px;font-weight:700">★</span>` : '';
         const shk = shiftOf(s);
