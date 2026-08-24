@@ -161,7 +161,7 @@ const todayChips = (page) => page.locator('.body > div', { has: page.locator('.s
   check('it is not ticked yet',
     !(await page.evaluate(() => cleanedToday(state.servicedUnits.find((u) => u.unit === 'A1')))));
   // A row carries its name, its kind tag and its circle, so match the name element.
-  await page.locator('button.bd-job', { hasText: /^A1/ }).first().click();
+  await page.locator('.bd-lbl', { hasText: /^A1/ }).first().click();
   await page.waitForTimeout(800);
   check('tapping the room marks it cleaned',
     await page.evaluate(() => cleanedToday(state.servicedUnits.find((u) => u.unit === 'A1'))),

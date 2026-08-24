@@ -117,7 +117,7 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
   check('each cleaner’s badge-in time is on the board',
     /IN \d{1,2}:\d{2}/i.test(tickBody), tickBody.slice(0, 160));
 
-  const chip = page.locator('button', { hasText: /^101/ }).first();
+  const chip = page.locator('.bd-lbl', { hasText: /^101/ }).first();
   await chip.click();
   await page.waitForTimeout(700);
   const ticked = await page.evaluate(() => {
@@ -178,7 +178,7 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
   check('and nothing else — no attendance, no set-up',
     !tickText.includes('Sync Staff') && !tickText.includes('badged in'), tickText.slice(0, 120));
   const wasDone = await page.evaluate(() => cleanedToday(state.servicedUnits.find((x) => x.unit === '102')));
-  await page.locator('button', { hasText: /^102$/ }).first().click();
+  await page.locator('.bd-lbl', { hasText: /^102$/ }).first().click();
   await page.waitForTimeout(700);
   const nowDone = await page.evaluate(() => ({
     done: cleanedToday(state.servicedUnits.find((x) => x.unit === '102')),
@@ -256,7 +256,7 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
   // Scoped to the "give them more work" list: 909 is also sitting in NOBODY YET, where
   // a tap would tick it clean rather than hand it to anybody.
   // On the board the spare jobs are chips, not rows: "＋ 909".
-  await page.locator('.givelist button', { hasText: /909/ }).first().click();
+  await page.locator('.givelist .bd-lbl, .givelist button', { hasText: /909/ }).first().click();
   await page.waitForTimeout(700);
   const given = await page.evaluate(() => {
     const u = state.servicedUnits.find((x) => x.unit === '909');
@@ -264,6 +264,37 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
   });
   check('tapping one hands it to that leader', !!given.to, JSON.stringify(given));
   check('and it lands in their column', given.onBoard === true, JSON.stringify(given));
+
+  // --- the grip, and only the grip, moves a room -----------------------------------
+  const grips = await page.locator('.bd-grip').count();
+  check('every chip carries a grip to move it by', grips > 0, 'grips: ' + grips);
+  const beforeMove = await page.evaluate(() => {
+    const u = state.servicedUnits.find((x) => x.unit === '301');
+    return { to: u.assignedTo, done: cleanedToday(u) };
+  });
+  // Tap the grip: the room is in hand, and NOT ticked — which is the whole point of
+  // giving the move its own target.
+  await page.locator('.bd-job', { has: page.locator('.bd-lbl', { hasText: /^301/ }) })
+    .locator('.bd-grip').first().click();
+  await page.waitForTimeout(500);
+  const inHand = await page.evaluate(() => ({
+    picked: _picked && _picked.label,
+    done: cleanedToday(state.servicedUnits.find((x) => x.unit === '301')),
+  }));
+  check('tapping the grip picks the room up', inHand.picked === '301', JSON.stringify(inHand));
+  check('and does not tick it off by mistake', inHand.done === beforeMove.done, JSON.stringify(inHand));
+  // Then tap somebody: it lands on whoever that column belongs to.
+  const target = page.locator('.bd-col[data-drop]').first();
+  const targetId = await target.getAttribute('data-drop');
+  await target.click();
+  await page.waitForTimeout(700);
+  const landed = await page.evaluate(() => {
+    const u = state.servicedUnits.find((x) => x.unit === '301');
+    return { to: u.assignedTo, hand: _picked };
+  });
+  check('tapping a person puts it in their column', landed.to === targetId,
+    JSON.stringify(landed) + ' target: ' + targetId);
+  check('and your hand is empty again', landed.hand === null, JSON.stringify(landed));
 
   check('no console errors', errs.length === 0, errs.join('\n       '));
 

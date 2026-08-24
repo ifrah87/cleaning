@@ -206,11 +206,22 @@
   .bd-jobs { display: flex; flex-wrap: wrap; gap: 7px; }
   /* Every chip the same height and no narrower than a room number needs, so a column of
      them lines up instead of stepping in and out with the length of the label. */
-  .bd-job { min-height: 46px; min-width: 76px; padding: 11px 14px; border: 0;
-            border-left: 5px solid #3d557f; border-radius: 9px; background: #1c2b45;
-            color: #dce8f8; font-size: 16px; font-weight: 800; cursor: pointer;
-            text-align: center; font-variant-numeric: tabular-nums; }
-  .bd-job.area { text-align: left; }
+  /* A CHIP IS TWO TARGETS. Tapping it means cleaned — that is what the crew do twenty
+     times a day and it must never cost them a thought. Moving a room is the rarer,
+     more deliberate act, so it gets its own grip on the edge: nothing is picked up by
+     accident, and a mis-tap is a tick that untaps rather than a room in somebody's hand. */
+  .bd-job { min-height: 46px; min-width: 76px; border: 0; border-left: 5px solid #3d557f;
+            border-radius: 9px; background: #1c2b45; color: #dce8f8; font-size: 16px;
+            font-weight: 800; font-variant-numeric: tabular-nums;
+            display: flex; align-items: stretch; overflow: hidden; }
+  .bd-lbl { flex: 1; min-width: 0; padding: 11px 12px; cursor: pointer; text-align: center;
+            background: transparent; border: 0; color: inherit; font: inherit; }
+  .bd-job.area .bd-lbl { text-align: left; }
+  .bd-grip { flex: 0 0 auto; width: 26px; display: flex; align-items: center; justify-content: center;
+             cursor: grab; color: #7f9abf; font-size: 13px; background: rgba(255,255,255,0.06);
+             border: 0; border-left: 1px solid rgba(255,255,255,0.08); touch-action: none; }
+  .bd-grip:active { cursor: grabbing; background: rgba(56,189,248,0.28); color: #eaf1fb; }
+  .bd-job.held .bd-grip { background: #38bdf8; color: #04263a; }
   .bd-more { margin-top: auto; }
   .bd-job.early { background: #4a1414; color: #ffd9d9; border-left-color: #ef4444; }
   .bd-job.air   { background: #4c1d95; color: #f3e8ff; border-left-color: #c084fc; }
@@ -234,6 +245,80 @@
   .bd-panel .lbl { font-size: 11px; font-weight: 700; color: #7f9abf; }
   .bd-close { width: 100%; padding: 12px; border: 0; border-radius: 10px; background: #15803d;
               color: #eafaf0; font-size: 14px; font-weight: 800; cursor: pointer; }
+
+  /* ONE APP, ONE GROUND.
+     The board is dark and every other screen was paper, so tapping ☰ and opening the
+     morning set-up looked like leaving the app and arriving in the old one. Screens that
+     are used once a day still have to belong to the screen that is used all day. The
+     palette below is the board's own, applied to the shared furniture — cards, rows,
+     inputs, chips — so the sub-pages are the same app in a quieter room. The televisions
+     are scoped out of all of it; they have their own stylesheet and always have. */
+  body:not(.tv) { background: #0a1220; color: #eaf1fb; }
+  body:not(.tv) #app { background: #0a1220; }
+  body:not(.tv) .header { background: #0a1220; border-bottom: 1px solid #1e2f4d; }
+  body:not(.tv) .h-title { color: #eaf1fb; }
+  body:not(.tv) .h-eyebrow, body:not(.tv) .h-date { color: #7f9abf; }
+  body:not(.tv) .body { background: #0a1220; }
+  body:not(.tv) .stat { background: #101c30; border-color: #1e2f4d; }
+  body:not(.tv) .stat .lbl { color: #7f9abf; }
+  body:not(.tv) .stat .val { color: #eaf1fb; }
+  body:not(.tv) .tb-btn { background: #101c30; border-color: #1e2f4d; color: #9fb6d4; }
+  body:not(.tv) .tb-btn:active { background: #1c2b45; }
+  body:not(.tv) .stickbar { background: #0a1220; border-color: #1e2f4d; }
+  body:not(.tv) .segbtn { background: #101c30; border-color: #1e2f4d; color: #9fb6d4; }
+  body:not(.tv) .segbtn.on { background: #1c2b45; border-color: #3d557f; color: #eaf1fb; }
+  body:not(.tv) .sheet, body:not(.tv) .sheet-head { background: #101c30; border-color: #1e2f4d; }
+  body:not(.tv) .sr-row { background: #101c30; border-color: #1e2f4d; color: #eaf1fb; }
+  body:not(.tv) .sheet-paper { background: #101c30; border-color: #1e2f4d; }
+  body:not(.tv) .person { background: #101c30; border-color: #1e2f4d; }
+  body:not(.tv) .person-name { color: #eaf1fb; }
+  body:not(.tv) .person-floors { color: #7f9abf; }
+  body:not(.tv) .section-label { color: #7f9abf; }
+  body:not(.tv) .note, body:not(.tv) .footer { color: #6f8ab0; }
+  body:not(.tv) .empty { color: #7f9abf; }
+  body:not(.tv) .su-card { background: #101c30; border-color: #1e2f4d; color: #eaf1fb; }
+  body:not(.tv) .su-card.done { background: #123020; border-color: #22c55e; }
+  body:not(.tv) .su-ctl { border-top-color: #1e2f4d; }
+  body:not(.tv) .su-unit { color: #eaf1fb; }
+  body:not(.tv) .sp-who { color: #eaf1fb; }
+  body:not(.tv) .su-guest, body:not(.tv) .su-assign { color: #9fb6d4; }
+  body:not(.tv) .area-list { background: #101c30; border-color: #1e2f4d; }
+  body:not(.tv) .area-item { border-top-color: #1e2f4d; }
+  body:not(.tv) .area-name { color: #eaf1fb; }
+  body:not(.tv) .area-freq { color: #7f9abf; }
+  body:not(.tv) .area-tick { background: #16233a; border-color: #3d557f; }
+  body:not(.tv) .freqmini { background: #101c30; border-color: #1e2f4d; color: #9fb6d4; }
+  body:not(.tv) .freqmini.on { background: #0284c7; border-color: #0284c7; color: #ffffff; }
+  body:not(.tv) .reset-btn { background: #101c30; border-color: #1e2f4d; color: #9fb6d4; }
+  body:not(.tv) .area-select, body:not(.tv) .su-card input,
+  body:not(.tv) input, body:not(.tv) select { background: #16233a; color: #eaf1fb; border-color: #3d557f; }
+  body:not(.tv) input::placeholder, body:not(.tv) .su-card input::placeholder { color: #6f8ab0; }
+  body:not(.tv) .modal { background: #101c30; border-color: #1e2f4d; color: #eaf1fb; }
+  body:not(.tv) .modal-skip { background: #16233a; border-color: #3d557f; color: #9fb6d4; }
+  body:not(.tv) .alert { background: #2b1414; border-color: #7f1d1d; }
+  /* The rest of the estate's furniture: the floor grid, the exterior rows, the hand-out
+     sheet, the team groups and the status pills. Colour only — nothing here moves. */
+  body:not(.tv) .zone { background: #101c30; border-color: #1e2f4d; box-shadow: none; }
+  body:not(.tv) .zone.done { background: #123020; border-color: #22c55e; }
+  body:not(.tv) .zone-name { color: #eaf1fb; }
+  body:not(.tv) .zone.done .zone-name { color: #86efac; }
+  body:not(.tv) .unit { background: #16233a; border-color: #1e2f4d; }
+  body:not(.tv) .unit.done { background: #123020; border-color: #22c55e; }
+  body:not(.tv) .unit-num { color: #eaf1fb; }
+  body:not(.tv) .crew-name { color: #eaf1fb; }
+  body:not(.tv) .crew-sub { color: #7f9abf; }
+  body:not(.tv) .fl-btn { background: #16233a; border-color: #3d557f; color: #9fb6d4; }
+  body:not(.tv) .sp-row { border-bottom-color: #1e2f4d; }
+  body:not(.tv) .status-btn { background: #16233a; border-color: #3d557f; color: #9fb6d4; }
+  body:not(.tv) .su-rm { border-color: #7f1d1d; color: #fca5a5; }
+  body:not(.tv) .su-mark { background: #16233a; color: #9fb6d4; }
+  body:not(.tv) .area-more, body:not(.tv) .area-who { background: #16233a; color: #9fb6d4; border-color: #3d557f; }
+  body:not(.tv) .grp-btn { background: #101c30; border-color: #1e2f4d; }
+  body:not(.tv) .grp-btn:active { background: #16233a; }
+  body:not(.tv) .grp-title { color: #eaf1fb; }
+  body:not(.tv) .grp-sub, body:not(.tv) .grp-caret { color: #7f9abf; }
+  body:not(.tv) .grp-count { background: #16233a; color: #9fb6d4; }
+  /* The room number on a room card was a near-black that vanished into the card. */
 
   /* THE BOARD IS THE PAGE, NOT A PANEL ON IT. A dark board floating in a white app is
      two designs meeting at a rounded corner, and it reads as exactly that — something
@@ -5046,7 +5131,7 @@ function addUnitForm(opts) {
   if (opts.showTime) {
     const rowT = el(`<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"></div>`);
     rowT.appendChild(el(`<div style="font-size:11px;color:#5f7189;font-weight:600;white-space:nowrap">${opts.timeLabel || 'Checkout time'}</div>`));
-    inT = el(`<input id="newTime" type="time" style="flex:1;min-width:0;background:#f4f7fb;color:#15202e;border:1px solid #d8e0ea;border-radius:8px;padding:7px 10px">`);
+    inT = el(`<input id="newTime" type="time" style="flex:1;min-width:0;background:#16233a;color:#eaf1fb;border:1px solid #3d557f;border-radius:8px;padding:7px 10px">`);
     rowT.appendChild(inT); form.appendChild(rowT);
   }
 
@@ -5151,7 +5236,7 @@ function searchSheet() {
   const head = el('<div class="sheet-head"></div>');
   const row = el('<div style="display:flex;gap:8px;align-items:center"></div>');
   const box = el(`<input type="search" placeholder="Room, guest, area or person…" `
-    + `style="flex:1;min-width:0;background:#f4f7fb;color:#15202e;border:1px solid #d8e0ea;`
+    + `style="flex:1;min-width:0;background:#16233a;color:#eaf1fb;border:1px solid #3d557f;`
     + `border-radius:10px;padding:11px 13px;font-size:16px">`);
   box.value = _search.q;
   const cancel = el('<button class="tb-btn">Close</button>');
@@ -5214,7 +5299,7 @@ function unitGroups(wrap, typeKeys, emptyMsg) {
   const rows = [];
   let q = '', freqPick = '';
   const search = el(`<input type="search" placeholder="Search a room, guest or note…" `
-    + `style="width:100%;margin:6px 0 6px;background:#ffffff;color:#15202e;border:1px solid #d8e0ea;`
+    + `style="width:100%;margin:6px 0 6px;background:#16233a;color:#eaf1fb;border:1px solid #3d557f;`
     + `border-radius:10px;padding:11px 13px;font-size:15px">`);
   // FILTER BY HOW OFTEN IT IS CLEANED. "Which rooms are weekly?" and "what is still
   // on a frequency rather than fixed days?" are the two questions this list is read
@@ -6316,7 +6401,7 @@ function viewPlan() {
   quick.appendChild(jump('Yesterday', yday, day === yday));
   quick.appendChild(jump('Today', workToday(), isToday));
   quick.appendChild(jump('Tomorrow', tomorrowKey(), isTomorrow));
-  const dayIn = el(`<input type="date" value="${esc(day)}" min="${esc(shiftDay(workToday(), -120))}" style="flex:1;min-width:0;background:#ffffff;color:#15202e;border:1px solid #d8e0ea;border-radius:8px;padding:7px 9px;font-size:13px">`);
+  const dayIn = el(`<input type="date" value="${esc(day)}" min="${esc(shiftDay(workToday(), -120))}" style="flex:1;min-width:0;background:#16233a;color:#eaf1fb;border:1px solid #3d557f;border-radius:8px;padding:7px 9px;font-size:13px">`);
   dayIn.onchange = (e) => { planDay = e.target.value || null; render(); };
   quick.appendChild(dayIn);
   wrap.appendChild(quick);
@@ -6672,7 +6757,7 @@ function viewRooms() {
   let q = '';
   const stick = el('<div class="stickbar"></div>');
   const search = el(`<input type="search" placeholder="Search a room, guest or note…" `
-    + `style="width:100%;background:#ffffff;color:#15202e;border:1px solid #d8e0ea;`
+    + `style="width:100%;background:#16233a;color:#eaf1fb;border:1px solid #3d557f;`
     + `border-radius:10px;padding:11px 13px;font-size:15px">`);
   const hits = el(`<div style="font-size:11px;color:#5f7189;font-weight:600;min-height:15px;margin-top:5px"></div>`);
   const applyFilter = () => {
@@ -6946,18 +7031,18 @@ function menuSheet() {
   const overlay = el('<div style="position:fixed;inset:0;z-index:900;background:rgba(10,18,32,0.55);'
     + 'display:flex;align-items:flex-end;justify-content:center"></div>');
   overlay.onclick = (e) => { if (e.target === overlay) { _menuOpen = false; render(); } };
-  const sheet = el('<div style="width:100%;max-width:560px;max-height:88vh;overflow:auto;background:#ffffff;'
+  const sheet = el('<div style="width:100%;max-width:560px;max-height:88vh;overflow:auto;background:#101c30;'
     + 'border-radius:16px 16px 0 0;padding:14px 14px calc(18px + env(safe-area-inset-bottom,0))"></div>');
   sheet.appendChild(el(`<div style="display:flex;align-items:center;margin-bottom:10px">`
-    + `<div style="flex:1;font-size:15px;font-weight:800;color:#0f172a">Everything else</div></div>`));
+    + `<div style="flex:1;font-size:15px;font-weight:800;color:#eaf1fb">Everything else</div></div>`));
   const group = (label, items) => {
     sheet.appendChild(el(`<div style="font-size:10px;font-weight:800;letter-spacing:0.12em;color:#8a99ab;`
       + `margin:14px 0 6px">${esc(label)}</div>`));
     items.forEach(([tab, name, sub]) => {
       const b = el(`<button style="display:flex;align-items:center;gap:12px;width:100%;padding:14px 12px;`
-        + `border:0;border-bottom:1px solid #eef2f7;background:transparent;text-align:left;cursor:pointer">`
-        + `<div style="flex:1;min-width:0"><div style="font-size:15px;font-weight:700;color:#243b53">${esc(name)}</div>`
-        + (sub ? `<div style="font-size:11px;color:#5f7189">${esc(sub)}</div>` : '')
+        + `border:0;border-bottom:1px solid #1e2f4d;background:transparent;text-align:left;cursor:pointer">`
+        + `<div style="flex:1;min-width:0"><div style="font-size:15px;font-weight:700;color:#eaf1fb">${esc(name)}</div>`
+        + (sub ? `<div style="font-size:11px;color:#7f9abf">${esc(sub)}</div>` : '')
         + `</div><div style="color:#8a99ab;font-size:18px">›</div></button>`);
       b.onclick = () => { _menuOpen = false; setTab(tab); };
       sheet.appendChild(b);
@@ -7188,27 +7273,59 @@ function viewTick() {
         if (!u && !a) return;
         const held = _picked && _picked.id === j.id;
         const cls = j.done ? 'done' : j.early ? 'early' : j.air ? 'air' : j.area ? 'area' : '';
-        const chip = el(`<button class="bd-job ${cls}${held ? ' held' : ''}" style="touch-action:manipulation">`
+        const kind = j.area ? 'area' : 'unit';
+        const chip = el(`<div class="bd-job ${cls}${held ? ' held' : ''}"></div>`);
+
+        // THE LABEL IS THE TICK. Twenty times a day, one tap, no thought.
+        const lbl = el(`<button class="bd-lbl" style="touch-action:manipulation">`
           + `${j.early && !j.done ? '🌅 ' : ''}${esc(j.label)}${j.done ? ' ✓' : ''}</button>`);
-        // TAP TICKS IT. Holding it — press and hold, or drag with a mouse — picks the
-        // job up so it can be put on somebody else, which is the other thing this
-        // screen is for. Two gestures, and the commoner one is the shorter.
-        let held2 = false, holdT = null;
-        chip.addEventListener('pointerdown', () => {
-          held2 = false;
-          clearTimeout(holdT);
-          holdT = setTimeout(() => {
-            held2 = true;
-            _picked = { kind: j.area ? 'area' : 'unit', id: j.id, label: j.label };
-            render();
-          }, 500);
-        });
-        ['pointerup', 'pointerleave', 'pointercancel'].forEach((ev) => chip.addEventListener(ev, () => clearTimeout(holdT)));
-        chip.onclick = () => {
-          if (held2) { held2 = false; return; }        // the hold picked it up
+        lbl.onclick = () => {
           if (_picked && _picked.id === j.id) { _picked = null; render(); return; }
           if (j.area) toggleAreaDone(a.id); else toggleServicedDone(u.id);
         };
+        chip.appendChild(lbl);
+
+        // THE GRIP IS THE MOVE. Drag it with a mouse, or tap it and then tap whoever
+        // should have the room — a finger dragging down a screen is the page scrolling,
+        // so touch gets the two-tap version of the same gesture.
+        const grip = el(`<button class="bd-grip" title="Drag to move, or tap then tap a person">⠿</button>`);
+        let from = null, ghost = null, moved = false;
+        const killGhost = () => { if (ghost) { ghost.remove(); ghost = null; } };
+        grip.addEventListener('pointerdown', (e) => {
+          from = { x: e.clientX, y: e.clientY, mouse: e.pointerType === 'mouse' };
+          moved = false;
+          if (grip.setPointerCapture) grip.setPointerCapture(e.pointerId);
+        });
+        grip.addEventListener('pointermove', (e) => {
+          if (!from) return;
+          if (!moved && Math.abs(e.clientX - from.x) + Math.abs(e.clientY - from.y) < 8) return;
+          moved = true;
+          if (!ghost) {
+            ghost = el(`<div style="position:fixed;z-index:9999;pointer-events:none;padding:9px 13px;`
+              + `border-radius:9px;background:#0284c7;color:#fff;font-weight:800;font-size:14px;`
+              + `box-shadow:0 8px 22px rgba(0,0,0,0.45)">${esc(j.label)}</div>`);
+            document.body.appendChild(ghost);
+          }
+          ghost.style.left = (e.clientX + 12) + 'px';
+          ghost.style.top = (e.clientY - 16) + 'px';
+          e.preventDefault();
+        });
+        grip.addEventListener('pointerup', (e) => {
+          killGhost();
+          if (moved) {
+            const t = document.elementFromPoint(e.clientX, e.clientY);
+            const drop = t && t.closest && t.closest('[data-drop]');
+            if (drop) assignPicked(kind, j.id, drop.getAttribute('data-drop'));
+            else render();
+          } else {
+            // A tap on the grip: pick it up, or put down the one already in hand.
+            _picked = (_picked && _picked.id === j.id) ? null : { kind, id: j.id, label: j.label };
+            render();
+          }
+          from = null; moved = false;
+        });
+        grip.addEventListener('pointercancel', () => { killGhost(); from = null; moved = false; });
+        chip.appendChild(grip);
         row.appendChild(chip);
       });
       col.appendChild(row);
@@ -7246,8 +7363,8 @@ function viewTick() {
   });
   wrap.appendChild(grid);
   wrap.appendChild(el(`<div class="note" style="font-size:11px;color:#6f8ab0;margin-top:12px">`
-    + `Tap a chip to mark it clean. Hold one, then tap a person, to move it. `
-    + `Tap a name to give them more. The TV follows within a minute.</div>`));
+    + `Tap a chip to mark it clean. Drag it by the ⠿ grip — or tap the grip, then tap a `
+    + `person — to move it. Tap a name to give them more. The TV follows within a minute.</div>`));
   return wrap;
 }
 
@@ -7573,7 +7690,7 @@ function viewRollCall(opts) {
   const syncBtn = el('<button class="add-btn" style="background:#0284c7">⟳ Sync Staff (Hik-Connect)</button>');
   syncBtn.onclick = () => syncFromHik();
   syncBox.appendChild(syncBtn);
-  const impBtn = el('<button class="add-btn" style="background:#ffffff;color:#0284c7;border:1px solid #cfe8fb;margin-top:8px">↑ Import Attendance File</button>');
+  const impBtn = el('<button class="add-btn" style="background:#101c30;color:#7ea6dc;border:1px solid #3d557f;margin-top:8px">↑ Import Attendance File</button>');
   const impInput = el('<input type="file" accept=".xlsx,.xls,.csv" style="display:none">');
   impInput.onchange = (e) => { if (e.target.files[0]) importAttendance(e.target.files[0]); e.target.value = ''; };
   impBtn.onclick = () => impInput.click();
@@ -7587,7 +7704,7 @@ function viewRollCall(opts) {
   // whose badge-ins to show, and it cannot go forward at all — nobody has clocked in
   // for a day that has not happened. Planning a day ahead is the Plan tab's job.
   dayRow.appendChild(el('<div style="font-size:12px;color:#5f7189;font-weight:600;white-space:nowrap">Attendance for</div>'));
-  const dayIn = el(`<input type="date" value="${esc(cur)}" max="${esc(todayKey())}" style="flex:1;min-width:0;background:#f4f7fb;color:#15202e;border:1px solid #d8e0ea;border-radius:8px;padding:8px 10px;font-size:14px">`);
+  const dayIn = el(`<input type="date" value="${esc(cur)}" max="${esc(todayKey())}" style="flex:1;min-width:0;background:#16233a;color:#eaf1fb;border:1px solid #3d557f;border-radius:8px;padding:8px 10px;font-size:14px">`);
   dayIn.onchange = (e) => pickDay(e.target.value);
   const calBtn = el('<button class="freqmini" title="Pick a date" style="flex:0 0 auto">📅</button>');
   calBtn.onclick = () => { try { dayIn.showPicker(); } catch (e) { dayIn.focus(); dayIn.click(); } };
@@ -7639,11 +7756,11 @@ function viewRollCall(opts) {
   const fold = (key, title, meta, node, openByDefault) => {
     if (!state.rcFold) state.rcFold = {};
     const open = state.rcFold[key] === undefined ? !!openByDefault : !!state.rcFold[key];
-    const box = el('<div style="margin-bottom:8px;border:1px solid #e6ecf3;border-radius:10px;overflow:hidden;background:#ffffff"></div>');
+    const box = el('<div style="margin-bottom:8px;border:1px solid #1e2f4d;border-radius:10px;overflow:hidden;background:#101c30"></div>');
     const hd = el(`<button style="display:flex;align-items:center;gap:8px;width:100%;padding:13px 12px;`
-      + `border:0;background:${open ? '#f7f9fc' : '#ffffff'};text-align:left;cursor:pointer">`
+      + `border:0;background:${open ? '#16233a' : '#101c30'};text-align:left;cursor:pointer">`
       + `<span style="font-size:12px;color:#8a99ab;width:12px">${open ? '▾' : '▸'}</span>`
-      + `<span style="flex:1;min-width:0;font-size:13px;font-weight:800;color:#243b53">${esc(title)}</span>`
+      + `<span style="flex:1;min-width:0;font-size:13px;font-weight:800;color:#eaf1fb">${esc(title)}</span>`
       + (meta ? `<span style="font-size:11px;font-weight:700;color:#5f7189">${esc(meta)}</span>` : '')
       + `</button>`);
     hd.onclick = () => { state.rcFold[key] = !open; save(); render(); };
@@ -7715,7 +7832,7 @@ function viewRollCall(opts) {
       const counted = countJobs(cols);
       const all = counted.all, doneN = counted.done;
       const sum = el('<div style="display:flex;align-items:center;gap:12px;margin:0 0 14px;padding:12px 14px;'
-        + 'border-radius:10px;background:#f7f9fc;border:1px solid #e6ecf3"></div>');
+        + 'border-radius:10px;background:#101c30;border:1px solid #1e2f4d"></div>');
       sum.appendChild(el(`<div><div style="font-size:22px;font-weight:800;color:${all - doneN ? '#b45309' : '#15803d'}">`
         + `${all - doneN}</div><div style="font-size:11px;font-weight:700;color:#5f7189">LEFT TODAY</div></div>`));
       sum.appendChild(el(`<div><div style="font-size:22px;font-weight:800;color:#15803d">${doneN}</div>`
@@ -8061,7 +8178,7 @@ function viewRollCall(opts) {
     // tomorrow — unlike the communal area the office used to add for it, which then came
     // round every morning for ever until somebody remembered to delete it.
     {
-      const jbox = el('<div style="margin-top:10px;padding:8px 10px;border-radius:8px;background:#f7f9fc;border:1px solid #e6ecf3"></div>');
+      const jbox = el('<div style="margin-top:10px;padding:8px 10px;border-radius:8px;background:#101c30;border:1px solid #1e2f4d"></div>');
       jbox.appendChild(el(`<div style="font-size:11px;color:#5f7189;font-weight:700;margin-bottom:6px">`
         + `Something else today — the electrician, work off site, a one-off</div>`));
       const jIn = el(`<input id="oneOffLabel" placeholder="What has to be done" style="width:100%;margin-bottom:6px">`);
@@ -9197,7 +9314,7 @@ function viewHistory() {
 
   // Day picker — pick any past day to see what was cleaned that day (blank = every day).
   const dayRow = el('<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px"></div>');
-  const dayIn = el(`<input type="date" value="${esc(historyDay)}" max="${esc(todayKey())}" style="flex:1;min-width:0;background:#f4f7fb;color:#15202e;border:1px solid #d8e0ea;border-radius:8px;padding:8px 10px;font-size:14px">`);
+  const dayIn = el(`<input type="date" value="${esc(historyDay)}" max="${esc(todayKey())}" style="flex:1;min-width:0;background:#16233a;color:#eaf1fb;border:1px solid #3d557f;border-radius:8px;padding:8px 10px;font-size:14px">`);
   dayIn.onchange = (e) => { historyDay = e.target.value || ''; render(); };
   const calBtn = el('<button class="freqmini" title="Pick a date" style="flex:0 0 auto">📅</button>');
   calBtn.onclick = () => { try { dayIn.showPicker(); } catch (e) { dayIn.focus(); dayIn.click(); } };
@@ -9421,7 +9538,7 @@ function backdateSheet() {
   // --- which day ---
   modal.appendChild(el(`<div class="modal-label">Which day</div>`));
   const dayRow = el(`<div style="display:flex;gap:6px;align-items:center"></div>`);
-  const dayIn = el(`<input type="date" value="${esc(b.day)}" max="${esc(todayKey())}" style="flex:1;min-width:0;background:#f4f7fb;color:#15202e;border:1px solid #d8e0ea;border-radius:8px;padding:9px 10px;font-size:14px">`);
+  const dayIn = el(`<input type="date" value="${esc(b.day)}" max="${esc(todayKey())}" style="flex:1;min-width:0;background:#16233a;color:#eaf1fb;border:1px solid #3d557f;border-radius:8px;padding:9px 10px;font-size:14px">`);
   dayIn.onchange = (e) => setBackdateDay(e.target.value);
   dayRow.appendChild(dayIn);
   [['Yesterday', yesterdayKey()], ['Today', todayKey()]].forEach(([lbl, d]) => {
@@ -9523,7 +9640,7 @@ function backdateSheet() {
 
   // Sticky: with 60 rooms on the list, a footer at the end of the scroll is a
   // long way from the room you just ticked.
-  const btnRow = el(`<div class="modal-btns" style="position:sticky;bottom:0;background:#ffffff;padding:10px 0 2px"></div>`);
+  const btnRow = el(`<div class="modal-btns" style="position:sticky;bottom:0;background:#101c30;padding:10px 0 2px"></div>`);
   const cancel = el(`<button class="modal-skip">Cancel</button>`);
   cancel.onclick = () => { if (!b.saving) closeBackdate(); };
   saveBtn.onclick = () => saveBackdate();
@@ -10386,9 +10503,9 @@ function render() {
       + `<b style="color:${c.all - c.done ? '#fbbf24' : '#22c55e'}">${c.all - c.done} left</b>`
       + ` · ${c.done} done</div></div>`));
   } else {
-    bar.appendChild(el(`<div style="min-width:0"><div style="font-size:15px;font-weight:800;color:#0f172a">`
+    bar.appendChild(el(`<div style="min-width:0"><div style="font-size:15px;font-weight:800;color:#eaf1fb">`
       + `${esc(titles[state.tab] || dateStr)}</div>`
-      + `<div style="font-size:12px;font-weight:700;color:#5f7189">${esc(dateStr)}</div></div>`));
+      + `<div style="font-size:12px;font-weight:700;color:#7f9abf">${esc(dateStr)}</div></div>`));
   }
   bar.appendChild(el(`<div style="flex:1"></div>`));
   const searchBtn = el(`<button class="tb-btn">⌕</button>`);
