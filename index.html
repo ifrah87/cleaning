@@ -182,10 +182,15 @@
      the same morning and simply becomes it. Same ground, same cards, same colours, same
      order. The only difference is that everything on it can be tapped. Sized in pixels
      rather than the wall's vw, because a thumb is a thumb whatever the screen. */
-  .board { background: #0a1220; border-radius: 14px; padding: 12px; }
-  .bd-cols { columns: 300px; column-gap: 10px; }
-  .bd-col { break-inside: avoid; -webkit-column-break-inside: avoid; display: inline-block;
-            width: 100%; background: #101c30; border-radius: 12px; padding: 12px; margin: 0 0 10px; }
+  .board { background: #0a1220; border-radius: 14px; padding: 12px;
+           display: flex; flex-direction: column; gap: 12px; }
+  /* A GRID, NOT A FLOW. Packed columns fit more on a screen and read as a jumble: cards
+     start at different heights, a row is never a row, and the eye has no line to follow.
+     Equal columns with their rows aligned is what makes it look like the wall. */
+  .bd-cols { display: grid; gap: 10px; align-items: stretch;
+             grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); }
+  .bd-col { background: #101c30; border-radius: 12px; padding: 12px; margin: 0;
+            display: flex; flex-direction: column; gap: 2px; min-width: 0; }
   .bd-col.none { background: #2b2008; }
   .bd-col.out  { background: #241a06; }
   .bd-hd { display: flex; align-items: baseline; gap: 8px; border-bottom: 1px solid #1e2f4d;
@@ -199,18 +204,49 @@
   .bd-count { margin-left: auto; font-size: 13px; font-weight: 800; color: #6f8ab0; }
   .bd-grp { font-size: 10px; font-weight: 800; letter-spacing: 0.12em; color: #6f8ab0; margin: 10px 0 5px; }
   .bd-jobs { display: flex; flex-wrap: wrap; gap: 7px; }
-  .bd-job { min-height: 46px; padding: 11px 14px; border: 0; border-left: 5px solid #3d557f;
-            border-radius: 9px; background: #1c2b45; color: #dce8f8; font-size: 16px;
-            font-weight: 800; cursor: pointer; text-align: left; }
+  /* Every chip the same height and no narrower than a room number needs, so a column of
+     them lines up instead of stepping in and out with the length of the label. */
+  .bd-job { min-height: 46px; min-width: 76px; padding: 11px 14px; border: 0;
+            border-left: 5px solid #3d557f; border-radius: 9px; background: #1c2b45;
+            color: #dce8f8; font-size: 16px; font-weight: 800; cursor: pointer;
+            text-align: center; font-variant-numeric: tabular-nums; }
+  .bd-job.area { text-align: left; }
+  .bd-more { margin-top: auto; }
   .bd-job.early { background: #4a1414; color: #ffd9d9; border-left-color: #ef4444; }
   .bd-job.air   { background: #4c1d95; color: #f3e8ff; border-left-color: #c084fc; }
   .bd-job.area  { background: #1a2438; color: #b7c8de; border-left-color: #64748b; font-weight: 700; }
   .bd-job.done  { background: #123020; color: #86efac; border-left-color: #22c55e;
                   text-decoration: line-through; opacity: 0.85; }
   .bd-job.held  { outline: 3px solid #38bdf8; outline-offset: 1px; }
-  .bd-more { width: 100%; margin-top: 9px; padding: 9px; border-radius: 8px; border: 1px dashed #3d557f;
+  .bd-more { width: 100%; padding: 9px; border-radius: 8px; border: 1px dashed #3d557f;
              background: transparent; color: #7ea6dc; font-size: 11px; font-weight: 700; cursor: pointer; }
   .bd-col.drop { outline: 2px dashed #38bdf8; }
+  .bd-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .bd-tab { flex: 1 1 0; min-width: 84px; padding: 11px 10px; border-radius: 9px;
+            border: 1px solid #1e2f4d; background: #101c30; color: #7f9abf;
+            font-size: 13px; font-weight: 700; cursor: pointer; }
+  .bd-tab.on { background: #1c2b45; border-color: #3d557f; color: #eaf1fb; }
+  .bd-tally { display: flex; align-items: baseline; gap: 8px; color: #7f9abf;
+              font-size: 13px; font-weight: 700; }
+  .bd-tally b { font-size: 24px; font-weight: 900; }
+  .bd-panel { background: #101c30; border: 1px solid #1e2f4d; border-radius: 10px; padding: 10px 12px;
+              display: flex; flex-direction: column; gap: 8px; }
+  .bd-panel .lbl { font-size: 11px; font-weight: 700; color: #7f9abf; }
+  .bd-close { width: 100%; padding: 12px; border: 0; border-radius: 10px; background: #15803d;
+              color: #eafaf0; font-size: 14px; font-weight: 800; cursor: pointer; }
+
+  /* THE BOARD IS THE PAGE, NOT A PANEL ON IT. A dark board floating in a white app is
+     two designs meeting at a rounded corner, and it reads as exactly that — something
+     embedded rather than the thing you came for. On the board screen the whole app takes
+     the board's ground, edge to edge, header included. Every other screen stays paper. */
+  body.boardmode { background: #0a1220; }
+  body.boardmode #app { background: #0a1220 !important; box-shadow: none !important; }
+  body.boardmode .header { background: #0a1220; border-bottom: 1px solid #1e2f4d; }
+  body.boardmode .header div { color: #eaf1fb; }
+  body.boardmode .tb-btn { background: #101c30; border-color: #1e2f4d; color: #9fb6d4; }
+  body.boardmode .body { background: #0a1220; padding: 10px; }
+  body.boardmode .board { background: transparent; border-radius: 0; padding: 0; }
+  body.boardmode .note, body.boardmode .footer { color: #56698a; }
 
   .body { padding: 16px; }
 
@@ -7021,15 +7057,21 @@ function viewTick() {
 
   // ONE JOB AT A TIME, ON ITS OWN BUTTON. The offices and the guest flats are two
   // different rounds done by different people at different hours, and reading them as
-  // one mixed list is how the flats became "hard to navigate": to find them you had to
-  // scan eight columns for the violet ones. A button each, and the screen holds one
-  // kind of work at a time — which is also the only place a whole GROUP's frequency can
-  // sensibly be changed, because a group is what you are looking at.
+  // one mixed list is how the flats became hard to navigate. A button each, and the
+  // screen holds one kind of work at a time — which is also the only place a whole
+  // GROUP's frequency can sensibly be changed, because a group is what you are looking at.
   const filter = state.tickFilter || 'all';
   const keep = (j) => filter === 'all' ? true : filter === 'area' ? !!j.area : (!j.area && j.kind === filter);
   const fcols = cols.map((c) => Object.assign({}, c, { jobs: c.jobs.filter(keep) }));
   const counted = countJobs(fcols);
   const all = counted.all, done = counted.done, left = all - done;
+
+  // ONE SURFACE. The counts, the buttons and the close-out used to be pale controls
+  // stacked above a dark board, so the screen read as two designs meeting in the middle.
+  // They are part of the board and they look it.
+  const grid = el('<div class="board"><div class="bd-cols"></div></div>');
+  const cols_ = grid.firstChild;
+  const top = el('<div style="display:flex;flex-direction:column;gap:10px"></div>');
 
   {
     const kinds = [['all', 'All']];
@@ -7037,51 +7079,43 @@ function viewTick() {
       if ((state.servicedUnits || []).some((u) => !u.paused && unitType(u) === tk)) kinds.push([tk, UNIT_TYPES[tk].label]);
     });
     if (areasInterior().length) kinds.push(['area', 'Communal']);
-    const seg = el('<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px"></div>');
+    const seg = el('<div class="bd-bar"></div>');
     kinds.forEach(([k, lbl]) => {
-      const on = filter === k;
-      const b = el(`<button class="freqmini ${on ? 'on' : ''}" style="flex:1 1 auto;padding:10px 8px;font-size:12px">${esc(lbl)}</button>`);
+      const b = el(`<button class="bd-tab ${filter === k ? 'on' : ''}">${esc(lbl)}</button>`);
       b.onclick = () => { state.tickFilter = k; _giveTo = null; save(); render(); };
       seg.appendChild(b);
     });
-    wrap.appendChild(seg);
+    top.appendChild(seg);
   }
 
-  // HOW MUCH IS LEFT — the answer to the only question this screen exists for.
-  wrap.appendChild(el(`<div style="display:flex;align-items:baseline;gap:10px;margin-bottom:12px">`
-    + `<div style="font-size:26px;font-weight:800;color:${left ? '#b45309' : '#15803d'}">${left}</div>`
-    + `<div style="font-size:13px;font-weight:700;color:#5f7189">left</div>`
-    + `<div style="font-size:13px;font-weight:700;color:#15803d;margin-left:auto">${done} done</div></div>`));
+  const tally = el('<div class="bd-tally"></div>');
+  tally.appendChild(el(`<b style="color:${left ? '#fbbf24' : '#22c55e'}">${left}</b>`));
+  tally.appendChild(el(`<span>left</span>`));
+  tally.appendChild(el(`<span style="margin-left:auto;color:#22c55e">${done} done</span>`));
+  top.appendChild(tally);
 
-  // HOW OFTEN THIS KIND IS CLEANED. Set for the group you are looking at, from the
-  // screen where you are looking at it — the alternative is remembering which tab holds
-  // the schedules and doing it a room at a time. Only on a single kind: "every room in
-  // the building is now weekly" is not a thing anybody means to say.
+  // HOW OFTEN THIS KIND IS CLEANED, from the screen where you are looking at it. Offered
+  // on a single kind only: "every room in the building is now weekly" is not a thing
+  // anybody means to say.
   if (filter !== 'all' && filter !== 'area') {
     const group = (state.servicedUnits || []).filter((u) => !u.paused && unitType(u) === filter);
     if (group.length) {
-      const box = el('<div style="margin-bottom:14px;padding:10px 12px;border-radius:10px;background:#f7f9fc;border:1px solid #e6ecf3"></div>');
+      const box = el('<div class="bd-panel"></div>');
       const counts = {};
       group.forEach((u) => { const f = u.freq || 'daily'; counts[f] = (counts[f] || 0) + 1; });
       const now = Object.keys(counts).sort((a, b) => counts[b] - counts[a])
         .map((f) => `${counts[f]} ${FREQ_LABEL[f] || f}`).join(' · ');
-      box.appendChild(el(`<div style="font-size:11px;color:#5f7189;font-weight:700;margin-bottom:6px">`
-        + `All ${group.length} ${esc(UNIT_TYPES[filter].label.toLowerCase())} — how often: ${esc(now)}</div>`));
-      const row = el('<div style="display:flex;gap:6px"></div>');
+      box.appendChild(el(`<div class="lbl">All ${group.length} ${esc(UNIT_TYPES[filter].label.toLowerCase())}`
+        + ` — how often: ${esc(now)}</div>`));
+      const row = el('<div class="bd-bar"></div>');
       [['daily', 'Daily'], ['eod', 'Every other day'], ['weekly', 'Weekly']].forEach(([fk, lbl]) => {
-        const b = el(`<button class="freqmini" style="flex:1 1 0;padding:9px 6px;font-size:11px">${lbl}</button>`);
+        const b = el(`<button class="bd-tab">${lbl}</button>`);
         b.onclick = () => setUnitsFreqBulk(group.map((u) => u.id), fk, 'every ' + UNIT_TYPES[filter].label.toLowerCase());
         row.appendChild(b);
       });
       box.appendChild(row);
-      wrap.appendChild(box);
+      top.appendChild(box);
     }
-  }
-
-  if (!all) {
-    wrap.appendChild(el(`<div class="empty" style="text-align:center;padding:32px 0;color:#15803d;font-weight:700">`
-      + `✓ Nothing on today.</div>`));
-    return wrap;
   }
 
   // CLOSING THE WHOLE ROUND OUT, on the screen where the round is ticked.
@@ -7090,14 +7124,20 @@ function viewTick() {
     const openRooms = out.rooms.filter((u) => u.assignedTo);
     const loose = out.rooms.length - openRooms.length;
     if (openRooms.length + out.areas.length) {
-      const allBtn = el(`<button class="add-btn" style="background:#15803d;color:#ffffff">`
-        + `${esc(markAllLabel(openRooms.length, out.areas.length))}</button>`);
+      const allBtn = el(`<button class="bd-close">${esc(markAllLabel(openRooms.length, out.areas.length))}</button>`);
       allBtn.onclick = () => markRollCallAllDone();
-      wrap.appendChild(allBtn);
-      if (loose) wrap.appendChild(el(`<div style="font-size:11px;color:#b45309;font-weight:700;margin:4px 0 0">`
+      top.appendChild(allBtn);
+      if (loose) top.appendChild(el(`<div class="lbl" style="color:#fbbf24">`
         + `${loose} more nobody has been given.</div>`));
-      wrap.appendChild(el('<div style="height:14px"></div>'));
     }
+  }
+  grid.insertBefore(top, cols_);
+
+  if (!all) {
+    cols_.appendChild(el(`<div style="grid-column:1/-1;text-align:center;padding:28px 0;color:#86efac;font-weight:800">`
+      + `✓ Nothing on today.</div>`));
+    wrap.appendChild(grid);
+    return wrap;
   }
 
   const unitById = {};
@@ -7105,8 +7145,6 @@ function viewTick() {
   const areaById = {};
   (state.areas || []).forEach((a) => { areaById[a.id] = a; });
 
-  const grid = el('<div class="board"><div class="bd-cols"></div></div>');
-  const cols_ = grid.firstChild;
   fcols.forEach((c) => {
     const giving = _giveTo === c.key;
     if (!c.jobs.length && !giving) return;      // nothing to tick is nothing to show here
@@ -7207,8 +7245,9 @@ function viewTick() {
     cols_.appendChild(col);
   });
   wrap.appendChild(grid);
-  wrap.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin-top:12px">`
-    + `Tap a row to mark it clean, tap it again to undo. The TV follows within a minute.</div>`));
+  wrap.appendChild(el(`<div class="note" style="font-size:11px;color:#6f8ab0;margin-top:12px">`
+    + `Tap a chip to mark it clean. Hold one, then tap a person, to move it. `
+    + `Tap a name to give them more. The TV follows within a minute.</div>`));
   return wrap;
 }
 
@@ -10336,14 +10375,15 @@ function render() {
   if (titles[state.tab] === undefined) state.tab = 'board';
   const onBoard = state.tab === 'board';
   document.body.classList.toggle('wide', onBoard);
+  document.body.classList.toggle('boardmode', onBoard);
 
   if (onBoard) {
     const cols = tvColumns();
     const c = countJobs(cols);
-    bar.appendChild(el(`<div style="min-width:0"><div style="font-size:15px;font-weight:800;color:#0f172a">`
+    bar.appendChild(el(`<div style="min-width:0"><div style="font-size:15px;font-weight:800;color:#eaf1fb">`
       + `${esc(dateStr)}</div>`
-      + `<div style="font-size:12px;font-weight:700;color:#5f7189">`
-      + `<b style="color:${c.all - c.done ? '#b45309' : '#15803d'}">${c.all - c.done} left</b>`
+      + `<div style="font-size:12px;font-weight:700;color:#7f9abf">`
+      + `<b style="color:${c.all - c.done ? '#fbbf24' : '#22c55e'}">${c.all - c.done} left</b>`
       + ` · ${c.done} done</div></div>`));
   } else {
     bar.appendChild(el(`<div style="min-width:0"><div style="font-size:15px;font-weight:800;color:#0f172a">`

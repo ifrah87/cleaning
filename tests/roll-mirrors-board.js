@@ -222,12 +222,12 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
   // --- a button per kind of work, and the group's frequency behind it -------------
   await page.evaluate(() => setTab('board'));
   await page.waitForTimeout(600);
-  const segs = await page.locator('.body button.freqmini').allTextContents();
+  const segs = await page.locator('.bd-tab').allTextContents();
   check('there is a button for each kind of work',
     segs.includes('All') && segs.some((x) => /Airbnb/i.test(x)) && segs.some((x) => /Communal/i.test(x)),
     segs.slice(0, 8).join(' | '));
 
-  await page.locator('.body button.freqmini', { hasText: /Airbnb/i }).first().click();
+  await page.locator('.bd-tab', { hasText: /Airbnb/i }).first().click();
   await page.waitForTimeout(700);
   const airOnly = await page.evaluate(() => {
     const shown = tvColumns().flatMap((c) => c.jobs);
@@ -241,7 +241,7 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
     !/\b101\b/.test(airBody), airBody.slice(0, 200));
 
   // --- handing a leader more work, from the board ---------------------------------
-  await page.locator('.body button.freqmini', { hasText: /^All$/ }).first().click();
+  await page.locator('.bd-tab', { hasText: /^All$/ }).first().click();
   await page.waitForTimeout(600);
   await page.evaluate(() => {
     // Something spare to give: a room nobody holds.
