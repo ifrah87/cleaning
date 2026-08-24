@@ -6825,8 +6825,8 @@ function viewRooms() {
 function viewTick() {
   const wrap = el('<div class="body"></div>');
   const cols = tvColumns();
-  const all = cols.reduce((n, c) => n + c.jobs.length, 0);
-  const done = cols.reduce((n, c) => n + c.jobs.filter((j) => j.done).length, 0);
+  const counted = countJobs(cols);
+  const all = counted.all, done = counted.done;
   const left = all - done;
 
   if (!all) {
@@ -7358,8 +7358,8 @@ function viewRollCall() {
     // What is left here is the sentence that matters at a glance, and the way through.
     {
       const cols = tvColumns();
-      const all = cols.reduce((n, c) => n + c.jobs.length, 0);
-      const doneN = cols.reduce((n, c) => n + c.jobs.filter((j) => j.done).length, 0);
+      const counted = countJobs(cols);
+      const all = counted.all, doneN = counted.done;
       const sum = el('<div style="display:flex;align-items:center;gap:12px;margin:0 0 14px;padding:12px 14px;'
         + 'border-radius:10px;background:#f7f9fc;border:1px solid #e6ecf3"></div>');
       sum.appendChild(el(`<div><div style="font-size:22px;font-weight:800;color:${all - doneN ? '#b45309' : '#15803d'}">`
@@ -9248,12 +9248,31 @@ function tvJobsByPerson() {
       early: timeSlot(u) === 'early', area: false, air: unitType(u) === 'airbnb',
     });
   });
+  // A SHARED AREA IS ON BOTH BOARDS. It was on one — whoever answered for it — with the
+  // other names printed beside it, which keeps the counting tidy and gets the job wrong:
+  // a column is read as "what am I doing this morning", and a cleaner who is on the
+  // corridors and cannot see the corridors in their own list has not been told.
+  //
+  // So it appears for everybody on it, each seeing the others named beside it. It is
+  // still ONE job: ticked once, done for all of them, and counted once in the totals
+  // (see countJobs) — a job on two boards is not two jobs.
   areasInterior().forEach((a) => {
-    const h = areaHelpers(a);
-    bucket(a.assignedTo).push({
-      id: a.id,
-      label: a.label + (h.length ? ' + ' + h.map((p) => p.name.split(' ')[0]).join(', ') : ''),
-      done: areaDone(a), early: false, area: true,
+    const on = [a.assignedTo].concat(areaHelpers(a).map((p) => p.id)).filter(Boolean);
+    const who = on.length ? on : [null];
+    who.forEach((pid) => {
+      const others = on.filter((x) => x !== pid)
+        .map((x) => (state.staff || []).find((p) => p.id === x))
+        .filter(Boolean).map((p) => p.name.split(' ')[0]);
+      bucket(pid).push({
+        id: a.id,
+        label: a.label + (others.length ? ' + ' + others.join(', ') : ''),
+        done: areaDone(a), early: false, area: true,
+        // Being named ON somebody else's walk is not a round of your own. Without this,
+        // an assistant put on the corridors with their leader stopped counting as spare
+        // and was given a column — which is the exact thing naming them beside the
+        // leader exists to avoid.
+        helper: pid !== a.assignedTo,
+      });
     });
   });
   // Red first, then whatever is still open, then the finished ones out of the way.
@@ -9343,11 +9362,24 @@ function tvNamedElsewhere(p, spare) {
   return teamMembers(p.crew).some((x) => x.id !== p.id && x.isLeader && tvHere(x));
 }
 
+// HOW MUCH WORK IS THERE, when a shared area sits in two columns? One job's worth.
+// Counting the columns up would say two, and every total on every screen would drift
+// apart from the list under it the moment the office put a second name on the corridors.
+function countJobs(cols) {
+  const seen = new Set(), doneIds = new Set();
+  cols.forEach((c) => c.jobs.forEach((j) => {
+    const k = (j.area ? 'a:' : 'u:') + j.id;
+    seen.add(k);
+    if (j.done) doneIds.add(k);
+  }));
+  return { all: seen.size, done: doneIds.size };
+}
+
 function tvColumns() {
   const grouped = tvJobsByPerson();
   // "Spare" = holding nothing of their own today. Computed once from the same buckets
   // the columns are built from, so the two can never disagree about who has work.
-  const spare = (x) => !(grouped.buckets[x.id] || []).length;
+  const spare = (x) => !(grouped.buckets[x.id] || []).some((j) => !j.helper);
   const cols = [];
   const unassigned = grouped.buckets['__none__'] || [];
   if (unassigned.length) {
@@ -9365,7 +9397,9 @@ function tvColumns() {
   });
   // Somebody off the rota still holding work has to show, or that work vanishes.
   (state.staff || []).forEach((p) => {
-    if (seen[p.id] || !tvOnTeam(p) || !(grouped.buckets[p.id] || []).length) return;
+    // ...and "still holding work" means work of their own, not a name on somebody
+    // else's walk — otherwise being put on the corridors buys a column by the back door.
+    if (seen[p.id] || !tvOnTeam(p) || spare(p)) return;
     const st = state.attendance[p.id] || 'present';
     cols.push({
       key: p.id, name: tvName(p), jobs: grouped.buckets[p.id],
@@ -9606,9 +9640,9 @@ function renderTV() {
 
   // Every number at the top counts the page you are actually looking at, or the
   // Airbnb page would sit under the offices' progress and read as its own.
-  const jobs = onAir ? air.length : cols.reduce((n, c) => n + c.jobs.length, 0);
-  const done = onAir ? air.filter((u) => cleanedToday(u)).length
-                     : cols.reduce((n, c) => n + c.jobs.filter((j) => j.done).length, 0);
+  const counted = countJobs(cols);
+  const jobs = onAir ? air.length : counted.all;
+  const done = onAir ? air.filter((u) => cleanedToday(u)).length : counted.done;
   const pct = jobs ? Math.round((done / jobs) * 100) : 0;
 
   // --- top line ---

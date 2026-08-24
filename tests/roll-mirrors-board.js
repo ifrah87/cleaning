@@ -131,12 +131,22 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
     toggleAreaHelper('corridors', 'p2');
     const job = tvColumns().flatMap((c) => c.jobs).find((j) => String(j.label).startsWith('Corridors'));
     const a = state.areas.find((x) => x.id === 'corridors');
-    return { label: job && job.label, answerable: a.assignedTo, alsoOn: a.assignedWith, jobs: tvColumns().flatMap((c) => c.jobs).length };
+    const cols2 = tvColumns();
+    return {
+      label: job && job.label, answerable: a.assignedTo, alsoOn: a.assignedWith,
+      // On both boards...
+      columnsShowingIt: cols2.filter((c) => c.jobs.some((j) => j.area && j.id === 'corridors')).length,
+      // ...and still one job when the morning is counted.
+      counted: countJobs(cols2).all,
+      rows: cols2.flatMap((c) => c.jobs).length,
+    };
   });
   check('a second person can be put on a communal area', (shared.alsoOn || []).includes('p2'), JSON.stringify(shared));
   check('and the board names them on it', /Corridors \+ Hodan/.test(shared.label || ''), String(shared.label));
-  check('one of them still answers for it, so it is one job not two',
-    shared.answerable === 'p1' && shared.jobs === 4, JSON.stringify(shared));
+  check('a shared area is on both their boards', shared.columnsShowingIt === 2, JSON.stringify(shared));
+  check('but it is counted once — a job on two boards is not two jobs',
+    shared.counted === 4 && shared.rows === 5, JSON.stringify(shared));
+  check('and one of them still answers for it', shared.answerable === 'p1', JSON.stringify(shared));
 
   await page.waitForTimeout(400);
   const after = await page.locator('.body').first().textContent();
