@@ -149,6 +149,29 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
   check('tapping a row there ticks the job', wasDone === false && nowDone.done === true, JSON.stringify({ wasDone, nowDone }));
   check('and the wall agrees immediately', nowDone.board === true, JSON.stringify(nowDone));
 
+  // --- assistants and guest flats ------------------------------------------------
+  const shape = await page.evaluate(() => {
+    // Hodan becomes Amina's assistant, holding nothing: one round, not two.
+    const h = state.staff.find((p) => p.id === 'p2');
+    h.isLeader = false; h.crew = 'Team A';
+    state.servicedUnits.forEach((u) => { if (u.assignedTo === 'p2') u.assignedTo = 'p1'; });
+    // A guest flat with somebody's name on the room record.
+    state.servicedUnits.push({ id: 'suA1', unit: 'A1', type: 'airbnb', freq: 'daily', assignedTo: 'p1' });
+    save(); render();
+    const cols = tvColumns();
+    const air = cols.find((c) => c.jobs.some((j) => j.air));
+    return {
+      hasOwnColumn: cols.some((c) => c.name && c.name.indexOf('Hodan') === 0),
+      namedWithLeader: (cols.find((c) => (c.name || '').indexOf('Amina') === 0) || {}).with || '',
+      airColumnIsNobody: !!(air && air.none),
+    };
+  });
+  check('an assistant holding nothing gets no column of their own', shape.hasOwnColumn === false, JSON.stringify(shape));
+  check('they are named on their leader instead', /Hodan/.test(shape.namedWithLeader), shape.namedWithLeader);
+  await page.waitForTimeout(400);
+  const rollText = await page.locator('.body').first().textContent();
+  check('a guest flat sits in nobody’s column, not a cleaner’s', shape.airColumnIsNobody === true, JSON.stringify(shape));
+
   check('no console errors', errs.length === 0, errs.join('\n       '));
 
   await browser.close(); s.close();

@@ -7832,9 +7832,30 @@ function viewRollCall() {
   if (!arrIds.length) {
     whoIn.appendChild(el(`<div class="empty" style="text-align:center;padding:16px 0;color:#5b6a7f">No clock-ins for this day. Tap "Import Attendance File" and pick your Hik export.</div>`));
   } else {
+    // AN ASSISTANT IS NOT A SECOND ROUND, SO THEY ARE NOT A SECOND CARD.
+    // They work the leader's round with them — the whole reason their name is printed
+    // beside that leader's, here and on the wall. Given a card of their own they also
+    // got a "+ Assign a room or area…", which is an invitation to do the one thing the
+    // hand-out refuses to do: deal a room to somebody who is not running a round. Every
+    // room dealt that way then has to be unpicked. So they are named where they belong
+    // and nowhere else, exactly as the board has always done it (tvNamedElsewhere).
+    //
+    // Holding something of their own makes them their own round for the day, and then
+    // they get the card: work with a name against it has to be visible somewhere.
+    const holdsNothing = (p) => !(state.servicedUnits || []).some((u) => u.assignedTo === p.id)
+      && !areasInterior().some((a) => a.assignedTo === p.id || (areaHelpers(a) || []).some((h) => h.id === p.id));
+    const namedUnderLeader = (p) => !!p && p.isCleaner && !p.isLeader && !!p.crew && holdsNothing(p)
+      && teamMembers(p.crew).some((x) => x.id !== p.id && x.isLeader && hikArrivals[x.id]);
+    const assistants = arrIds.map((id) => staffById[id]).filter(namedUnderLeader);
+    // Named, though. Somebody who badged in and then appears nowhere on the screen
+    // reads as the door reader having missed them, which is a different problem the
+    // office would go looking for.
+    if (assistants.length) whoIn.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin:-8px 0 12px">`
+      + `Also in, on their leader's round: <b>${esc(assistants.map((p) => p.name.split(' ')[0]).join(', '))}</b>`
+      + ` — named on that leader's card rather than handed rooms of their own.</div>`));
     arrIds
       .map((id) => ({ s: staffById[id], t: hikArrivals[id].time, out: hikArrivals[id].out, raw: hikArrivals[id].raw }))
-      .filter((x) => x.s)
+      .filter((x) => x.s && !namedUnderLeader(x.s))
       .sort((a, b) => String(a.raw || '').localeCompare(String(b.raw || '')))   // earliest badge-in first
       .forEach(({ s, t, out }) => {
         const manual = hikArrivals[s.id] && hikArrivals[s.id].manual;
@@ -9251,7 +9272,12 @@ function tvJobsByPerson() {
   // could not be read off the screen in one look. They sit in their cleaner's column
   // now, in a colour of their own so nobody mistakes one for a morning room.
   tvOffRollCall().forEach((u) => {
-    bucket(u.assignedTo).push({
+    // NOBODY'S COLUMN, ALWAYS. The guest flats are not dealt out per person the way the
+    // morning rooms are — they are one job, done by their own pair after the offices —
+    // so a flat sitting in one cleaner's column says something that is not true, and
+    // splits a job that is worked as a block across four corners of the board. They go
+    // together, unassigned, whatever name happens to be on the room record.
+    bucket(null).push({
       id: u.id, label: u.unit, done: cleanedToday(u),
       early: timeSlot(u) === 'early', area: false, air: true,
     });
@@ -9645,8 +9671,12 @@ function renderTV() {
   // Work with nobody behind it gets its own number at the top. The columns turn
   // over on a timer, so the one thing that must never be on the page you missed
   // is how much of today is currently falling on the floor.
+  // WORK THAT HAS FALLEN THROUGH — which the guest flats have not. They sit in the
+  // unassigned column by design, not because a round lost them, and counting twelve of
+  // them as needing cover would make the one number on this board that means "somebody
+  // has to act" say so every single morning.
   const cover = cols.filter((c) => c.out || c.none)
-    .reduce((n, c) => n + c.jobs.filter((j) => !j.done).length, 0);
+    .reduce((n, c) => n + c.jobs.filter((j) => !j.done && !j.air).length, 0);
   if (cover && !onAir) mid.appendChild(tile(cover, 'NEED COVER', '#f59e0b'));
   top.appendChild(mid);
 

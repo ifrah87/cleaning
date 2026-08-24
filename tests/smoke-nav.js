@@ -322,8 +322,15 @@ for (const [label,vp] of [['PHONE',{width:420,height:900}],['DESKTOP',{width:144
  await page.waitForTimeout(1500);
  check('adding them by hand puts them on the roll call as in',
    await page.evaluate(()=>!!hikArrivals['p4']), 'in: '+JSON.stringify(await page.evaluate(()=>Object.keys(hikArrivals))));
+ // AN ASSISTANT IS NOT A SECOND ROUND, SO THEY ARE NOT A SECOND CARD. They work the
+ // leader's round, so they are named on that leader — the check below — and given no
+ // card of their own, which used to come with a "+ Assign a room or area…" offering the
+ // one thing the hand-out refuses to do.
  const zahraShown=await page.locator('.person-name', {hasText:'Zahra Ahmed'}).count();
- check('and they are listed with the rest of the crew', zahraShown>0, 'cards: '+zahraShown);
+ check('an assistant gets no card of their own', zahraShown===0, 'cards: '+zahraShown);
+ const alsoIn=await page.locator('.body').first().textContent();
+ check('but is named as in, so nobody thinks the reader missed them',
+   /on their leader.s round/i.test(alsoIn)&&/Zahra/.test(alsoIn), 'no "also in" line');
  const pairCard=await page.locator('.person', {hasText:'Hodan Omar'}).first().textContent();
  check('the assistant\'s name comes up next to their leader',
    /with Zahra/.test(pairCard), pairCard.slice(0,110));
