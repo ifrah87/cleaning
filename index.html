@@ -436,7 +436,7 @@
        this", blue is an ordinary room — three colours already carrying three meanings.
        The guest flats are a different job done by a different pair, so they get violet
        rather than a fourth shade of something that already means something else. */
-    --tv-air-bg: #2b1b45;   --tv-air-fg: #ddd0fb;   --tv-air-ln: #a855f7;
+    --tv-air-bg: #4c1d95;   --tv-air-fg: #f3e8ff;   --tv-air-ln: #c084fc;
     --tv-none-bg: #2b2008;  --tv-none-fg: #fbbf24;
     --tv-out-bg: #241a06;   --tv-out-fg: #fcd34d;
     background: var(--tv-bg); color: var(--tv-fg);
@@ -452,7 +452,7 @@
     --tv-done-bg: #dcfce7;  --tv-done-fg: #166534;  --tv-done-ln: #16a34a;
     --tv-area-bg: #f1f5f9;  --tv-area-fg: #475569;  --tv-area-ln: #64748b;
     --tv-cover-bg: #fef3c7; --tv-cover-fg: #92400e; --tv-cover-ln: #f59e0b;
-    --tv-air-bg: #f3efff;   --tv-air-fg: #5b21b6;   --tv-air-ln: #a855f7;
+    --tv-air-bg: #ede9fe;   --tv-air-fg: #4c1d95;   --tv-air-ln: #7c3aed;
     --tv-none-bg: #fff7ed;  --tv-none-fg: #b45309;
     --tv-out-bg: #fffbeb;   --tv-out-fg: #b45309;
   }
@@ -508,6 +508,7 @@
                   font-variant-numeric: tabular-nums; margin-left: 0.25vw; }
   .tv-also .gone { opacity: 0.55; }
   .tv-with .tv-noscan { color: #fbbf24; font-weight: 800; }
+  .tv-with .tv-atsm { font-weight: 800; opacity: 0.95; }
   .tv-note { font-size: 0.82vw; font-weight: 800; color: #fbbf24; letter-spacing: 0.02em;
              margin-top: 0.2vh; }
   .tv-chip.noscan { opacity: 0.92; }
@@ -545,7 +546,11 @@
      handed out, or the person it was handed to is off sick. Same colour either
      way, because from across the room they are the same problem. */
   .tv-job.cover { background: var(--tv-cover-bg); color: var(--tv-cover-fg); border-left-color: var(--tv-cover-ln); }
-  .tv-job.air   { background: var(--tv-air-bg); color: var(--tv-air-fg); border-left-color: var(--tv-air-ln); }
+  /* Read across a room: the guest flats were a dim violet that lost to the blue rooms
+     beside them at eight metres. Same hue, far more of it, and a thicker left edge so a
+     run of them reads as one block rather than a scatter of chips. */
+  .tv-job.air   { background: var(--tv-air-bg); color: var(--tv-air-fg);
+                  border-left-color: var(--tv-air-ln); border-left-width: 0.9vw; font-weight: 800; }
   .tv-col.none { background: var(--tv-none-bg); }
   .tv-col.none .tv-who, .tv-col.none .tv-count { color: var(--tv-none-fg); }
   .tv-col.out { background: var(--tv-out-bg); }
@@ -9381,8 +9386,13 @@ function tvWithLabel(p, spare) {
   // be escaped right here. The amber is doing real work: the sentence reads as
   // reassurance ("Mahad has Abukar with him") and the one word that contradicts it
   // must not be the same colour as the rest.
+  // WITH THEIR TIME. An assistant's name is the only place they appear on this board, so
+  // it is also the only place their badge-in can be shown — and it was not shown, so
+  // "what time did Abukar get in?" could not be answered from the wall at all.
   return 'with ' + a.map((x) => esc(tvName(x))
-    + (tvArrival(x) ? '' : ' <span class="tv-noscan">(no scan)</span>')).join(', ');
+    + (tvArrival(x)
+        ? ` <span class="tv-atsm">${esc(tvArrival(x))}${tvLeft(x) ? ' → ' + esc(tvLeft(x)) : ''}</span>`
+        : ' <span class="tv-noscan">(no scan)</span>')).join(', ');
 }
 
 // Named under somebody else, so not given a column of their own.
@@ -9530,6 +9540,7 @@ function tvCrewStrip() {
     // what that means at 6am versus at 11am.
     const noScan = (st === 'present' && !left && !at);
     const tail = (st !== 'present') ? meta.label
+      : (at && left) ? (at + ' → ' + left)      // came in AND went home: say both
       : left ? ('LEFT ' + left)
       : at ? ('IN ' + at) : 'NO SCAN YET';
     const chip = el(`<div class="tv-chip${(st === 'present' && left) ? ' gone' : ''}${noScan ? ' noscan' : ''}"><span>${esc(tvName(p))}</span><span class="st">${esc(tail)}</span></div>`);
@@ -9778,7 +9789,14 @@ function renderTV() {
     if (c.team || c.at) {
       const meta = el(`<div class="tv-meta"></div>`);
       meta.appendChild(el(`<div class="tv-team">${c.team ? esc(c.team) : ''}</div>`));
-      if (c.at) meta.appendChild(el(`<div class="tv-at${c.left ? ' gone' : ''}">${c.left ? 'OUT ' + esc(c.left) : 'IN ' + esc(c.at)}</div>`));
+      // BOTH TIMES, NOT THE LAST ONE. Clocking out replaced the arrival with a
+      // departure, so the moment somebody went home the board could no longer say when
+      // they had started — which is the number the office is looking for when it reads
+      // a column at eleven o'clock.
+      if (c.at || c.left) meta.appendChild(el(`<div class="tv-at${c.left ? ' gone' : ''}">`
+        + (c.at ? 'IN ' + esc(c.at) : '')
+        + (c.at && c.left ? ' · ' : '')
+        + (c.left ? 'OUT ' + esc(c.left) : '') + `</div>`));
       hd.appendChild(meta);
     }
     col.appendChild(hd);
