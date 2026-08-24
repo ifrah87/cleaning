@@ -2133,7 +2133,14 @@ const UNIT_TYPE_ORDER = ['airbnb', 'office', 'building'];
 // default differently) and then the morning quietly hands out twelve flats nobody
 // asked for. It is a rule, so it lives in the code. The Airbnb tab still has its own
 // list, its own schedule and its own hand-out button — that is where they are picked.
-const OFF_ROLL_CALL_TYPES = ['airbnb'];
+// AIRBNB IS A ROOM LIKE ANY OTHER, DONE LATER IN THE DAY.
+// It used to be excluded from the morning round outright, on the grounds that it is its
+// own job with its own pair — true, but the way to say "later" is to say later, not to
+// keep the work off the board and hand it out by memory. Guest flats are marked as
+// afternoon work instead: dealt like an office room, worked after the morning round,
+// and sorted to the bottom of every list by the rank the app already had for it.
+// Nothing is hard-excluded now; the Settings switch decides, like every other kind.
+const OFF_ROLL_CALL_TYPES = [];
 // ONE ROOM, PUT ON TODAY'S BOARD BY HAND. The rule below is about a KIND of room —
 // Airbnb is its own job, cleaned after the offices by its own pair, and it never joins
 // the morning round. That stays exactly as it was. What it never had was an exception:
@@ -6828,6 +6835,27 @@ function viewTick() {
     + `<div style="font-size:26px;font-weight:800;color:${left ? '#b45309' : '#15803d'}">${left}</div>`
     + `<div style="font-size:13px;font-weight:700;color:#5f7189">left</div>`
     + `<div style="font-size:13px;font-weight:700;color:#15803d;margin-left:auto">${done} done</div></div>`));
+  // CLOSING THE WHOLE ROUND OUT belongs on the screen where the round is ticked, not on
+  // the one where it is planned. On a day the crew got through everything, ticking
+  // twenty-five rooms one at a time is the bottleneck this button exists for.
+  {
+    // The same sum the close-out itself makes: rooms somebody has actually been given,
+    // plus the communal walks, which are routinely done with no name against them.
+    // Rooms nobody was given are named rather than swept in — marking those cleaned
+    // credits them to "Office" and puts work in History that nobody did.
+    const out = rollCallOutstanding();
+    const openRooms = out.rooms.filter((u) => u.assignedTo);
+    const loose = out.rooms.length - openRooms.length;
+    if (openRooms.length + out.areas.length) {
+      const allBtn = el(`<button class="add-btn" style="background:#15803d;color:#ffffff">`
+        + `${esc(markAllLabel(openRooms.length, out.areas.length))}</button>`);
+      allBtn.onclick = () => markRollCallAllDone();
+      wrap.appendChild(allBtn);
+      if (loose) wrap.appendChild(el(`<div style="font-size:11px;color:#b45309;font-weight:700;margin:4px 0 0">`
+        + `${loose} more nobody has been given.</div>`));
+      wrap.appendChild(el('<div style="height:14px"></div>'));
+    }
+  }
 
   const unitById = {};
   (state.servicedUnits || []).forEach((u) => { unitById[u.id] = u; });
@@ -6842,6 +6870,15 @@ function viewTick() {
     const head = el('<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:6px"></div>');
     head.appendChild(el(`<div style="font-size:12px;font-weight:800;letter-spacing:0.04em;`
       + `color:${c.none ? '#b45309' : '#243b53'}">${esc((c.none ? 'NOBODY YET' : c.name).toUpperCase())}</div>`));
+    // WHEN THEY CAME IN, BESIDE WHAT THEY ARE HOLDING. The board has carried the badge
+    // time since the wall went up and this screen never did — so the one place the
+    // office actually stands while the round runs was the one place that could not
+    // answer "has she even arrived yet?" without leaving it. Blank when there is no
+    // scan: Hik's Time Card fills in through the morning, so "no time yet" and "did not
+    // come in" are different things and this must not conflate them.
+    if (c.at) head.appendChild(el(`<div style="font-size:11px;font-weight:700;color:#15803d">`
+      + `in ${esc(c.at)}${c.left ? ` <span style="color:#5f7189">· out ${esc(c.left)}</span>` : ''}</div>`));
+    else if (!c.none) head.appendChild(el(`<div style="font-size:11px;font-weight:700;color:#b45309">no scan yet</div>`));
     head.appendChild(el(`<div style="margin-left:auto;font-size:12px;font-weight:700;`
       + `color:${cDone === c.jobs.length ? '#15803d' : '#5f7189'}">${cDone}/${c.jobs.length}</div>`));
     grp.appendChild(head);
@@ -7196,22 +7233,6 @@ function viewRollCall() {
     // the button never matched the number handed out.
     // Rooms only. A communal walk is routinely done without a name against it, so
     // excluding unnamed areas would quietly drop them from the close-out entirely.
-    const open = { rooms: all.rooms.filter((u) => u.assignedTo), areas: all.areas };
-    const loose = all.rooms.length - open.rooms.length;
-    const openTotal = open.rooms.length + open.areas.length;
-    if (openTotal) {
-      const allBox = el('<div style="margin-bottom:18px"></div>');
-      const allBtn = el(`<button class="add-btn" style="background:#15803d;color:#ffffff">${esc(markAllLabel(open.rooms.length, open.areas.length))}</button>`);
-      if (loose) allBox.appendChild(el(`<div style="font-size:11px;color:#b45309;font-weight:700;margin-top:4px">`
-        + `${loose} more nobody has been given.</div>`));
-      allBtn.onclick = () => markRollCallAllDone();
-      allBox.appendChild(allBtn);
-      allBox.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin-top:6px">`
-        + `${open.rooms.length} room${open.rooms.length === 1 ? '' : 's'}`
-        + (open.areas.length ? ` · ${open.areas.length} communal area${open.areas.length === 1 ? '' : 's'}` : '')
-        + ` — you can un-tick any of them after.</div>`));
-      body.appendChild(allBox);
-    }
   }
 
   // Sync staff roster · Import attendance file · pick the day
@@ -7325,86 +7346,27 @@ function viewRollCall() {
       + (toCheck.length ? ` · <b style="color:#b45309">${toCheck.length} to check</b>` : '')
       + (doneR.length ? ` · <span style="color:#15803d">${doneR.length} done</span>` : '')
       + `</div>`));
-    // THE PHONE IS LAID OUT LIKE THE WALL. The board groups the morning into a column
-    // per cleaner; the roll call listed the same rooms as one flat run of chips, so the
-    // two screens showed the same work in two shapes and could not be read against each
-    // other. "The roll doesn't mirror the TV" was that, every time.
-    //
-    // Both now come off tvColumns(), so they cannot disagree about who has what — the
-    // order, the grouping and the jobs are one calculation with two renderings. The
-    // difference that remains is the one that should: this one you can tap.
-    const board = el('<div class="jobcols"></div>');
-    const unitById = {};
-    (state.servicedUnits || []).forEach((x) => { unitById[x.id] = x; });
-    const areaById = {};
-    (state.areas || []).forEach((a) => { areaById[a.id] = a; });
-    tvColumns().forEach((c) => {
-      const openJobs = c.jobs.filter((j) => !j.done).length;
-      const blk = el(`<div style="margin:0 0 10px;padding:8px 10px;border-radius:8px;`
-        + `background:${c.none ? '#fff7ed' : '#f7f9fc'};border:1px solid ${c.none ? '#fcd9a8' : '#e6ecf3'}"></div>`);
-      const head = el('<div style="display:flex;align-items:baseline;gap:6px;margin-bottom:6px"></div>');
-      head.appendChild(el(`<div style="font-size:12px;font-weight:800;color:${c.none ? '#b45309' : '#243b53'}">`
-        + `${esc(c.none ? 'NOBODY YET' : c.name)}</div>`));
-      // Exactly what the wall says under the name, so the two read alike.
-      const sub = [c.team || '', c.with || '', c.out ? 'AWAY' : '', c.at ? 'in ' + c.at : ''].filter(Boolean).join(' · ');
-      if (sub) head.appendChild(el(`<div style="font-size:11px;color:#5f7189;font-weight:600">${sub}</div>`));
-      head.appendChild(el(`<div style="margin-left:auto;font-size:11px;font-weight:700;`
-        + `color:${openJobs ? '#5f7189' : '#15803d'}">${c.jobs.length - openJobs}/${c.jobs.length}</div>`));
-      blk.appendChild(head);
-      if (!c.jobs.length) blk.appendChild(el(`<div style="font-size:11px;color:#8a99ab">—</div>`));
-      const row = el('<div style="display:flex;flex-wrap:wrap;gap:6px"></div>');
-      c.jobs.forEach((j) => {
-        const u = j.area ? null : unitById[j.id];
-        const a = j.area ? areaById[j.id] : null;
-        if (!u && !a) return;
-        const done = j.done;
-        const early = !done && j.early;
-        // The wall's colour language, on the phone: green done, red wanted first thing,
-        // violet a guest flat, amber nobody on it, slate a communal walk, blue a room.
-        const tone = done ? 'background:#eaf7ee;border-color:#bfe3ca;color:#15803d'
-          : early ? 'background:#fee2e2;border-color:#dc2626;color:#b91c1c;font-weight:800'
-          : j.air ? 'background:#f3efff;border-color:#ddd0fb;color:#6d28d9'
-          : c.none ? 'background:#fff7ed;border-color:#fcd9a8;color:#b45309'
-          : j.area ? 'background:#f1f5f9;border-color:#dbe3ec;color:#475569'
-          : 'background:#eef6fd;border-color:#cfe8fb;color:#0369a1';
-        const signed = u && u.assignedTo && assignConfirmedToday(u);
-        const tip = j.area ? 'Communal area — tap to tick it off'
-          : (early ? 'Wanted first thing — ' : '')
-            + (done ? 'Cleaned today'
-              : !lastCleanDate(u) ? 'No record of this room ever being cleaned'
-              : c.none ? 'Not assigned yet'
-              : signed ? 'Confirmed for ' + c.name
-              : 'Suggested for ' + c.name + ' — not checked yet');
-        const chip = el(`<button class="freqmini" style="flex:0 0 auto;padding:7px 10px;${tone}" `
-          + `title="${esc(tip)}${j.area ? '' : ' — tap to mark clean, hold to see why it is on today'}">`
-          + `${j.area ? '' : flags(u)}${esc(j.label)}`
-          + `${done ? ' ✓' : (!j.area && !c.none && !signed) ? ' ?' : ''}</button>`);
-        if (j.area) {
-          chip.onclick = () => toggleAreaDone(a.id);
-        } else {
-          // TAP TICKS IT OFF, HOLD SAYS WHY IT IS HERE. This screen is where the office
-          // stands while the round runs, and the thing they came to do is say a room is
-          // finished. The explanation is the rarer question, so it costs the half-second.
-          let held = false, holdT = null;
-          const startHold = () => {
-            held = false;
-            clearTimeout(holdT);
-            holdT = setTimeout(() => { held = true; showDueReason(u); }, 550);
-          };
-          const endHold = () => clearTimeout(holdT);
-          chip.addEventListener('pointerdown', startHold);
-          ['pointerup', 'pointerleave', 'pointercancel'].forEach((ev) => chip.addEventListener(ev, endHold));
-          chip.onclick = () => {
-            if (held) { held = false; return; }   // the hold already answered
-            toggleServicedDone(u.id);
-          };
-        }
-        row.appendChild(chip);
-      });
-      blk.appendChild(row);
-      board.appendChild(blk);
-    });
-    box.appendChild(board);
+    // ONE SCREEN, ONE JOB. This screen decides the morning — who is in, who gets what,
+    // what the schedule is doing — and Tick off records the work. They used to be the
+    // same page, so the office scrolled past eight blocks of ticking to reach the
+    // hand-out, and past the hand-out to reach the ticking, twenty times a day.
+    // What is left here is the sentence that matters at a glance, and the way through.
+    {
+      const cols = tvColumns();
+      const all = cols.reduce((n, c) => n + c.jobs.length, 0);
+      const doneN = cols.reduce((n, c) => n + c.jobs.filter((j) => j.done).length, 0);
+      const sum = el('<div style="display:flex;align-items:center;gap:12px;margin:0 0 14px;padding:12px 14px;'
+        + 'border-radius:10px;background:#f7f9fc;border:1px solid #e6ecf3"></div>');
+      sum.appendChild(el(`<div><div style="font-size:22px;font-weight:800;color:${all - doneN ? '#b45309' : '#15803d'}">`
+        + `${all - doneN}</div><div style="font-size:11px;font-weight:700;color:#5f7189">LEFT TODAY</div></div>`));
+      sum.appendChild(el(`<div><div style="font-size:22px;font-weight:800;color:#15803d">${doneN}</div>`
+        + `<div style="font-size:11px;font-weight:700;color:#5f7189">DONE</div></div>`));
+      const go = el(`<button class="freqmini" style="margin-left:auto;flex:0 0 auto;padding:10px 14px;`
+        + `background:#15803d;border-color:#15803d;color:#ffffff;font-size:13px">✓ Tick off →</button>`);
+      go.onclick = () => setTab('tick');
+      sum.appendChild(go);
+      box.appendChild(sum);
+    }
     // Sits under the chips so the counts above stay the first thing read.
     // WHY THE LIST IS THIS LONG, NAMED. "Why is 102 coming up?" was being asked room
     // by room, and the answer was only ever available by opening each one. Every room
@@ -9258,6 +9220,8 @@ function tvJobsByPerson() {
   todaysRoomList().forEach((u) => {
     bucket(u.assignedTo).push({
       id: u.id,
+      air: unitType(u) === 'airbnb',     // its own colour, wherever it is handed
+      late: timeSlot(u) === 'late',      // ...and after the morning round in the column
       label: u.unit,
       done: cleanedToday(u),
       early: timeSlot(u) === 'early',
@@ -9271,15 +9235,12 @@ function tvJobsByPerson() {
   // cleaned was invisible for most of every minute, and "what has been done today"
   // could not be read off the screen in one look. They sit in their cleaner's column
   // now, in a colour of their own so nobody mistakes one for a morning room.
+  // Any kind the office has switched off the roll call in Settings still shows — the
+  // work exists whether or not it is dealt out. Empty while everything is switched on.
   tvOffRollCall().forEach((u) => {
-    // NOBODY'S COLUMN, ALWAYS. The guest flats are not dealt out per person the way the
-    // morning rooms are — they are one job, done by their own pair after the offices —
-    // so a flat sitting in one cleaner's column says something that is not true, and
-    // splits a job that is worked as a block across four corners of the board. They go
-    // together, unassigned, whatever name happens to be on the room record.
-    bucket(null).push({
+    bucket(u.assignedTo).push({
       id: u.id, label: u.unit, done: cleanedToday(u),
-      early: timeSlot(u) === 'early', area: false, air: true,
+      early: timeSlot(u) === 'early', area: false, air: unitType(u) === 'airbnb',
     });
   });
   areasInterior().forEach((a) => {
@@ -9297,6 +9258,7 @@ function tvJobsByPerson() {
       || (y.early ? 1 : 0) - (x.early ? 1 : 0)
       // The morning's own rooms first, then the guest flats that follow them, which is
       // the order the work is actually done in.
+      || (x.late ? 1 : 0) - (y.late ? 1 : 0)
       || (x.air ? 1 : 0) - (y.air ? 1 : 0)
       || String(x.label).localeCompare(String(y.label), undefined, { numeric: true }));
   });
@@ -9801,6 +9763,36 @@ function renderTV() {
 
 // No hands on this screen, so the board has to keep itself alive: redraw on a
 // tick, turn the page on its own, and re-pull in case realtime quietly died.
+// A PHONE RUNS WHATEVER IT DOWNLOADED WHEN THE TAB WAS OPENED.
+// The televisions have watched for new builds since 23 Aug — they are never touched, so
+// without it they run month-old code. Everybody else was left out, and the failure is
+// quieter and worse: the office asks for a change, the change ships, and their phone
+// carries on showing the old screen. Every report of "it still does the old thing" is
+// indistinguishable from the fix not working, and the afternoon goes on the fix.
+//
+// The board reloads itself, because nobody is standing at it. A phone does not: somebody
+// may be halfway through typing a room number, and a page that reloads under a thumb is
+// worse than one that is a version behind. It says so instead, and reloads when asked.
+let _newBuild = false;
+function startBuildWatch() {
+  let seen = null;
+  const check = () => {
+    // HEAD, not the page: this file is half a megabyte and the answer is in one header.
+    fetch(location.pathname + '?bc=' + Date.now(), { method: 'HEAD', cache: 'no-store' })
+      .then((r) => {
+        const stamp = r.headers.get('last-modified') || r.headers.get('etag');
+        if (!stamp) return;
+        if (seen === null) { seen = stamp; return; }
+        if (stamp === seen || _newBuild) return;
+        _newBuild = true;
+        render();
+      })
+      .catch(() => {});      // offline is not news; the sync layer already says so
+  };
+  check();
+  setInterval(check, 3 * 60 * 1000);
+}
+
 function startTVLoop() {
   const pages = () => Math.max(1, Math.ceil(tvColumns().length / TV_COLS_PER_PAGE))
     + (tvOffRollCall().length ? 1 : 0);
@@ -9981,6 +9973,19 @@ function render() {
     header.appendChild(strip);
   }
   app.appendChild(header);
+  // Said once, at the top, and it stays until it is taken. One tap: the office should
+  // never have to know what a hard refresh is.
+  if (_newBuild) {
+    const bar = el(`<div style="display:flex;align-items:center;gap:10px;margin:10px 16px 0;padding:10px 12px;`
+      + `border-radius:10px;background:#eef6fd;border:1px solid #cfe8fb"></div>`);
+    bar.appendChild(el(`<div style="flex:1;min-width:0;font-size:12px;font-weight:700;color:#0369a1">`
+      + `A newer version of the app is ready.</div>`));
+    const rb = el(`<button class="freqmini" style="flex:0 0 auto;padding:8px 12px;background:#0284c7;`
+      + `border-color:#0284c7;color:#ffffff">Reload</button>`);
+    rb.onclick = () => location.reload();
+    bar.appendChild(rb);
+    app.appendChild(bar);
+  }
 
   if (state.tab==='more') app.appendChild(viewMore());
   else if (state.tab==='tick') app.appendChild(viewTick());
@@ -10294,6 +10299,7 @@ async function boot() {
   loadHikArrivals().then(() => { maybeAutoAssign(); route(); });
   startArrivalPolling();
   startDayWatch();
+  if (!TV_MODE) startBuildWatch();   // the board has its own, and reloads itself
   subscribeRealtime();
   startStatePolling();   // the socket is the fast path, not the only one
   refreshHistory();

@@ -41,6 +41,9 @@ let APP_STATE = {
     U('u5', 'A1', 'airbnb', 'daily', DAY_BEFORE),             // off the roll call by kind
   ],
   completions: {}, assignConfirmed: {}, manualArrivals: {}, floors: 11,
+  // Airbnb is an ordinary afternoon room now. The "off the roll call" row is for a kind
+  // the office has switched OFF in Settings, so the fixture switches one off to test it.
+  rollCallTypes: ['office', 'building'],
 };
 const EVENTS = [{ person_name: 'Hodan Omar', person_code: '1003', event_time: WORK_TODAY + ' 06:30:00' }];
 
@@ -90,6 +93,9 @@ function routeSupabase(ctx) {
 
 // The chips in "Rooms to clean today", by their text. Scoped to that section so a room
 // named in the not-due list below cannot be mistaken for one on today's board.
+// What the morning round actually holds, asked of the app rather than scraped off a
+// screen — the roll call now says how much is left and sends you to Tick off for the
+// rest, so there is no list of chips there to read.
 const todayChips = (page) => page.locator('.body > div', { has: page.locator('.section-label', { hasText: 'Rooms to clean today' }) }).locator('button.freqmini');
 
 (async () => {
@@ -114,13 +120,13 @@ const todayChips = (page) => page.locator('.body > div', { has: page.locator('.s
   check('a room that is not due is listed as not due', body.includes('Not due today'), body.slice(0, 120));
   check('and the list says a tap adds it', body.includes('tap one to add it to today'));
   check('Suite 9 is not on today’s list to start with',
-    !(await todayChips(page).allTextContents()).join(' ').includes('Suite 9'));
+    !(await page.evaluate(() => todaysRoomList().some((u) => u.unit === 'Suite 9'))));
 
   await page.locator('button.freqmini', { hasText: 'Suite 9' }).first().click();
   await page.waitForTimeout(600);
   check('tapping it puts it on today’s list',
-    (await todayChips(page).allTextContents()).join(' ').includes('Suite 9'),
-    (await todayChips(page).allTextContents()).join(' | '));
+    await page.evaluate(() => todaysRoomList().some((u) => u.unit === 'Suite 9')),
+    'not on today’s list');
   body = await page.locator('.body').first().textContent();
   check('and it is shown as added by hand, with a way back off', body.includes('Added to today by hand'));
 
@@ -137,17 +143,21 @@ const todayChips = (page) => page.locator('.body > div', { has: page.locator('.s
   const roundAfter = await page.evaluate(() =>
     todaysRoomList().some((u) => u.unit === 'A1'));
   check('tapping the Airbnb room puts it into the morning round', roundAfter === true, String(roundAfter));
-  check('and it is on the roll call where it can be ticked',
-    (await todayChips(page).allTextContents()).join(' ').includes('A1'),
-    (await todayChips(page).allTextContents()).join(' | '));
+  check('and it is on the board where it can be ticked',
+    await page.evaluate(() => tvColumns().flatMap((c) => c.jobs).some((j) => j.label === 'A1')),
+    'not on any column');
 
-  // --- 3. tap the room to mark it cleaned ------------------------------------
-  const a1 = todayChips(page).filter({ hasText: 'A1' }).first();
-  check('it is not ticked yet', !(await a1.textContent()).includes('✓'), await a1.textContent());
-  await a1.click();
+  // --- 3. tap the room to mark it cleaned, on the screen made for it ----------
+  await page.locator('.nav button', { hasText: 'Tick off' }).first().click();
+  await page.waitForTimeout(700);
+  check('it is not ticked yet',
+    !(await page.evaluate(() => cleanedToday(state.servicedUnits.find((u) => u.unit === 'A1')))));
+  // A row carries its name, its kind tag and its circle, so match the name element.
+  await page.locator('button', { has: page.locator('div', { hasText: /^A1$/ }) }).first().click();
   await page.waitForTimeout(800);
-  const a1txt = await todayChips(page).filter({ hasText: 'A1' }).first().textContent();
-  check('tapping the room marks it cleaned', a1txt.includes('✓'), a1txt);
+  check('tapping the room marks it cleaned',
+    await page.evaluate(() => cleanedToday(state.servicedUnits.find((u) => u.unit === 'A1'))),
+    'still not ticked');
 
   // --- the TV reads it back ---------------------------------------------------
   const tv = await ctx.newPage();
@@ -169,11 +179,13 @@ const todayChips = (page) => page.locator('.body > div', { has: page.locator('.s
 
   // --- taking one back off ----------------------------------------------------
   await page.bringToFront();
+  await page.locator('.nav button', { hasText: 'Roll Call' }).first().click();
+  await page.waitForTimeout(700);
   await page.locator('button.freqmini', { hasText: /^Suite 9 ✕$/ }).first().click();
   await page.waitForTimeout(600);
   check('an added room can be taken back off',
-    !(await todayChips(page).allTextContents()).join(' ').includes('Suite 9'),
-    (await todayChips(page).allTextContents()).join(' | '));
+    !(await page.evaluate(() => todaysRoomList().some((u) => u.unit === 'Suite 9'))),
+    'still on today’s list');
   const addedTxt = await page.locator('.body').first().textContent();
   check('a room already cleaned is not offered for removal', !/A1 ✕/.test(addedTxt));
 

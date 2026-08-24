@@ -42,7 +42,7 @@ const APP_STATE={staff:STAFF,servicedUnits:[
  U('u2','102','building','eod',WORK_TODAY),
  U('u3','305','building','eod',WORK_TODAY),
  U('u4','402','building','eod',WORK_TODAY),
- U('u5','A1','airbnb','daily',DAY_BEFORE),
+ U('u5','A1','airbnb','daily',DAY_BEFORE,{preferLate:true}),   // afternoon work, like every guest flat
  U('u6','Suite 9','office','weekly',DAY_BEFORE),
  // 601 was cleaned today, so its own schedule says it is NOT due — it is on today's
  // board only because somebody planned it there last night, for Fatima, who badges
@@ -283,11 +283,17 @@ for (const [label,vp] of [['PHONE',{width:420,height:900}],['DESKTOP',{width:144
    strays.length===0, 'in: '+JSON.stringify(inNow)+' board: '+JSON.stringify(first));
  check('the rooms nobody planned go to the one person who is in',
    first['101']==='p3', JSON.stringify(first));
- // AIRBNB IS A SEPARATE JOB. The flats are done after the offices, by two people, and
- // the office picks which ones — it depends on who has checked out, which the app has
- // no way of knowing. So the morning must not hand one out, ever.
- check('an Airbnb flat is not dealt out with the morning rooms',
-   !first['A1'], 'A1 -> ' + first['A1']);
+ // AIRBNB IS A ROOM LIKE ANY OTHER, DONE LATER IN THE DAY. It used to be kept off the
+ // round entirely, which meant the flats were handed out by memory. The way to say
+ // "after the offices" is to say it: they are afternoon work, dealt like an office room
+ // and sorted below the morning round everywhere it is listed.
+ check('an Airbnb flat is dealt out like any other room',
+   !!first['A1'], 'A1 -> ' + first['A1']);
+ check('...and is afternoon work, so it sorts below the morning round',
+   await page.evaluate(()=>{
+     const u=state.servicedUnits.find(x=>x.unit==='A1');
+     return slotRank(u) > slotRank(state.servicedUnits.find(x=>x.unit==='101'));
+   }), 'A1 does not sort after 101');
  // The Friday case: the add list must offer people the rota says are OFF, in their
  // own group, as well as the ones who are simply not in yet.
  const groups=await page.evaluate(()=>{

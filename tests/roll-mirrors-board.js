@@ -93,16 +93,28 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
   })));
   const bodyText = await page.locator('.body').first().textContent();
 
-  check('every column on the board has a block on the phone',
-    cols.every((c) => bodyText.includes(c.name)), cols.map((c) => c.name).join(' | '));
-  check('and every job under it is named there too',
-    cols.every((c) => c.jobs.every((j) => bodyText.includes(j))),
-    JSON.stringify(cols));
-  check('the communal area sits in its cleaner’s block, not in a list of its own',
-    bodyText.includes('Corridors'), 'areas: ' + JSON.stringify(cols.map((c) => c.jobs)));
+  // ONE SCREEN, ONE JOB. The roll call decides the morning and says how much is left;
+  // the ticking screen is where the board is mirrored and the work recorded.
+  check('the roll call says how much is left and how to get to it',
+    /LEFT TODAY/.test(bodyText) && /Tick off/.test(bodyText), bodyText.slice(0, 140));
 
-  // Ticking a room inside somebody's block still ticks that room.
-  const chip = page.locator('button.freqmini', { hasText: /^101/ }).first();
+  await page.locator('.nav button', { hasText: 'Tick off' }).first().click();
+  await page.waitForTimeout(700);
+  const tickBody = await page.locator('.body').first().textContent();
+  // The ticking screen sets names in caps — it is read at arm's length, walking.
+  const tickFlat = tickBody.toUpperCase();
+  check('every column on the board has a block on the phone',
+    cols.every((c) => tickFlat.includes(c.name.toUpperCase())), cols.map((c) => c.name).join(' | '));
+  check('and every job under it is named there too',
+    cols.every((c) => c.jobs.every((j) => tickBody.includes(j))), JSON.stringify(cols));
+  check('the communal area sits in its cleaner’s block, not a list of its own',
+    tickBody.includes('Corridors'), 'areas: ' + JSON.stringify(cols.map((c) => c.jobs)));
+  // "Has she even arrived yet?" is asked at the same moment as "is 204 done?", so the
+  // badge time is on the screen where the round is worked, not only on the wall.
+  check('each cleaner’s badge-in time is on the ticking screen',
+    /in \d{1,2}:\d{2}/.test(tickBody), tickBody.slice(0, 160));
+
+  const chip = page.locator('button', { hasText: /^101/ }).first();
   await chip.click();
   await page.waitForTimeout(700);
   const ticked = await page.evaluate(() => {
@@ -126,13 +138,10 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
   check('one of them still answers for it, so it is one job not two',
     shared.answerable === 'p1' && shared.jobs === 4, JSON.stringify(shared));
 
-  await page.waitForTimeout(300);
+  await page.waitForTimeout(400);
   const after = await page.locator('.body').first().textContent();
-  check('the phone names them too', /Corridors \+ Hodan/.test(after), 'not found in the roll call body');
-  // --- the ticking screen ------------------------------------------------------
-  // Same board again, with everything that is not a job taken away.
-  await page.locator('.nav button', { hasText: 'Tick off' }).first().click();
-  await page.waitForTimeout(600);
+  check('the phone names them too', /Corridors \+ Hodan/.test(after), 'not found on the ticking screen');
+  // --- the ticking screen, again ------------------------------------------------
   const tickText = await page.locator('.body').first().textContent();
   const jobs = await page.evaluate(() => tvColumns().flatMap((c) => c.jobs).map((j) => j.label));
   check('the Tick off tab lists every job on the board',
@@ -156,21 +165,30 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
     h.isLeader = false; h.crew = 'Team A';
     state.servicedUnits.forEach((u) => { if (u.assignedTo === 'p2') u.assignedTo = 'p1'; });
     // A guest flat with somebody's name on the room record.
-    state.servicedUnits.push({ id: 'suA1', unit: 'A1', type: 'airbnb', freq: 'daily', assignedTo: 'p1' });
+    state.servicedUnits.push({ id: 'suA1', unit: 'A1', type: 'airbnb', freq: 'daily', assignedTo: 'p1', preferLate: true });
     save(); render();
     const cols = tvColumns();
     const air = cols.find((c) => c.jobs.some((j) => j.air));
     return {
       hasOwnColumn: cols.some((c) => c.name && c.name.indexOf('Hodan') === 0),
       namedWithLeader: (cols.find((c) => (c.name || '').indexOf('Amina') === 0) || {}).with || '',
-      airColumnIsNobody: !!(air && air.none),
+      airIsDealt: !!(air && !air.none),
+      // Afternoon work sits below the morning round. Finished jobs sort below both —
+      // they are done — so the question is where it falls among what is still open.
+      airIsLast: (() => {
+        const c = cols.find((x) => x.jobs.some((j) => j.air));
+        if (!c) return false;
+        const open = c.jobs.filter((j) => !j.done);
+        return open.length > 1 && open[open.length - 1].air === true;
+      })(),
     };
   });
   check('an assistant holding nothing gets no column of their own', shape.hasOwnColumn === false, JSON.stringify(shape));
   check('they are named on their leader instead', /Hodan/.test(shape.namedWithLeader), shape.namedWithLeader);
   await page.waitForTimeout(400);
   const rollText = await page.locator('.body').first().textContent();
-  check('a guest flat sits in nobody’s column, not a cleaner’s', shape.airColumnIsNobody === true, JSON.stringify(shape));
+  check('a guest flat is dealt to a cleaner like any other room', shape.airIsDealt === true, JSON.stringify(shape));
+  check('and sits at the foot of the column, after the morning round', shape.airIsLast === true, JSON.stringify(shape));
 
   check('no console errors', errs.length === 0, errs.join('\n       '));
 
