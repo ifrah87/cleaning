@@ -254,7 +254,9 @@
      inputs, chips — so the sub-pages are the same app in a quieter room. The televisions
      are scoped out of all of it; they have their own stylesheet and always have. */
   body:not(.tv) { background: #0a1220; color: #eaf1fb; }
-  body:not(.tv) #app { background: #0a1220; }
+  /* The desktop rule further down paints #app paper-white and comes later in the file,
+     so this one has to say it means it. */
+  body:not(.tv) #app { background: #0a1220 !important; box-shadow: none !important; }
   body:not(.tv) .header { background: #0a1220; border-bottom: 1px solid #1e2f4d; }
   body:not(.tv) .h-title { color: #eaf1fb; }
   body:not(.tv) .h-eyebrow, body:not(.tv) .h-date { color: #7f9abf; }
@@ -6369,6 +6371,106 @@ function planHandoutSheet(day) {
   return wrap;
 }
 
+// THE SAME BOARD, FOR ANY DAY.
+// Today's work is moved by dragging a chip from one person to another, and the day
+// before had to be arranged through a list and a dropdown — the same job done two
+// different ways depending on which screen you were on. This is the board again,
+// reading from the plan for the day being looked at and writing through
+// setPlanAssignee, which is the same call the dropdown always used. Nothing about how
+// a plan is built, seeded or re-synced changes; this is a second way to look at one.
+function planBoard(day) {
+  const plan = getPlan(day);
+  const jobs = Object.entries(plan).map(([key, j]) => ({ key, ...j }));
+  const wrap = el('<div class="board" style="margin-bottom:14px"></div>');
+  if (!jobs.length) {
+    wrap.appendChild(el('<div style="color:#7f9abf;font-size:13px;padding:6px 2px">Nothing laid out for this day yet.</div>'));
+    return wrap;
+  }
+  const cols = el('<div class="bd-cols"></div>');
+  const byId = {};
+  (state.servicedUnits || []).forEach((u) => { byId[u.id] = u; });
+  const people = cleaningStaff().filter((p) => p.isLeader);
+  const buckets = { __none__: [] };
+  people.forEach((p) => { buckets[p.id] = []; });
+  jobs.forEach((j) => { (buckets[j.assignedTo && buckets[j.assignedTo] ? j.assignedTo : '__none__']).push(j); });
+
+  const order = ['__none__'].concat(people.map((p) => p.id));
+  order.forEach((pid) => {
+    const mine = buckets[pid] || [];
+    const none = pid === '__none__';
+    if (!mine.length && none) return;                 // nothing unhanded is nothing to show
+    const col = el(`<div class="bd-col${none ? ' none' : ''}${_picked ? ' drop' : ''}"></div>`);
+    col.setAttribute('data-plandrop', pid);
+    col.addEventListener('click', () => {
+      if (!_picked || !_picked.planKey) return;
+      setPlanAssignee(day, _picked.planKey, none ? '' : pid);
+      _picked = null;
+    });
+    const hd = el('<div class="bd-hd"></div>');
+    const who = people.find((p) => p.id === pid);
+    hd.appendChild(el(`<div class="bd-who">${esc(none ? 'NOT HANDED OUT' : who.name)}</div>`));
+    hd.appendChild(el(`<div class="bd-count">${mine.length}</div>`));
+    col.appendChild(hd);
+    const row = el('<div class="bd-jobs"></div>');
+    mine.sort((a, b) => String(a.label).localeCompare(String(b.label), undefined, { numeric: true }))
+      .forEach((j) => {
+        const u = j.kind === 'unit' ? byId[j.refId] : null;
+        const air = u && unitType(u) === 'airbnb';
+        const cls = j.kind !== 'unit' ? 'area' : air ? 'air' : '';
+        const held = _picked && _picked.planKey === j.key;
+        const chip = el(`<div class="bd-job ${cls}${held ? ' held' : ''}"></div>`);
+        chip.appendChild(el(`<span class="bd-lbl" style="cursor:default">`
+          + `${esc(String(j.label).replace(/^Unit\s+/, ''))}</span>`));
+        const grip = el(`<button class="bd-grip" title="Drag onto somebody, or tap then tap a person">⠿</button>`);
+        let from = null, ghost = null, moved = false;
+        const killGhost = () => { if (ghost) { ghost.remove(); ghost = null; } };
+        grip.addEventListener('pointerdown', (e) => {
+          from = { x: e.clientX, y: e.clientY }; moved = false;
+          if (grip.setPointerCapture) grip.setPointerCapture(e.pointerId);
+        });
+        grip.addEventListener('pointermove', (e) => {
+          if (!from) return;
+          if (!moved && Math.abs(e.clientX - from.x) + Math.abs(e.clientY - from.y) < 8) return;
+          moved = true;
+          if (!ghost) {
+            ghost = el(`<div style="position:fixed;z-index:9999;pointer-events:none;padding:9px 13px;`
+              + `border-radius:9px;background:#0284c7;color:#fff;font-weight:800;font-size:14px;`
+              + `box-shadow:0 8px 22px rgba(0,0,0,0.45)">${esc(String(j.label).replace(/^Unit\s+/, ''))}</div>`);
+            document.body.appendChild(ghost);
+          }
+          ghost.style.left = (e.clientX + 12) + 'px';
+          ghost.style.top = (e.clientY - 16) + 'px';
+          e.preventDefault();
+        });
+        grip.addEventListener('pointerup', (e) => {
+          killGhost();
+          if (moved) {
+            const t = document.elementFromPoint(e.clientX, e.clientY);
+            const drop = t && t.closest && t.closest('[data-plandrop]');
+            if (drop) {
+              const to = drop.getAttribute('data-plandrop');
+              setPlanAssignee(day, j.key, to === '__none__' ? '' : to);
+            } else { render(); }
+          } else {
+            _picked = (_picked && _picked.planKey === j.key) ? null : { planKey: j.key, label: j.label };
+            render();
+          }
+          from = null; moved = false;
+        });
+        grip.addEventListener('pointercancel', () => { killGhost(); from = null; moved = false; });
+        chip.appendChild(grip);
+        row.appendChild(chip);
+      });
+    col.appendChild(row);
+    cols.appendChild(col);
+  });
+  wrap.appendChild(cols);
+  wrap.appendChild(el(`<div style="font-size:11px;color:#6f8ab0;margin-top:10px">`
+    + `Drag a job by its ⠿ grip onto whoever should have it — or tap the grip, then tap a person. `
+    + `Drop it on NOT HANDED OUT to take it off somebody.</div>`));
+  return wrap;
+}
+
 function viewPlan() {
   const wrap = el('<div class="body"></div>');
   const day = curPlanDay();
@@ -6392,16 +6494,18 @@ function viewPlan() {
   const seeded = past ? 0 : seedPlanOnce(day);
   if (!past && !seeded && day > todayKey()) resyncPlanDay(day);
 
-  // WHICH DAY. First, because everything under it is that day's work.
-  const quick = el('<div style="display:flex;gap:6px;margin-bottom:8px"></div>');
-  const jump = (lbl, key, on) => { const b = el(`<button class="freqmini ${on ? 'on' : ''}" style="flex:1">${lbl}</button>`); b.onclick = () => { planDay = key; render(); }; return b; };
+  // WHICH DAY, IN THE CORNER. It belongs where the eye goes first and takes as little
+  // room as it can, because everything under it is that day's work — and what is under
+  // it now is the board, so the day picker must not be the biggest thing on the screen.
+  const quick = el('<div style="display:flex;gap:6px;margin-bottom:10px;align-items:center;flex-wrap:wrap;justify-content:flex-end"></div>');
+  const jump = (lbl, key, on) => { const b = el(`<button class="bd-tab ${on ? 'on' : ''}" style="flex:0 1 auto;min-width:0;padding:8px 12px;font-size:12px">${lbl}</button>`); b.onclick = () => { planDay = key; render(); }; return b; };
   // Backwards as well as forwards: "what was 704 actually put on?" is a question
   // worth being able to answer, and the day picker used to refuse to go behind today.
   const yday = shiftDay(workToday(), -1);
   quick.appendChild(jump('Yesterday', yday, day === yday));
   quick.appendChild(jump('Today', workToday(), isToday));
   quick.appendChild(jump('Tomorrow', tomorrowKey(), isTomorrow));
-  const dayIn = el(`<input type="date" value="${esc(day)}" min="${esc(shiftDay(workToday(), -120))}" style="flex:1;min-width:0;background:#16233a;color:#eaf1fb;border:1px solid #3d557f;border-radius:8px;padding:7px 9px;font-size:13px">`);
+  const dayIn = el(`<input type="date" value="${esc(day)}" min="${esc(shiftDay(workToday(), -120))}" style="flex:0 0 auto;width:150px;background:#16233a;color:#eaf1fb;border:1px solid #3d557f;border-radius:8px;padding:7px 9px;font-size:13px">`);
   dayIn.onchange = (e) => { planDay = e.target.value || null; render(); };
   quick.appendChild(dayIn);
   wrap.appendChild(quick);
@@ -6412,6 +6516,10 @@ function viewPlan() {
   sheetBtn.onclick = () => { _planSheet = !_planSheet; render(); };
   wrap.appendChild(sheetBtn);
   if (_planSheet) { wrap.appendChild(planHandoutSheet(day)); return wrap; }
+
+  // THE DAY, AS THE BOARD. The same columns, chips and grips as today's screen, so
+  // moving a room from one person to another is one gesture wherever you are.
+  wrap.appendChild(planBoard(day));
 
   // THE ONE BUTTON.
   const planBtn = el(`<button class="add-btn" style="background:#15803d;margin-bottom:10px;font-size:15px;padding:12px">`
@@ -9741,12 +9849,18 @@ function tvJobsByPerson() {
     return buckets[k];
   };
   todaysRoomList().forEach((u) => {
-    bucket(u.assignedTo).push({
+    // THE GUEST FLATS GO IN ONE BOX. They are one job, worked as a block by whoever is
+    // free after the offices, and split across seven columns they read as seven people's
+    // odd jobs. This is where they SHOW; it is not who they belong to — the name on the
+    // room record is untouched, and is printed on the chip when there is one.
+    const air = unitType(u) === 'airbnb';
+    const who = (state.staff || []).find((p) => p.id === u.assignedTo);
+    bucket(air ? null : u.assignedTo).push({
       id: u.id,
-      air: unitType(u) === 'airbnb',     // its own colour, wherever it is handed
+      air,                               // its own colour, wherever it is handed
       late: timeSlot(u) === 'late',      // ...and after the morning round in the column
       kind: unitType(u),                 // ...and its own button, for looking at one job at a time
-      label: u.unit,
+      label: u.unit + (air && who ? ' · ' + who.name.split(' ')[0] : ''),
       done: cleanedToday(u),
       early: timeSlot(u) === 'early',
       area: false,
@@ -9762,9 +9876,12 @@ function tvJobsByPerson() {
   // Any kind the office has switched off the roll call in Settings still shows — the
   // work exists whether or not it is dealt out. Empty while everything is switched on.
   tvOffRollCall().forEach((u) => {
-    bucket(u.assignedTo).push({
-      id: u.id, label: u.unit, done: cleanedToday(u), kind: unitType(u),
-      early: timeSlot(u) === 'early', area: false, air: unitType(u) === 'airbnb',
+    const air = unitType(u) === 'airbnb';
+    const who = (state.staff || []).find((p) => p.id === u.assignedTo);
+    bucket(air ? null : u.assignedTo).push({          // the flats share one box, as above
+      id: u.id, label: u.unit + (air && who ? ' · ' + who.name.split(' ')[0] : ''),
+      done: cleanedToday(u), kind: unitType(u),
+      early: timeSlot(u) === 'early', area: false, air,
     });
   });
   // A SHARED AREA IS ON BOTH BOARDS. It was on one — whoever answered for it — with the
@@ -10174,7 +10291,18 @@ function renderTV() {
   const top = el(`<div class="tv-top"></div>`);
   const left = el(`<div></div>`);
   left.appendChild(el(`<div class="tv-brand">${onAir ? esc(tvAirTitle(air)) : 'CLEANING BOARD'}</div>`));
-  left.appendChild(el(`<div class="tv-date">${esc(now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }))}</div>`));
+  // THE DAY THE BOARD IS ABOUT, NOT THE DAY THE CLOCK IS ON.
+  // The work day rolls at 3am — a round that runs past midnight belongs to the morning
+  // it started — and the jobs below have always followed that. The date line did not:
+  // it printed the calendar date, so from midnight to 3am the wall read "Tuesday" over
+  // Monday's round, with everything on it ticked. The board contradicted itself for
+  // three hours every night, and the office quite reasonably read it as the wrong jobs.
+  const boardDay = new Date(workToday() + 'T00:00:00');
+  const stillLastNight = workToday() !== todayKey();
+  left.appendChild(el(`<div class="tv-date">`
+    + `${esc(boardDay.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }))}`
+    + (stillLastNight ? ` <span style="opacity:0.75">· tonight's round, until 3am</span>` : '')
+    + `</div>`));
   top.appendChild(left);
 
   // THREE NUMBERS, EACH SAYING WHAT IT IS. This used to read "1 of 28 done", which

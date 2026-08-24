@@ -201,7 +201,7 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
     return {
       hasOwnColumn: cols.some((c) => c.name && c.name.indexOf('Hodan') === 0),
       namedWithLeader: (cols.find((c) => (c.name || '').indexOf('Amina') === 0) || {}).with || '',
-      airIsDealt: !!(air && !air.none),
+      airIsDealt: !!(air && air.none),          // the flats share the NOBODY YET box
       // Afternoon work sits below the morning round. Finished jobs sort below both —
       // they are done — so the question is where it falls among what is still open.
       airIsLast: (() => {
@@ -216,8 +216,11 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
   check('they are named on their leader instead', /Hodan/.test(shape.namedWithLeader), shape.namedWithLeader);
   await page.waitForTimeout(400);
   const rollText = await page.locator('.body').first().textContent();
-  check('a guest flat is dealt to a cleaner like any other room', shape.airIsDealt === true, JSON.stringify(shape));
-  check('and sits at the foot of the column, after the morning round', shape.airIsLast === true, JSON.stringify(shape));
+  // THE FLATS SHARE ONE BOX. They are one job, worked as a block by whoever is free
+  // after the offices, and the office hands them out on finish times — so they are not
+  // dealt to a cleaner and they do not sit in anybody's column.
+  check('a guest flat sits in the NOBODY YET box, not a cleaner’s column',
+    shape.airIsDealt === true, JSON.stringify(shape));
 
   // --- a button per kind of work, and the group's frequency behind it -------------
   await page.evaluate(() => setTab('board'));

@@ -124,7 +124,9 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
   const gone = await page.evaluate(() => {
     // Come back tomorrow: the job was raised and finished yesterday.
     const a = state.areas.find((x) => x.label === 'Electrician');
-    const y = new Date(); y.setDate(y.getDate() - 1);
+    // A day BEFORE the work day, not before the calendar day: run this between midnight
+    // and the 3am cutoff and "yesterday" by the clock is still today's round.
+    const y = new Date(workToday() + 'T00:00:00'); y.setDate(y.getDate() - 1);
     a.oneOff = a.doneOn = y.getFullYear() + '-' + String(y.getMonth() + 1).padStart(2, '0') + '-' + String(y.getDate()).padStart(2, '0');
     return areasInterior().map((x) => x.label);
   });
