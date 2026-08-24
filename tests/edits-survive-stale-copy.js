@@ -73,7 +73,7 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
   const errs = [];
   page.on('pageerror', (e) => errs.push('pageerror: ' + e.message));
   await page.goto(`http://127.0.0.1:${port}/index.html`, { waitUntil: 'domcontentloaded' });
-  await page.waitForSelector('.nav', { timeout: 20000 });
+  await page.waitForSelector('.header', { timeout: 20000 });
   await page.waitForTimeout(2500);
 
   console.log('\n\x1b[1mAn edit is not undone by a copy that predates it\x1b[0m');

@@ -109,7 +109,7 @@ const head = (t) => console.log('\n\x1b[1m' + t + '\x1b[0m');
   page.on('console', (x) => { if (x.type() === 'error' && !noise(x.text())) errs.push(x.text()); });
   page.on('pageerror', (e) => { if (!noise(e.message)) errs.push('pageerror: ' + e.message); });
   await page.goto(`http://127.0.0.1:${port}/index.html`, { waitUntil: 'domcontentloaded' });
-  await page.waitForSelector('.nav', { timeout: 20000 });
+  await page.waitForSelector('.header', { timeout: 20000 });
   await page.waitForTimeout(2500);
 
   // One turn of the arrival poll: read the Time Card, hand out whatever it changes.

@@ -81,10 +81,19 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
   const errs = [];
   page.on('pageerror', (e) => errs.push('pageerror: ' + e.message));
   await page.goto(`http://127.0.0.1:${port}/index.html`, { waitUntil: 'domcontentloaded' });
-  await page.waitForSelector('.nav', { timeout: 20000 });
+  await page.waitForSelector('.header', { timeout: 20000 });
   await page.waitForTimeout(3000);
 
   console.log('\n\x1b[1mA guest flat goes to whoever cleaned it\x1b[0m');
+
+  // The morning set-up lives behind ☰ now — the board is the screen you land on.
+  await page.evaluate(() => {
+    setTab('rollcall');
+    // Who's in folds shut by default; the cards inside it are what a job is dropped on.
+    state.rcFold = Object.assign({}, state.rcFold, { whoin: true, airbnb: true });
+    render();
+  });
+  await page.waitForTimeout(700);
 
   const body = await page.locator('.body').first().textContent();
   check('the flats are on the roll call', /Airbnb \(\d\/\d done\)/.test(body), body.slice(0, 200));

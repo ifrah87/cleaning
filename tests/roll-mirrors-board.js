@@ -81,7 +81,7 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
   const errs = [];
   page.on('pageerror', (e) => errs.push('pageerror: ' + e.message));
   await page.goto(`http://127.0.0.1:${port}/index.html`, { waitUntil: 'domcontentloaded' });
-  await page.waitForSelector('.nav', { timeout: 20000 });
+  await page.waitForSelector('.header', { timeout: 20000 });
   await page.waitForTimeout(3000);
 
   console.log('\n\x1b[1mThe roll call is laid out like the board\x1b[0m');
@@ -95,10 +95,13 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
 
   // ONE SCREEN, ONE JOB. The roll call decides the morning and says how much is left;
   // the ticking screen is where the board is mirrored and the work recorded.
-  check('the roll call says how much is left and how to get to it',
-    /LEFT TODAY/.test(bodyText) && /Tick off/.test(bodyText), bodyText.slice(0, 140));
+  // There is no tab bar and no separate ticking screen: the board is what the app opens
+  // on, and it is the same board that is on the wall.
+  check('the app opens on the board itself',
+    await page.evaluate(() => state.tab === 'board') && (await page.locator('.bd-col').count()) > 0,
+    'tab: ' + await page.evaluate(() => state.tab));
 
-  await page.locator('.nav button', { hasText: 'Tick off' }).first().click();
+  await page.evaluate(() => setTab('board'));
   await page.waitForTimeout(700);
   const tickBody = await page.locator('.body').first().textContent();
   // The ticking screen sets names in caps — it is read at arm's length, walking.
@@ -111,8 +114,8 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
     tickBody.includes('Corridors'), 'areas: ' + JSON.stringify(cols.map((c) => c.jobs)));
   // "Has she even arrived yet?" is asked at the same moment as "is 204 done?", so the
   // badge time is on the screen where the round is worked, not only on the wall.
-  check('each cleaner’s badge-in time is on the ticking screen',
-    /in \d{1,2}:\d{2}/.test(tickBody), tickBody.slice(0, 160));
+  check('each cleaner’s badge-in time is on the board',
+    /IN \d{1,2}:\d{2}/i.test(tickBody), tickBody.slice(0, 160));
 
   const chip = page.locator('button', { hasText: /^101/ }).first();
   await chip.click();
@@ -217,7 +220,7 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
   check('and sits at the foot of the column, after the morning round', shape.airIsLast === true, JSON.stringify(shape));
 
   // --- a button per kind of work, and the group's frequency behind it -------------
-  await page.locator('.nav button', { hasText: 'Tick off' }).first().click();
+  await page.evaluate(() => setTab('board'));
   await page.waitForTimeout(600);
   const segs = await page.locator('.body button.freqmini').allTextContents();
   check('there is a button for each kind of work',
@@ -246,13 +249,14 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
     save(); render();
   });
   await page.waitForTimeout(500);
-  await page.locator('button', { hasText: /Give .* more work/ }).first().click();
+  await page.locator('button.bd-more', { hasText: /Give .* more work/ }).first().click();
   await page.waitForTimeout(600);
   const offered = await page.locator('.body').first().textContent();
   check('the board offers what is still spare', /909/.test(offered), 'no spare list');
   // Scoped to the "give them more work" list: 909 is also sitting in NOBODY YET, where
   // a tap would tick it clean rather than hand it to anybody.
-  await page.locator('.givelist button', { has: page.locator('div', { hasText: /^909$/ }) }).first().click();
+  // On the board the spare jobs are chips, not rows: "＋ 909".
+  await page.locator('.givelist button', { hasText: /909/ }).first().click();
   await page.waitForTimeout(700);
   const given = await page.evaluate(() => {
     const u = state.servicedUnits.find((x) => x.unit === '909');

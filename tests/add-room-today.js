@@ -110,10 +110,18 @@ const todayChips = (page) => page.locator('.body > div', { has: page.locator('.s
   page.on('console', (x) => { if (x.type() === 'error') errs.push(x.text()); });
   page.on('pageerror', (e) => errs.push('pageerror: ' + e.message));
   await page.goto(`http://127.0.0.1:${port}/index.html`, { waitUntil: 'domcontentloaded' });
-  await page.waitForSelector('.nav', { timeout: 20000 });
+  await page.waitForSelector('.header', { timeout: 20000 });
   await page.waitForTimeout(2500);
 
   console.log('\n\x1b[1mPHONE — adding a room to today\x1b[0m');
+
+  // The morning set-up is behind ☰; the not-due list and the off-roll-call list fold shut.
+  await page.evaluate(() => {
+    setTab('rollcall');
+    state.rcFold = Object.assign({}, state.rcFold, { notdue: true, offkinds: true, added: true });
+    render();
+  });
+  await page.waitForTimeout(700);
 
   // --- 1. a room that is not due today ---------------------------------------
   let body = await page.locator('.body').first().textContent();
@@ -148,12 +156,12 @@ const todayChips = (page) => page.locator('.body > div', { has: page.locator('.s
     'not on any column');
 
   // --- 3. tap the room to mark it cleaned, on the screen made for it ----------
-  await page.locator('.nav button', { hasText: 'Tick off' }).first().click();
+  await page.evaluate(() => setTab('board'));
   await page.waitForTimeout(700);
   check('it is not ticked yet',
     !(await page.evaluate(() => cleanedToday(state.servicedUnits.find((u) => u.unit === 'A1')))));
   // A row carries its name, its kind tag and its circle, so match the name element.
-  await page.locator('button', { has: page.locator('div', { hasText: /^A1$/ }) }).first().click();
+  await page.locator('button.bd-job', { hasText: /^A1/ }).first().click();
   await page.waitForTimeout(800);
   check('tapping the room marks it cleaned',
     await page.evaluate(() => cleanedToday(state.servicedUnits.find((u) => u.unit === 'A1'))),
@@ -179,7 +187,11 @@ const todayChips = (page) => page.locator('.body > div', { has: page.locator('.s
 
   // --- taking one back off ----------------------------------------------------
   await page.bringToFront();
-  await page.locator('.nav button', { hasText: 'Roll Call' }).first().click();
+  await page.evaluate(() => {
+    setTab('rollcall');
+    state.rcFold = Object.assign({}, state.rcFold, { notdue: true, offkinds: true, added: true });
+    render();
+  });
   await page.waitForTimeout(700);
   await page.locator('button.freqmini', { hasText: /^Suite 9 ✕$/ }).first().click();
   await page.waitForTimeout(600);

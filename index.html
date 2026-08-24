@@ -177,6 +177,41 @@
   .jobcols > div { break-inside: avoid; -webkit-column-break-inside: avoid;
                    display: inline-block; width: 100%; margin: 0 0 12px; }
 
+  /* THE BOARD, IN YOUR HAND. The wall version is the one screen in this building that
+     nobody has ever had to be taught — so the phone stops inventing a second way to show
+     the same morning and simply becomes it. Same ground, same cards, same colours, same
+     order. The only difference is that everything on it can be tapped. Sized in pixels
+     rather than the wall's vw, because a thumb is a thumb whatever the screen. */
+  .board { background: #0a1220; border-radius: 14px; padding: 12px; }
+  .bd-cols { columns: 300px; column-gap: 10px; }
+  .bd-col { break-inside: avoid; -webkit-column-break-inside: avoid; display: inline-block;
+            width: 100%; background: #101c30; border-radius: 12px; padding: 12px; margin: 0 0 10px; }
+  .bd-col.none { background: #2b2008; }
+  .bd-col.out  { background: #241a06; }
+  .bd-hd { display: flex; align-items: baseline; gap: 8px; border-bottom: 1px solid #1e2f4d;
+           padding-bottom: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+  .bd-who { font-size: 15px; font-weight: 800; color: #eaf1fb; }
+  .bd-col.none .bd-who { color: #fbbf24; }
+  .bd-col.out .bd-who { color: #fcd34d; }
+  .bd-sub { font-size: 11px; font-weight: 700; color: #6f8ab0; width: 100%; }
+  .bd-at { font-size: 11px; font-weight: 800; color: #86efac; }
+  .bd-at.none { color: #fbbf24; }
+  .bd-count { margin-left: auto; font-size: 13px; font-weight: 800; color: #6f8ab0; }
+  .bd-grp { font-size: 10px; font-weight: 800; letter-spacing: 0.12em; color: #6f8ab0; margin: 10px 0 5px; }
+  .bd-jobs { display: flex; flex-wrap: wrap; gap: 7px; }
+  .bd-job { min-height: 46px; padding: 11px 14px; border: 0; border-left: 5px solid #3d557f;
+            border-radius: 9px; background: #1c2b45; color: #dce8f8; font-size: 16px;
+            font-weight: 800; cursor: pointer; text-align: left; }
+  .bd-job.early { background: #4a1414; color: #ffd9d9; border-left-color: #ef4444; }
+  .bd-job.air   { background: #4c1d95; color: #f3e8ff; border-left-color: #c084fc; }
+  .bd-job.area  { background: #1a2438; color: #b7c8de; border-left-color: #64748b; font-weight: 700; }
+  .bd-job.done  { background: #123020; color: #86efac; border-left-color: #22c55e;
+                  text-decoration: line-through; opacity: 0.85; }
+  .bd-job.held  { outline: 3px solid #38bdf8; outline-offset: 1px; }
+  .bd-more { width: 100%; margin-top: 9px; padding: 9px; border-radius: 8px; border: 1px dashed #3d557f;
+             background: transparent; color: #7ea6dc; font-size: 11px; font-weight: 700; cursor: pointer; }
+  .bd-col.drop { outline: 2px dashed #38bdf8; }
+
   .body { padding: 16px; }
 
   /* Roll call */
@@ -1199,7 +1234,7 @@ function unitsOwnedBy(personId) {
 }
 
 let state = {
-  tab: 'rollcall',     // must always be a tab render() knows — see the guard in render()
+  tab: 'board',        // must always be a tab render() knows — see the guard in render()
   roomsFilter: 'all',  // which kind of room the Rooms tab is showing: all|airbnb|office|building
   shutGroups: {},      // room-type groups folded away on the Rooms tab: { office: true }
   attendance: {},
@@ -1346,7 +1381,7 @@ function load() {
     const raw = localStorage.getItem(STORE);
     if (raw) {
       const saved = JSON.parse(raw);
-      state = { ...state, ...saved, tab: 'rollcall' };
+      state = { ...state, ...saved, tab: 'board' };
       if (state.coverageDay !== todayKey()) { state.coverage = {}; state.unitCover = {}; state.pendingCover = null; state.coverageDay = todayKey(); }
     }
   } catch (e) {}
@@ -2117,7 +2152,7 @@ function setTab(t, opts) {
 }
 function goBack() {
   const prev = _navStack.pop();
-  setTab(prev || 'rollcall', { back: true });
+  setTab(prev || 'board', { back: true });
 }
 function resetCompletions() { showConfirm('Reset all completion checkmarks?', 'Attendance and assignments are kept.', () => { state.completions={}; save(); render(); }); }
 
@@ -6856,6 +6891,71 @@ function viewRooms() {
 // grouped by the cleaner it belongs to, in the same order as the wall. Same source as
 // the roll call and the TV (tvColumns), so no screen can disagree with another about
 // who has what.
+// TODAY IS ONE SCREEN. The board is what the day looks like; the decisions that made it
+// — who is in, what was not due, what is coming tomorrow — sit underneath it, folded, in
+// the order they are needed. They were a separate tab, which meant the two halves of the
+// same morning were in two places and neither screen was the answer on its own.
+function viewToday() {
+  const w = el('<div></div>');
+  w.appendChild(viewTick());
+  return w;
+}
+
+// EVERYTHING THAT IS NOT TODAY'S WORK.
+// One list, in the order somebody would look for it: the estate, then the people, then
+// the record, then the machinery. It is a sheet rather than a screen because it is
+// always a detour — you came here to get somewhere, and the board is still behind it.
+let _menuOpen = false;
+function menuSheet() {
+  const overlay = el('<div style="position:fixed;inset:0;z-index:900;background:rgba(10,18,32,0.55);'
+    + 'display:flex;align-items:flex-end;justify-content:center"></div>');
+  overlay.onclick = (e) => { if (e.target === overlay) { _menuOpen = false; render(); } };
+  const sheet = el('<div style="width:100%;max-width:560px;max-height:88vh;overflow:auto;background:#ffffff;'
+    + 'border-radius:16px 16px 0 0;padding:14px 14px calc(18px + env(safe-area-inset-bottom,0))"></div>');
+  sheet.appendChild(el(`<div style="display:flex;align-items:center;margin-bottom:10px">`
+    + `<div style="flex:1;font-size:15px;font-weight:800;color:#0f172a">Everything else</div></div>`));
+  const group = (label, items) => {
+    sheet.appendChild(el(`<div style="font-size:10px;font-weight:800;letter-spacing:0.12em;color:#8a99ab;`
+      + `margin:14px 0 6px">${esc(label)}</div>`));
+    items.forEach(([tab, name, sub]) => {
+      const b = el(`<button style="display:flex;align-items:center;gap:12px;width:100%;padding:14px 12px;`
+        + `border:0;border-bottom:1px solid #eef2f7;background:transparent;text-align:left;cursor:pointer">`
+        + `<div style="flex:1;min-width:0"><div style="font-size:15px;font-weight:700;color:#243b53">${esc(name)}</div>`
+        + (sub ? `<div style="font-size:11px;color:#5f7189">${esc(sub)}</div>` : '')
+        + `</div><div style="color:#8a99ab;font-size:18px">›</div></button>`);
+      b.onclick = () => { _menuOpen = false; setTab(tab); };
+      sheet.appendChild(b);
+    });
+  };
+  group('THE MORNING', [
+    ['rollcall', 'Morning set-up', 'Attendance, hand-out, what is not due, one-off jobs, tomorrow'],
+    ['plan', 'Plan a day', 'Lay tomorrow out and hand it round'],
+  ]);
+  group('THE ESTATE', [
+    ['rooms', 'Rooms & schedules', 'Add a room, change how often it is cleaned'],
+    ['building', 'Floors & common areas', 'The rooftop-to-ground checklist'],
+    ['exterior', 'Exterior', 'Outside areas and their frequencies'],
+  ]);
+  group('THE CREW', [['team', 'Team', 'Cleaners, teams, floors and the rota']]);
+  group('THE RECORD', [
+    ['history', 'Cleaning history', 'What was cleaned, by day'],
+    ['tonight', 'Tonight’s round', 'What is still outstanding late on'],
+  ]);
+  group('THE MACHINERY', [['settings', 'Settings', 'Switches, kinds of room, the board itself']]);
+  const built = (() => {
+    try { const d = new Date(document.lastModified);
+      return isNaN(d) ? '' : d.toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    } catch (e) { return ''; }
+  })();
+  sheet.appendChild(el(`<div style="font-size:10px;color:#8a99ab;margin-top:16px;text-align:center">`
+    + `66-unit building · 11 floors${built ? ' · build ' + esc(built) : ''}</div>`));
+  const shut = el(`<button class="modal-skip" style="width:100%;margin-top:12px">Close</button>`);
+  shut.onclick = () => { _menuOpen = false; render(); };
+  sheet.appendChild(shut);
+  overlay.appendChild(sheet);
+  return overlay;
+}
+
 let _giveTo = null;        // whose card is showing the "give them more work" list
 
 // MOVING A JOB ONTO A PERSON.
@@ -7005,84 +7105,106 @@ function viewTick() {
   const areaById = {};
   (state.areas || []).forEach((a) => { areaById[a.id] = a; });
 
-  const grid = el('<div class="jobcols"></div>');
+  const grid = el('<div class="board"><div class="bd-cols"></div></div>');
+  const cols_ = grid.firstChild;
   fcols.forEach((c) => {
     const giving = _giveTo === c.key;
     if (!c.jobs.length && !giving) return;      // nothing to tick is nothing to show here
-    const grp = el('<div></div>');
+    const col = el(`<div class="bd-col${c.none ? ' none' : ''}${c.out ? ' out' : ''}${_picked && !c.none ? ' drop' : ''}"></div>`);
+    if (!c.none) makeDropTarget(col, c.key);
+
+    const hd = el('<div class="bd-hd"></div>');
+    const whoEl = el(`<div class="bd-who" style="${c.none ? '' : 'cursor:pointer'}">${esc(c.none ? 'NOBODY YET' : c.name)}</div>`);
+    // TAP THE NAME TO GIVE THEM WORK. The button below says so in words for anybody who
+    // has not found that out yet; the name is where the thumb goes first.
+    if (!c.none) whoEl.onclick = (e) => {
+      if (_picked) return;                       // the column is already a place to drop
+      e.stopPropagation();
+      _giveTo = (_giveTo === c.key) ? null : c.key;
+      render();
+    };
+    hd.appendChild(whoEl);
     const cDone = c.jobs.filter((j) => j.done).length;
-    const head = el('<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:6px"></div>');
-    head.appendChild(el(`<div style="font-size:12px;font-weight:800;letter-spacing:0.04em;`
-      + `color:${c.none ? '#b45309' : '#243b53'}">${esc((c.none ? 'NOBODY YET' : c.name).toUpperCase())}</div>`));
-    if (c.at || c.left) head.appendChild(el(`<div style="font-size:11px;font-weight:700;color:#15803d">`
-      + (c.at ? 'in ' + esc(c.at) : '')
-      + (c.left ? ` <span style="color:#5f7189">${c.at ? '· ' : ''}out ${esc(c.left)}</span>` : '') + `</div>`));
-    else if (!c.none) head.appendChild(el(`<div style="font-size:11px;font-weight:700;color:#b45309">no scan yet</div>`));
-    head.appendChild(el(`<div style="margin-left:auto;font-size:12px;font-weight:700;`
-      + `color:${cDone === c.jobs.length ? '#15803d' : '#5f7189'}">${cDone}/${c.jobs.length}</div>`));
-    grp.appendChild(head);
+    hd.appendChild(el(`<div class="bd-count">${cDone}/${c.jobs.length}</div>`));
+    const sub = [c.team || '', c.with || ''].filter(Boolean).join(' · ');
+    if (sub) hd.appendChild(el(`<div class="bd-sub">${sub}</div>`));
+    if (c.at || c.left) hd.appendChild(el(`<div class="bd-at" style="width:100%">`
+      + (c.at ? 'IN ' + esc(c.at) : '')
+      + (c.at && c.left ? ' · ' : '')
+      + (c.left ? 'OUT ' + esc(c.left) : '') + `</div>`));
+    else if (!c.none) hd.appendChild(el(`<div class="bd-at none" style="width:100%">NO SCAN YET</div>`));
+    col.appendChild(hd);
 
-    const list = el(`<div style="border:1px solid #e6ecf3;border-radius:10px;overflow:hidden"></div>`);
-    c.jobs.forEach((j, i) => {
-      const u = j.area ? null : unitById[j.id];
-      const a = j.area ? areaById[j.id] : null;
-      if (!u && !a) return;
-      // A WHOLE ROW IS THE TARGET, not a chip inside it. This is used one-handed while
-      // walking, and a small chip in a wrapped row is a miss waiting to happen.
-      const row = el(`<button style="display:flex;align-items:center;gap:10px;width:100%;`
-        + `padding:14px 12px;border:0;border-top:${i ? '1px solid #eef2f7' : '0'};`
-        + `background:${j.done ? '#f2fbf5' : '#ffffff'};text-align:left;cursor:pointer"></button>`);
-      row.appendChild(el(`<div style="flex:1;min-width:0;font-size:16px;font-weight:700;`
-        + `color:${j.done ? '#8aa79a' : j.early ? '#b91c1c' : j.air ? '#6d28d9' : '#243b53'};`
-        + `${j.done ? 'text-decoration:line-through' : ''}">`
-        + `${j.early && !j.done ? '🌅 ' : ''}${esc(j.label)}</div>`));
-      if (j.area) row.appendChild(el(`<div style="font-size:10px;font-weight:700;color:#475569">AREA</div>`));
-      if (j.air) row.appendChild(el(`<div style="font-size:10px;font-weight:700;color:#6d28d9">AIRBNB</div>`));
-      row.appendChild(el(`<div style="flex:0 0 auto;width:30px;height:30px;border-radius:15px;`
-        + `display:flex;align-items:center;justify-content:center;font-size:17px;font-weight:800;`
-        + `border:2px solid ${j.done ? '#15803d' : '#cbd6e3'};`
-        + `background:${j.done ? '#15803d' : '#ffffff'};color:${j.done ? '#ffffff' : '#cbd6e3'}">`
-        + `${j.done ? '✓' : ''}</div>`));
-      row.onclick = () => { if (j.area) toggleAreaDone(a.id); else toggleServicedDone(u.id); };
-      list.appendChild(row);
-    });
-    grp.appendChild(list);
+    // Rooms, then the communal walks — the order the board has always used, and the
+    // order the work is done in. Headed only when there are both, because a heading
+    // over a single list is noise.
+    const rooms = c.jobs.filter((j) => !j.area);
+    const areas = c.jobs.filter((j) => j.area);
+    const put = (list, label) => {
+      if (!list.length) return;
+      if (rooms.length && areas.length) col.appendChild(el(`<div class="bd-grp">${esc(label)}</div>`));
+      const row = el('<div class="bd-jobs"></div>');
+      list.forEach((j) => {
+        const u = j.area ? null : unitById[j.id];
+        const a = j.area ? areaById[j.id] : null;
+        if (!u && !a) return;
+        const held = _picked && _picked.id === j.id;
+        const cls = j.done ? 'done' : j.early ? 'early' : j.air ? 'air' : j.area ? 'area' : '';
+        const chip = el(`<button class="bd-job ${cls}${held ? ' held' : ''}" style="touch-action:manipulation">`
+          + `${j.early && !j.done ? '🌅 ' : ''}${esc(j.label)}${j.done ? ' ✓' : ''}</button>`);
+        // TAP TICKS IT. Holding it — press and hold, or drag with a mouse — picks the
+        // job up so it can be put on somebody else, which is the other thing this
+        // screen is for. Two gestures, and the commoner one is the shorter.
+        let held2 = false, holdT = null;
+        chip.addEventListener('pointerdown', () => {
+          held2 = false;
+          clearTimeout(holdT);
+          holdT = setTimeout(() => {
+            held2 = true;
+            _picked = { kind: j.area ? 'area' : 'unit', id: j.id, label: j.label };
+            render();
+          }, 500);
+        });
+        ['pointerup', 'pointerleave', 'pointercancel'].forEach((ev) => chip.addEventListener(ev, () => clearTimeout(holdT)));
+        chip.onclick = () => {
+          if (held2) { held2 = false; return; }        // the hold picked it up
+          if (_picked && _picked.id === j.id) { _picked = null; render(); return; }
+          if (j.area) toggleAreaDone(a.id); else toggleServicedDone(u.id);
+        };
+        row.appendChild(chip);
+      });
+      col.appendChild(row);
+    };
+    put(rooms, 'ROOMS');
+    put(areas, 'COMMUNAL');
 
-    // GIVING SOMEBODY MORE WORK, WHERE THEIR WORK IS. Extra rooms went to a leader
-    // through a dropdown on another screen, under a card that had to be found first —
-    // so handing out one more room in the middle of a round was a small expedition.
-    // It belongs on the board: their name, their list, and everything still spare.
     if (!c.none) {
-      const more = el(`<button class="freqmini" style="width:100%;margin-top:6px;padding:9px;font-size:11px`
-        + (giving ? ';border-color:#0284c7;color:#0369a1' : '') + `">`
-        + (giving ? 'Done adding' : '＋ Give ' + esc(String(c.name).split(' ')[0]) + ' more work') + `</button>`);
-      more.onclick = () => { _giveTo = giving ? null : c.key; render(); };
-      grp.appendChild(more);
+      const more = el(`<button class="bd-more">`
+        + (giving ? '✕ Done adding' : '＋ Give ' + esc(String(c.name).split(' ')[0]) + ' more work') + `</button>`);
+      more.onclick = (e) => { e.stopPropagation(); _giveTo = giving ? null : c.key; render(); };
+      col.appendChild(more);
       if (giving) {
         const spareRooms = (state.servicedUnits || []).filter((u) =>
           !u.paused && !u.assignedTo && !cleanedToday(u) && onRollCall(u) && keep({ area: false, kind: unitType(u) }));
         const spareAreas = areasInterior().filter((a) => !a.assignedTo && !areaDone(a) && keep({ area: true, kind: 'area' }));
-        const pick = el('<div class="givelist" style="border:1px solid #cfe8fb;border-radius:10px;margin-top:6px;overflow:hidden"></div>');
+        const pick = el('<div class="givelist bd-jobs" style="margin-top:8px"></div>');
         if (!spareRooms.length && !spareAreas.length) {
-          pick.appendChild(el(`<div style="padding:12px;font-size:12px;color:#5f7189">Everything here is handed out.</div>`));
+          pick.appendChild(el(`<div style="font-size:12px;color:#6f8ab0">Everything here is handed out.</div>`));
         }
-        const add = (label, tag, fn) => {
-          const r = el(`<button style="display:flex;align-items:center;gap:10px;width:100%;padding:13px 12px;`
-            + `border:0;border-top:1px solid #eaf2fb;background:#f8fbff;text-align:left;cursor:pointer"></button>`);
-          r.appendChild(el(`<div style="flex:1;min-width:0;font-size:15px;font-weight:700;color:#0369a1">${esc(label)}</div>`));
-          if (tag) r.appendChild(el(`<div style="font-size:10px;font-weight:700;color:#5f7189">${esc(tag)}</div>`));
-          r.appendChild(el(`<div style="font-size:18px;font-weight:800;color:#0284c7">＋</div>`));
-          r.onclick = fn;
-          pick.appendChild(r);
+        const add = (label, id, kind) => {
+          const b = el(`<button class="bd-job" style="border-left-color:#38bdf8;background:#14243d">`
+            + `＋ ${esc(label)}</button>`);
+          b.onclick = (e) => { e.stopPropagation(); assignPicked(kind, id, c.key); };
+          pick.appendChild(b);
         };
         spareRooms
           .sort((x, y) => (slotRank(x) - slotRank(y)) || String(x.unit).localeCompare(String(y.unit), undefined, { numeric: true }))
-          .forEach((u) => add(u.unit, UNIT_TYPES[unitType(u)].label + (unitDueToday(u) ? '' : ' · not due'), () => setUnitAssignee(u.id, c.key)));
-        spareAreas.forEach((a) => add(a.label, 'AREA', () => setAreaAssign(a.id, c.key)));
-        grp.appendChild(pick);
+          .forEach((u) => add(u.unit, u.id, 'unit'));
+        spareAreas.forEach((a) => add(a.label, a.id, 'area'));
+        col.appendChild(pick);
       }
     }
-    grid.appendChild(grp);
+    cols_.appendChild(col);
   });
   wrap.appendChild(grid);
   wrap.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin-top:12px">`
@@ -7379,7 +7501,8 @@ function servicedCard(u, isDue) {
   return card;
 }
 
-function viewRollCall() {
+function viewRollCall(opts) {
+  const embedded = !!(opts && opts.embedded);
   const s = statsBar();
   const wrap = el('<div></div>');
   const body = el('<div class="body"></div>');
@@ -7468,6 +7591,32 @@ function viewRollCall() {
     body.appendChild(al);
   }
 
+  // FIFTEEN SECTIONS DOWN ONE COLUMN IS NOT A SCREEN, IT IS AN ARCHIVE.
+  // Everything on this page earns its place once a day — the hand-out, the communal
+  // walks, who is in, what tomorrow looks like — and none of it earns being scrolled
+  // past on the way to the one thing you opened the app for. Each is a heading you can
+  // tap: shut, it is one line; open, it is exactly what it always was. What is open is
+  // remembered, so the office arranges the screen once and it stays arranged.
+  const fold = (key, title, meta, node, openByDefault) => {
+    if (!state.rcFold) state.rcFold = {};
+    const open = state.rcFold[key] === undefined ? !!openByDefault : !!state.rcFold[key];
+    const box = el('<div style="margin-bottom:8px;border:1px solid #e6ecf3;border-radius:10px;overflow:hidden;background:#ffffff"></div>');
+    const hd = el(`<button style="display:flex;align-items:center;gap:8px;width:100%;padding:13px 12px;`
+      + `border:0;background:${open ? '#f7f9fc' : '#ffffff'};text-align:left;cursor:pointer">`
+      + `<span style="font-size:12px;color:#8a99ab;width:12px">${open ? '▾' : '▸'}</span>`
+      + `<span style="flex:1;min-width:0;font-size:13px;font-weight:800;color:#243b53">${esc(title)}</span>`
+      + (meta ? `<span style="font-size:11px;font-weight:700;color:#5f7189">${esc(meta)}</span>` : '')
+      + `</button>`);
+    hd.onclick = () => { state.rcFold[key] = !open; save(); render(); };
+    box.appendChild(hd);
+    if (open) {
+      const inner = el('<div style="padding:10px 12px 12px"></div>');
+      inner.appendChild(node);
+      box.appendChild(inner);
+    }
+    body.appendChild(box);
+  };
+
   const arrIds = Object.keys(hikArrivals);
   const staffById = {};
   for (const s of (state.staff || [])) staffById[s.id] = s;
@@ -7534,7 +7683,7 @@ function viewRollCall() {
         + `<div style="font-size:11px;font-weight:700;color:#5f7189">DONE</div></div>`));
       const go = el(`<button class="freqmini" style="margin-left:auto;flex:0 0 auto;padding:10px 14px;`
         + `background:#15803d;border-color:#15803d;color:#ffffff;font-size:13px">✓ Tick off →</button>`);
-      go.onclick = () => setTab('tick');
+      go.onclick = () => setTab('board');
       sum.appendChild(go);
       box.appendChild(sum);
     }
@@ -7564,8 +7713,8 @@ function viewRollCall() {
       }
       // Tapping any room still gives the full reason for that one room.
       box.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin-top:6px">`
-        + `Tap a room above to mark it cleaned — it goes green here and on the TV. `
-        + `Press and hold for the reason it is on today.</div>`));
+        + `Rooms are ticked off on the <b>Tick off</b> tab — this screen is for deciding `
+        + `the morning.</div>`));
     }
 
     // The button that hands rooms out belongs above the list it produces.
@@ -7739,7 +7888,7 @@ function viewRollCall() {
                            : `Handed out once the morning's rooms are done — ${openNow} still open.`)
           + `</div>`));
       }
-      body.appendChild(oBox);
+      fold('offroll', 'Off the roll call', '', oBox, false);
     }
   }
 
@@ -7775,7 +7924,7 @@ function viewRollCall() {
         ndChips.appendChild(chip);
       });
       ndBox.appendChild(ndChips);
-      body.appendChild(ndBox);
+      fold('notdue', 'Not due today', String(notDue.length), ndBox, false);
     }
 
     // WHAT WAS ADDED BY HAND, AND HOW TO TAKE IT BACK OFF. A mis-tap on the list above
@@ -7800,7 +7949,7 @@ function viewRollCall() {
           aChips.appendChild(chip);
         });
         aBox.appendChild(aChips);
-        body.appendChild(aBox);
+        fold('added', 'Added to today by hand', String(added.length), aBox, true);
       }
     }
 
@@ -7830,7 +7979,7 @@ function viewRollCall() {
         offBox.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin-top:6px">`
           + `Today only. It joins the rooms above and its cleaner's column on the TV; `
           + `tomorrow it is back on the ${esc(offKinds)} tab.</div>`));
-        body.appendChild(offBox);
+        fold('offkinds', offKinds + ' — off the roll call', String(offRoll.length), offBox, false);
       }
     }
   }
@@ -7906,7 +8055,7 @@ function viewRollCall() {
       jbox.appendChild(jAdd);
       abox.appendChild(jbox);
     }
-    body.appendChild(abox);
+    fold('areas', '▦ Communal areas', areasOutstanding().length + ' to do', abox, false);
   }
 
   // THE GUEST FLATS, ON THE MORNING SCREEN, MOVED BY HAND.
@@ -7941,7 +8090,7 @@ function viewRollCall() {
         chips.appendChild(chip);
       });
       fbox.appendChild(chips);
-      body.appendChild(fbox);
+      fold('airbnb', '🏠 Airbnb', doneN + '/' + flats.length + ' done', fbox, true);
     }
   }
 
@@ -8011,17 +8160,24 @@ function viewRollCall() {
     //
     // Holding something of their own makes them their own round for the day, and then
     // they get the card: work with a name against it has to be visible somewhere.
-    const holdsNothing = (p) => !(state.servicedUnits || []).some((u) => u.assignedTo === p.id)
-      && !areasInterior().some((a) => a.assignedTo === p.id || (areaHelpers(a) || []).some((h) => h.id === p.id));
-    const namedUnderLeader = (p) => !!p && p.isCleaner && !p.isLeader && !!p.crew && holdsNothing(p)
-      && teamMembers(p.crew).some((x) => x.id !== p.id && x.isLeader && hikArrivals[x.id]);
+    // THE ROLL CALL IS A LIST OF ROUNDS, AND A ROUND IS A LEADER'S.
+    // Rooms are dealt to leaders; everybody else works a leader's round with them. So a
+    // card each for eighteen people — most of them with an empty "+ Assign a room or
+    // area…" under their name — is eighteen invitations to do the one thing the hand-out
+    // refuses to do, and fifteen screens of scrolling to reach the three that matter.
+    // Leaders get the cards. Everyone else who badged in is named in one line, so the
+    // office can still see they are here.
+    const holdsWork = (p) => (state.servicedUnits || []).some((u) => u.assignedTo === p.id)
+      || areasInterior().some((a) => a.assignedTo === p.id);
+    const namedUnderLeader = (p) => !!p && !p.isLeader;
     const assistants = arrIds.map((id) => staffById[id]).filter(namedUnderLeader);
     // Named, though. Somebody who badged in and then appears nowhere on the screen
     // reads as the door reader having missed them, which is a different problem the
     // office would go looking for.
     if (assistants.length) whoIn.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin:-8px 0 12px">`
-      + `Also in, on their leader's round: <b>${esc(assistants.map((p) => p.name.split(' ')[0]).join(', '))}</b>`
-      + ` — named on that leader's card rather than handed rooms of their own.</div>`));
+      + `Also in, working a leader's round: `
+      + `<b>${assistants.map((p) => esc(p.name.split(' ')[0]) + (holdsWork(p) ? ' (holding work)' : '')).join(', ')}</b>`
+      + ` — rooms are dealt to leaders, so they are named on their leader rather than given a round of their own.</div>`));
     arrIds
       .map((id) => ({ s: staffById[id], t: hikArrivals[id].time, out: hikArrivals[id].out, raw: hikArrivals[id].raw }))
       .filter((x) => x.s && !namedUnderLeader(x.s))
@@ -8134,10 +8290,10 @@ function viewRollCall() {
       chips.appendChild(c);
     });
     other.appendChild(chips);
-    body.appendChild(other);
+    fold('badged', 'Also badged in — not cleaners', String(hikOther.length), other, false);
   }
 
-  body.appendChild(whoIn);
+  fold('whoin', '✓ Cleaners clocked in today', String(arrIds.length), whoIn, false);
 
   // TOMORROW, ON THE ROLL CALL. The roll call is the screen the office actually
   // lives on; tomorrow was a tab away, so "is tomorrow sorted?" meant going to look.
@@ -8223,7 +8379,7 @@ function viewRollCall() {
     box.appendChild(btn);
     box.appendChild(el(`<div style="font-size:10px;color:#5f7189;margin-top:4px">`
       + `Lays it out and hands it round, then opens it so you can change anything.</div>`));
-    body.appendChild(box);
+    fold('tomorrow', 'Tomorrow', rooms.length + ' rooms', box, false);
   }
 
   wrap.appendChild(body);
@@ -10161,86 +10317,64 @@ function render() {
   const dateStr = now.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'});
   const s = statsBar();
 
-  const header = el(`<div class="header"></div>`);
-  // Back and Search, in the same place on every screen. Neither existed: you got out
-  // of a screen by working out which tab you had come from, and you found a room by
-  // knowing which tab it was on first.
-  const topbar = el(`<div class="topbar"></div>`);
-  if (_navStack.length) {
+  // ONE LINE OF CHROME. The board is the app, so everything that is not the board gets
+  // out of its way: no eyebrow, no title repeated from the tab you tapped to get here,
+  // no stats strip saying what the board says better. The day, how much is left, and
+  // the way to everything else.
+  const header = el(`<div class="header" style="padding:10px 14px"></div>`);
+  const bar = el('<div style="display:flex;align-items:center;gap:10px"></div>');
+  if (_navStack.length && state.tab !== 'board') {
     const back = el(`<button class="tb-btn">‹ Back</button>`);
     back.onclick = goBack;
-    topbar.appendChild(back);
+    bar.appendChild(back);
   }
-  topbar.appendChild(el(`<div style="flex:1"></div>`));
-  const searchBtn = el(`<button class="tb-btn">⌕ Search</button>`);
-  searchBtn.onclick = openSearch;
-  topbar.appendChild(searchBtn);
-  header.appendChild(topbar);
-  // WHICH VERSION AM I LOOKING AT? Every report today of "it still does the old thing"
-  // could have been either a broken fix or a browser two deploys behind, and there was
-  // no way to tell them apart from the screen. document.lastModified is the file's own
-  // date, so the stamp cannot lie about which build is running.
-  const built = (() => {
-    try {
-      const d = new Date(document.lastModified);
-      return isNaN(d) ? '' : d.toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
-    } catch (e) { return ''; }
-  })();
-  header.appendChild(el(`<div class="h-eyebrow">66-UNIT BUILDING · 11 FLOORS`
-    + (built ? ` · BUILD ${esc(built)}` : '') + `</div>`));
   const ROOMS_TITLE = { all: 'All Rooms', airbnb: 'Airbnb Rooms', office: 'Office Cleaning', building: 'Building Cleaning' };
-  const titles = { more:'More', rollcall:'Morning Roll Call', building:'Floors & Common Areas', exterior:'Exterior', history:'Cleaning History', team:'Team', settings:'Settings', plan:'Plan a Day', rooms: ROOMS_TITLE[roomsFilter()], tonight:'Tonight’s Round', tick:'Tick Off' };
-  // A tab with no view renders an empty screen, so never trust it blindly:
-  // fall back to Roll Call rather than showing a header over nothing.
-  if (!titles[state.tab]) state.tab = 'rollcall';
-  // Screens made of jobs get the whole monitor; screens made of sentences keep the
-  // reading-width cap. Set here rather than per view, so it can never be left behind
-  // on the next screen.
-  document.body.classList.toggle('wide', state.tab === 'tick');
-  header.appendChild(el(`<div class="h-title">${titles[state.tab]}</div>`));
-  // ON THE PLAN SCREEN, SAY WHICH DAY IS BEING PLANNED.
-  // It opens on TOMORROW but the header printed today's date, so the office planned
-  // what it believed was today, the work was filed against tomorrow, and today's roll
-  // call came up empty. Nothing was wrong with the plan or the sync — the screen was
-  // naming the wrong day.
+  const titles = { board:'', setup:'Setup', more:'Setup', today:'', rollcall:'Morning set-up', tick:'',
+    building:'Floors & Common Areas', exterior:'Exterior', history:'Cleaning History', team:'Team',
+    settings:'Settings', plan:'Plan a Day', rooms: ROOMS_TITLE[roomsFilter()], tonight:'Tonight’s Round' };
+  // A tab with no view renders an empty screen, so never trust it blindly.
+  if (titles[state.tab] === undefined) state.tab = 'board';
+  const onBoard = state.tab === 'board';
+  document.body.classList.toggle('wide', onBoard);
+
+  if (onBoard) {
+    const cols = tvColumns();
+    const c = countJobs(cols);
+    bar.appendChild(el(`<div style="min-width:0"><div style="font-size:15px;font-weight:800;color:#0f172a">`
+      + `${esc(dateStr)}</div>`
+      + `<div style="font-size:12px;font-weight:700;color:#5f7189">`
+      + `<b style="color:${c.all - c.done ? '#b45309' : '#15803d'}">${c.all - c.done} left</b>`
+      + ` · ${c.done} done</div></div>`));
+  } else {
+    bar.appendChild(el(`<div style="min-width:0"><div style="font-size:15px;font-weight:800;color:#0f172a">`
+      + `${esc(titles[state.tab] || dateStr)}</div>`
+      + `<div style="font-size:12px;font-weight:700;color:#5f7189">${esc(dateStr)}</div></div>`));
+  }
+  bar.appendChild(el(`<div style="flex:1"></div>`));
+  const searchBtn = el(`<button class="tb-btn">⌕</button>`);
+  searchBtn.onclick = openSearch;
+  bar.appendChild(searchBtn);
+  // EVERYTHING THAT IS NOT TODAY'S WORK, IN ONE PLACE. Rooms, schedules, the team, the
+  // history, the one-off jobs, the settings: all of it is used once a day at most, and
+  // all of it was on the main screen or a tab away from it, competing with the round.
+  const menuBtn = el(`<button class="tb-btn" style="font-size:16px;padding:6px 12px">☰</button>`);
+  menuBtn.onclick = () => { _menuOpen = true; render(); };
+  bar.appendChild(menuBtn);
+  header.appendChild(bar);
+  // ON THE PLAN SCREEN, SAY WHICH DAY IS BEING PLANNED. It opens on TOMORROW while the
+  // header printed today's date, so the office planned what it believed was today, the
+  // work was filed against tomorrow, and today's board came up empty. Nothing was wrong
+  // with the plan or the sync — the screen was naming the wrong day.
   if (state.tab === 'plan') {
     const pd = curPlanDay();
     const pretty = new Date(pd + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
-    // Same work-day notion the Plan screen and Roll Call use, so the header cannot
-    // call a day "not today" that the tab below it is treating as today.
     const isToday = pd === workToday() || pd === todayKey();
     const rel = isToday ? 'TODAY' : pd === tomorrowKey() ? 'TOMORROW' : null;
-    header.appendChild(el(`<div class="h-date" style="font-size:13px;font-weight:800;color:${isToday ? '#15803d' : '#b45309'}">`
+    header.appendChild(el(`<div class="h-date" style="font-size:13px;font-weight:800;margin-top:6px;`
+      + `color:${isToday ? '#15803d' : '#b45309'}">`
       + `Planning ${rel ? rel + ' · ' : ''}${esc(pretty)}</div>`));
     if (!isToday) header.appendChild(el(`<div class="h-date" style="color:#b45309">`
-      + `Not today — these rooms appear on the roll call on ${esc(pretty.split(',')[0])}.</div>`));
-  } else {
-    header.appendChild(el(`<div class="h-date">${dateStr}</div>`));
-  }
-  const typeTab = state.tab === 'rooms' && roomsFilter() !== 'all' ? roomsFilter() : null;
-  if (typeTab) {
-    const inType = state.servicedUnits.filter(u => unitType(u) === typeTab);
-    // Today's list = rooms due now + rooms already cleaned today, so the count
-    // doesn't shrink as the crew works through it ("3 of 12 done", not "9 due").
-    const todayList = inType.filter(onTodaysList);
-    const doneCount = todayList.filter(cleanedToday).length;
-    const strip = el(`<div class="stats"></div>`);
-    strip.appendChild(el(`<div class="stat"><div class="lbl">DUE TODAY</div><div class="val">${todayList.length}</div></div>`));
-    strip.appendChild(el(`<div class="stat"><div class="lbl">CLEANED</div><div class="val">${doneCount}</div></div>`));
-    strip.appendChild(el(`<div class="stat"><div class="lbl">TOTAL</div><div class="val">${inType.length}</div></div>`));
-    header.appendChild(strip);
-  }
-  if (state.tab === 'rollcall') {
-    const clockedIn = Object.keys(hikArrivals).length;
-    // Of TODAY's rooms, not of every room in the building. "14/33" invited you to
-    // reconcile the day against a number that has nothing to do with it.
-    const today = todaysRoomList();
-    const assigned = today.filter((u) => u.assignedTo).length;
-    const totalRooms = today.length;
-    const strip = el(`<div class="stats"></div>`);
-    strip.appendChild(el(`<div class="stat"><div class="lbl">CLOCKED IN</div><div class="val">${clockedIn}</div></div>`));
-    strip.appendChild(el(`<div class="stat"><div class="lbl">ROOMS ASSIGNED</div><div class="val">${assigned}/${totalRooms}</div></div>`));
-    header.appendChild(strip);
+      + `Not today — these rooms appear on the board on ${esc(pretty.split(',')[0])}.</div>`));
   }
   app.appendChild(header);
   // Said once, at the top, and it stays until it is taken. One tap: the office should
@@ -10257,12 +10391,12 @@ function render() {
     app.appendChild(bar);
   }
 
-  if (state.tab==='more') app.appendChild(viewMore());
-  else if (state.tab==='tick') app.appendChild(viewTick());
+  if (state.tab==='more' || state.tab==='setup') app.appendChild(viewMore());
+  else if (state.tab==='board' || state.tab==='today' || state.tab==='tick') app.appendChild(viewTick());
+  else if (state.tab==='rollcall') app.appendChild(viewRollCall());
   else if (state.tab==='plan') app.appendChild(viewPlan());
   else if (state.tab==='tonight') app.appendChild(viewTonight());
   else if (state.tab==='rooms') app.appendChild(viewRoomsHub());
-  else if (state.tab==='rollcall') app.appendChild(viewRollCall());
   else if (state.tab==='building') app.appendChild(viewBuilding());
   else if (state.tab==='exterior') app.appendChild(viewExterior());
   else if (state.tab==='history') app.appendChild(viewHistory());
@@ -10332,30 +10466,8 @@ function render() {
   if (_backdate) app.appendChild(backdateSheet());
   if (_search) app.appendChild(searchSheet());
 
-  const nav = el(`<div class="nav"></div>`);
-  // The bar carries the four screens the day actually runs on. Three of the old five
-  // were the same room list filtered three ways, which spent most of the bar on one
-  // thing and pushed Plan and Team — used every day — behind "More".
-  const tabs = [
-    { id:'rollcall', label:'Roll Call', ico:'☀' },
-    // SECOND, NOT FIFTH. Ticking work off is the thing done most often and in the worst
-    // conditions — standing up, one hand, in a corridor — so it gets a thumb-reachable
-    // place of its own. Team moves in with the rest of the set-up under More, where a
-    // screen consulted once a week belongs.
-    { id:'tick', label:'Tick off', ico:'✓' },
-    { id:'rooms', label:'Rooms', ico:'▤' },
-    { id:'plan', label:'Plan', ico:'🗓' },
-    { id:'more', label:'More', ico:'⋯' },
-  ];
-  // "More" stays highlighted while you're on any of its sub-pages.
-  const moreIds = ['more','tonight','building','exterior','history','settings','team'];
-  tabs.forEach(t => {
-    const isActive = t.id === 'more' ? moreIds.includes(state.tab) : state.tab === t.id;
-    const b = el(`<button class="${isActive?'active':''}"><div class="ico">${t.ico}</div><div>${t.label}</div></button>`);
-    b.onclick = () => setTab(t.id);
-    nav.appendChild(b);
-  });
-  app.appendChild(nav);
+  // NO TAB BAR. There is one screen; everything else is behind ☰.
+  if (_menuOpen) app.appendChild(menuSheet());
   // The sticky search bar has to sit exactly under the header, and the header's
   // height changes with the screen and with which strips it is showing — so it is
   // measured rather than guessed.

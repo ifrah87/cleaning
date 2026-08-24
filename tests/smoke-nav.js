@@ -77,39 +77,48 @@ for (const [label,vp] of [['PHONE',{width:420,height:900}],['DESKTOP',{width:144
  const page=await ctx.newPage();
  const errs=[];page.on('console',x=>{if(x.type()==='error')errs.push(x.text())});page.on('pageerror',e=>errs.push('pageerror: '+e.message));
  await page.goto(`http://127.0.0.1:${port}/index.html`,{waitUntil:'domcontentloaded'});
- await page.waitForSelector('.nav',{timeout:20000});
+ await page.waitForSelector('.header',{timeout:20000});
  await page.waitForTimeout(2500);
  console.log(`\n\x1b[1m${label}\x1b[0m`);
- const navLabels=await page.locator('.nav button').allTextContents();
- check('bottom bar is Roll Call / Tick off / Rooms / Plan / More',
-   ['Roll Call','Tick off','Rooms','Plan','More'].every(l=>navLabels.join('|').includes(l)),navLabels.join(' | '));
- // every screen renders
- for (const [tab,idx] of [['Tick off',1],['Rooms',2],['Plan',3],['More',4]]) {
-   await page.locator('.nav button').nth(idx).click(); await page.waitForTimeout(500);
-   const t=await page.locator('.h-title').textContent();
-   check(`${tab} renders (title: ${t})`, !!t);
+ // ONE SCREEN, AND A MENU FOR EVERYTHING ELSE. There is no tab bar: the app opens on the
+ // board — the same board that is on the wall — and Rooms, the morning set-up, the team,
+ // the history and the settings are all behind ☰ in the corner.
+ check('there is no tab bar', await page.locator('.nav').count()===0, 'a .nav is still being rendered');
+ check('the app opens on the board', await page.evaluate(()=>state.tab)==='board' && await page.locator('.bd-col').count()>0,
+   'tab: '+await page.evaluate(()=>state.tab));
+ check('the board carries a column per cleaner', await page.locator('.bd-col .bd-who').count()>0);
+ check('and coloured chips on it', await page.locator('.bd-job').count()>0, 'chips: '+await page.locator('.bd-job').count());
+
+ // the menu, and every screen behind it
+ await page.locator('.tb-btn',{hasText:'☰'}).first().click(); await page.waitForTimeout(400);
+ const menu=await page.locator('body').textContent();
+ check('☰ opens everything else', /Everything else/.test(menu), menu.slice(0,120));
+ for (const name of ['Rooms & schedules','Morning set-up','Team','Cleaning history','Settings']) {
+   check(`the menu offers ${name}`, menu.includes(name));
  }
+ await page.locator('button',{hasText:'Rooms & schedules'}).first().click(); await page.waitForTimeout(600);
+ check('picking one goes there', await page.evaluate(()=>state.tab)==='rooms', await page.evaluate(()=>state.tab));
+
  // room segments
- await page.locator('.nav button').nth(2).click(); await page.waitForTimeout(400);
  const segs=await page.locator('.segbtn').allTextContents();
- check('Rooms tab has All/Airbnb/Offices/Buildings filter', segs.length===4, segs.join(' | '));
+ check('Rooms has All/Airbnb/Offices/Buildings filter', segs.length===4, segs.join(' | '));
  await page.locator('.segbtn').nth(1).click(); await page.waitForTimeout(400);
- check('switching filter changes the title', (await page.locator('.h-title').textContent()).includes('Airbnb'), await page.locator('.h-title').textContent());
+ check('switching filter changes the title', (await page.locator('.h-title, .header').first().textContent()).includes('Airbnb'),
+   await page.locator('.header').first().textContent());
  // back
  check('Back button is offered', await page.locator('.tb-btn', {hasText:'Back'}).count()>0);
  await page.locator('.tb-btn',{hasText:'Back'}).first().click(); await page.waitForTimeout(400);
  check('Back goes to the previous screen', true);
  // search
- await page.locator('.tb-btn',{hasText:'Search'}).first().click(); await page.waitForTimeout(400);
+ await page.locator('.tb-btn',{hasText:'⌕'}).first().click(); await page.waitForTimeout(400);
  check('search sheet opens', await page.locator('.sheet').count()>0);
  await page.locator('.sheet input').fill('402'); await page.waitForTimeout(400);
  const hits=await page.locator('.sr-row').allTextContents();
  check('search finds unit 402 from any screen', hits.join(' ').includes('402'), hits.join(' | '));
  await page.locator('.sr-row').first().click(); await page.waitForTimeout(600);
- check('tapping a hit lands on the room list', (await page.locator('.h-title').textContent()).length>0, await page.locator('.h-title').textContent());
+ check('tapping a hit lands somewhere real', (await page.evaluate(()=>state.tab)).length>0, await page.evaluate(()=>state.tab));
  // floors
- await page.locator('.nav button').nth(4).click(); await page.waitForTimeout(500);
- await page.locator('.su-card',{hasText:'Team'}).first().click(); await page.waitForTimeout(600);
+ await page.evaluate(()=>setTab('team')); await page.waitForTimeout(600);
  const body=await page.locator('.body').first().textContent();
  check('Team shows the floor-by-floor allocation', body.includes('Who cleans which floor'), body.slice(0,160));
  const floorRows=await page.locator('.sr-row').count();
@@ -129,8 +138,8 @@ for (const [label,vp] of [['PHONE',{width:420,height:900}],['DESKTOP',{width:144
    .map(u=>{ for(let i=1;i<=7;i+=1){ const d=shiftDay(u.lastCleaned,i); if(u.days.indexOf(dowOf(d))>=0) return {unit:u.unit,gap:i}; } return {unit:u.unit,gap:null}; }));
  check('the set it picks keeps the room two days apart', gaps.length>0&&gaps.every(g=>g.gap===2), JSON.stringify(gaps));
  // The search box has to stay reachable once the list is scrolled — that is the
- // whole point of pinning it under the header.
- await page.locator('.nav button').nth(2).click(); await page.waitForTimeout(500);
+ // whole point of pinning it under the header. This is the Rooms screen, behind ☰.
+ await page.evaluate(()=>setTab('rooms')); await page.waitForTimeout(600);
  await page.evaluate(()=>window.scrollTo(0,1400)); await page.waitForTimeout(400);
  const boxSeen=await page.locator('.stickbar input').first().isVisible().catch(()=>false);
  const boxBox=await page.locator('.stickbar input').first().boundingBox().catch(()=>null);
@@ -223,11 +232,11 @@ for (const [label,vp] of [['PHONE',{width:420,height:900}],['DESKTOP',{width:144
    `roll call only: ${JSON.stringify(agree.onlyRC)} · plan only: ${JSON.stringify(agree.onlyPlan)}`);
  check('and the same number of them', agree.rc.length===agree.pl.length,
    `${agree.rc.length} vs ${agree.pl.length}`);
- // Plan a Day opens on the day the roll call is showing, not on tomorrow.
- await page.locator('.nav button').nth(3).click(); await page.waitForTimeout(700);
+ // Plan a Day opens on the day the board is showing, not on tomorrow.
+ await page.evaluate(()=>setTab('plan')); await page.waitForTimeout(700);
  const planHdr=await page.locator('.h-date').first().textContent();
  check('Plan a Day opens on today', /TODAY/.test(planHdr), planHdr);
- await page.locator('.nav button').nth(0).click(); await page.waitForTimeout(500);
+ await page.evaluate(()=>setTab('board')); await page.waitForTimeout(500);
 
  // A DAILY ROOM COMES UP EVERY DAY, MARKED OR NOT.
  const dailyBeat=await page.evaluate(()=>{
@@ -269,7 +278,7 @@ for (const [label,vp] of [['PHONE',{width:420,height:900}],['DESKTOP',{width:144
    pinnedDays.every(x=>x.split(':')[1].indexOf('5')<0), pinnedDays.join(' '));
 
  // --- the whole point: the board re-deals as more people badge in ---
- await page.locator('.nav button').nth(0).click(); await page.waitForTimeout(600);
+ await page.evaluate(()=>setTab('board')); await page.waitForTimeout(600);
  const boardOf=()=>page.evaluate(()=>{const o={};(state.servicedUnits||[]).forEach(u=>{if(u.assignedTo)o[u.unit]=u.assignedTo});return o});
  const first=await boardOf();
  // Only the leader is in. Everything the plan did not already name goes to them —
@@ -296,6 +305,10 @@ for (const [label,vp] of [['PHONE',{width:420,height:900}],['DESKTOP',{width:144
    }), 'A1 does not sort after 101');
  // The Friday case: the add list must offer people the rota says are OFF, in their
  // own group, as well as the ones who are simply not in yet.
+ // Who's in folds shut by default now — fifteen sections down one column is an archive,
+ // not a screen — so open it the way a thumb would before reading what is inside.
+ await page.evaluate(()=>{ setTab('rollcall'); state.rcFold = Object.assign({}, state.rcFold, {whoin:true}); render(); });
+ await page.waitForTimeout(700);
  const groups=await page.evaluate(()=>{
    const sels=[...document.querySelectorAll('select.area-select')];
    const s=sels.find(x=>x.textContent.includes('didn’t clock in'));
@@ -319,7 +332,10 @@ for (const [label,vp] of [['PHONE',{width:420,height:900}],['DESKTOP',{width:144
 
  // --- somebody who is down as off, but came in anyway ---
  // Hodan leads Team B and Zahra is the assistant on it. Until Zahra is in, the
- // leader is not paired with anybody and must not claim to be.
+ // leader is not paired with anybody and must not claim to be. The person cards live
+ // on the morning set-up now, behind ☰, with who's-in folded shut.
+ await page.evaluate(()=>{ setTab('rollcall'); state.rcFold=Object.assign({},state.rcFold,{whoin:true}); render(); });
+ await page.waitForTimeout(700);
  const soloCard=await page.locator('.person', {hasText:'Hodan Omar'}).first().textContent();
  check('a leader with nobody in alongside them is not paired up',
    !/with Zahra/.test(soloCard), soloCard.slice(0,80));
@@ -336,7 +352,7 @@ for (const [label,vp] of [['PHONE',{width:420,height:900}],['DESKTOP',{width:144
  check('an assistant gets no card of their own', zahraShown===0, 'cards: '+zahraShown);
  const alsoIn=await page.locator('.body').first().textContent();
  check('but is named as in, so nobody thinks the reader missed them',
-   /on their leader.s round/i.test(alsoIn)&&/Zahra/.test(alsoIn), 'no "also in" line');
+   /working a leader.s round/i.test(alsoIn)&&/Zahra/.test(alsoIn), 'no "also in" line');
  const pairCard=await page.locator('.person', {hasText:'Hodan Omar'}).first().textContent();
  check('the assistant\'s name comes up next to their leader',
    /with Zahra/.test(pairCard), pairCard.slice(0,110));
@@ -374,7 +390,8 @@ for (const [label,vp] of [['PHONE',{width:420,height:900}],['DESKTOP',{width:144
    }
    state.plans[day]=plan; save();
  });
- await page.locator('.nav button').nth(3).click(); await page.waitForTimeout(700);
+ // The hand-out sheet is on the Plan screen, which is behind ☰.
+ await page.evaluate(()=>setTab('plan')); await page.waitForTimeout(700);
  await page.locator('button', {hasText:'Hand-out sheet'}).first().click(); await page.waitForTimeout(700);
  check('the hand-out sheet opens', await page.locator('.sheet-paper').count()>0);
  const rowN=await page.locator('.sp-row').count();

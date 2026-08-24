@@ -77,10 +77,19 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
   const errs = [];
   page.on('pageerror', (e) => errs.push('pageerror: ' + e.message));
   await page.goto(`http://127.0.0.1:${port}/index.html`, { waitUntil: 'domcontentloaded' });
-  await page.waitForSelector('.nav', { timeout: 20000 });
+  await page.waitForSelector('.header', { timeout: 20000 });
   await page.waitForTimeout(3000);
 
   console.log('\n\x1b[1mA one-off job belongs to its day\x1b[0m');
+
+  // The morning set-up lives behind ☰ now — the board is the screen you land on.
+  await page.evaluate(() => {
+    setTab('rollcall');
+    // The one-off form sits with the communal walks, which fold shut by default.
+    state.rcFold = Object.assign({}, state.rcFold, { areas: true });
+    render();
+  });
+  await page.waitForTimeout(700);
 
   const start = await page.evaluate(() => areasInterior().map((a) => a.label));
   check('yesterday’s unfinished job is still on the board', start.includes('Move the pallets'), start.join(', '));
