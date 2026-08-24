@@ -216,6 +216,51 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
   check('a guest flat is dealt to a cleaner like any other room', shape.airIsDealt === true, JSON.stringify(shape));
   check('and sits at the foot of the column, after the morning round', shape.airIsLast === true, JSON.stringify(shape));
 
+  // --- a button per kind of work, and the group's frequency behind it -------------
+  await page.locator('.nav button', { hasText: 'Tick off' }).first().click();
+  await page.waitForTimeout(600);
+  const segs = await page.locator('.body button.freqmini').allTextContents();
+  check('there is a button for each kind of work',
+    segs.includes('All') && segs.some((x) => /Airbnb/i.test(x)) && segs.some((x) => /Communal/i.test(x)),
+    segs.slice(0, 8).join(' | '));
+
+  await page.locator('.body button.freqmini', { hasText: /Airbnb/i }).first().click();
+  await page.waitForTimeout(700);
+  const airOnly = await page.evaluate(() => {
+    const shown = tvColumns().flatMap((c) => c.jobs);
+    return { filter: state.tickFilter, air: shown.filter((j) => j.air).length };
+  });
+  check('tapping it holds one kind of work at a time', airOnly.filter === 'airbnb', JSON.stringify(airOnly));
+  const airBody = await page.locator('.body').first().textContent();
+  check('and offers that group’s frequency from the same screen',
+    /how often/i.test(airBody) && /Every other day/.test(airBody), airBody.slice(0, 180));
+  check('a morning room is not in the list while Airbnb is showing',
+    !/\b101\b/.test(airBody), airBody.slice(0, 200));
+
+  // --- handing a leader more work, from the board ---------------------------------
+  await page.locator('.body button.freqmini', { hasText: /^All$/ }).first().click();
+  await page.waitForTimeout(600);
+  await page.evaluate(() => {
+    // Something spare to give: a room nobody holds.
+    state.servicedUnits.push({ id: 'suSpare', unit: '909', type: 'building', freq: 'daily', assignedTo: null });
+    save(); render();
+  });
+  await page.waitForTimeout(500);
+  await page.locator('button', { hasText: /Give .* more work/ }).first().click();
+  await page.waitForTimeout(600);
+  const offered = await page.locator('.body').first().textContent();
+  check('the board offers what is still spare', /909/.test(offered), 'no spare list');
+  // Scoped to the "give them more work" list: 909 is also sitting in NOBODY YET, where
+  // a tap would tick it clean rather than hand it to anybody.
+  await page.locator('.givelist button', { has: page.locator('div', { hasText: /^909$/ }) }).first().click();
+  await page.waitForTimeout(700);
+  const given = await page.evaluate(() => {
+    const u = state.servicedUnits.find((x) => x.unit === '909');
+    return { to: u.assignedTo, onBoard: tvColumns().some((c) => c.key === u.assignedTo && c.jobs.some((j) => j.label === '909')) };
+  });
+  check('tapping one hands it to that leader', !!given.to, JSON.stringify(given));
+  check('and it lands in their column', given.onBoard === true, JSON.stringify(given));
+
   check('no console errors', errs.length === 0, errs.join('\n       '));
 
   await browser.close(); s.close();
