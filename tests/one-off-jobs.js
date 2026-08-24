@@ -121,6 +121,18 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
   });
   check('a finished one-off leaves the board the next day', !gone.includes('Electrician'), gone.join(', '));
   check('a standing area is untouched by any of it', gone.includes('Corridors'), gone.join(', '));
+  // A PAUSED ROOM IS OFF THE BOARD — 906 went on a long lease and stayed in a column.
+  const paused = await page.evaluate(() => {
+    const u = state.servicedUnits.find((x) => x.unit === '101');
+    const before = todaysRoomList().some((x) => x.unit === '101');
+    u.paused = true; save();
+    return { before, after: todaysRoomList().some((x) => x.unit === '101'),
+             onBoard: tvColumns().flatMap((c) => c.jobs).some((j) => j.label === '101') };
+  });
+  check('a room is on today’s list to start with', paused.before === true, JSON.stringify(paused));
+  check('pausing it takes it off today’s list', paused.after === false, JSON.stringify(paused));
+  check('and out of its cleaner’s column on the board', paused.onBoard === false, JSON.stringify(paused));
+
   check('no console errors', errs.length === 0, errs.join('\n       '));
 
   await browser.close(); s.close();

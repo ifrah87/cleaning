@@ -4233,7 +4233,12 @@ function showDueReason(u) {
 // can no longer take a due room OFF the day — that is what the room's own schedule,
 // pause, or hold is for.
 function todaysRoomList() {
-  const due = (state.servicedUnits || []).filter((u) => onRollCall(u) && onTodaysList(u));
+  // A PAUSED ROOM IS NOT ON TODAY. Every other list in the app says so — the levelling
+  // pass, the day-pinning, the plan, the off-roll-call page all skip a paused room —
+  // and this one, which feeds the board, the roll call, the ticking screen AND the
+  // hand-out, did not. So pausing a room did nothing anybody could see: 906 went on a
+  // long lease, was taken off the rota, and carried on sitting in Abdiwakiil's column.
+  const due = (state.servicedUnits || []).filter((u) => onRollCall(u) && !u.paused && onTodaysList(u));
   const planned = plannedRoomsToday();
   if (!planned) return due;
   const seen = new Set(due.map((u) => u.id));
