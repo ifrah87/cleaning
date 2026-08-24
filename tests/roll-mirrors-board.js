@@ -114,6 +114,8 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
 
   // More than one person on a communal area.
   const shared = await page.evaluate(() => {
+    // The picker is folded away until asked for — open it the way a thumb would.
+    _areaWithOpen = 'corridors';
     toggleAreaHelper('corridors', 'p2');
     const job = tvColumns().flatMap((c) => c.jobs).find((j) => String(j.label).startsWith('Corridors'));
     const a = state.areas.find((x) => x.id === 'corridors');

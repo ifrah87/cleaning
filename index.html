@@ -164,6 +164,19 @@
   .fl-btn.on { background: #0284c7; border-color: #0284c7; color: #fff; }
   .fl-btn.taken { border-style: dashed; color: #b45309; }
 
+  /* A LIST OF JOBS IS NOT PROSE, SO IT DOES NOT WANT A COLUMN OF TEXT.
+     On a phone this is one column and reads exactly as it did. On a monitor the same
+     markup fills the width in as many columns as fit, which is the difference between
+     seeing this morning at a glance and scrolling thirty-six rows to find one flat.
+     A column width rather than a breakpoint: the number of them follows the window,
+     including the half-width one somebody has the board open in.
+     Multi-column rather than a grid, because a grid lines its rows up — so one long
+     column (ten guest flats nobody has been given) leaves a band of white space beside
+     every short one. Columns pack instead, which is what a board should do. */
+  .jobcols { columns: 260px; column-gap: 12px; }
+  .jobcols > div { break-inside: avoid; -webkit-column-break-inside: avoid;
+                   display: inline-block; width: 100%; margin: 0 0 12px; }
+
   .body { padding: 16px; }
 
   /* Roll call */
@@ -393,6 +406,13 @@
     body:not(.tv) .nav button { padding: 8px 4px 9px; font-size: 11px; }
     body:not(.tv) .nav .ico { font-size: 16px; }
     body:not(.tv) .sheet { max-width: 900px; margin: auto auto 0; width: 100%; }
+    /* ...EXCEPT ON A SCREEN THAT IS A BOARD. Ticking off is the one thing done from a
+       desk as much as from a corridor, and 900px of it on a monitor is a single file of
+       rows with two thirds of the screen empty beside them. The reading-width cap is
+       for screens made of sentences; this one is made of jobs. */
+    body.wide:not(.tv) #app,
+    body.wide:not(.tv) .nav,
+    body.wide:not(.tv) .sheet { max-width: 1400px; }
   }
 
   /* ---------------------------------------------------------------------------
@@ -4327,6 +4347,7 @@ async function runBulkMarkDone(rooms, areas) {
 // One card for a communal area wherever it needs doing, so an area can't read as
 // done in one place and open in another. presentOnly limits the names to whoever
 // clocked in — right for Roll Call, wrong for the Buildings tab.
+let _areaWithOpen = null;      // which area is showing its "also on it" picker
 function areaWorkCard(a, opts) {
   opts = opts || {};
   const presentOnly = !!opts.presentOnly;
@@ -4391,18 +4412,35 @@ function areaWorkCard(a, opts) {
   // everybody else walking it with them. Only offered once somebody is answerable —
   // "also on it" means nothing until there is an it to be on.
   if (a.assignedTo) {
+    // FOLDED AWAY UNTIL IT IS WANTED. Every leader as a chip, under every area, is
+    // seven names times seven areas of standing noise on a screen the office reads at
+    // speed — and the answer is "nobody else" for most areas most days. So it says who
+    // is on it in a line of plain text, and the names to tap appear when you ask.
     const withRow = el(`<div style="display:flex;flex-wrap:wrap;gap:5px;padding:0 9px 8px 40px;align-items:center"></div>`);
-    withRow.appendChild(el(`<div style="font-size:10px;color:#5f7189;font-weight:700">Also on it:</div>`));
     const others = pool.filter((p) => p.id !== a.assignedTo);
     const chosen = Array.isArray(a.assignedWith) ? a.assignedWith : [];
-    others.forEach((p) => {
-      const on = chosen.indexOf(p.id) >= 0;
-      const b = el(`<button class="freqmini ${on ? 'on' : ''}" style="flex:0 0 auto;padding:5px 9px;font-size:10px">`
-        + `${on ? '✓ ' : ''}${esc(p.name.split(' ')[0])}</button>`);
-      b.onclick = () => toggleAreaHelper(a.id, p.id);
-      withRow.appendChild(b);
-    });
-    if (!others.length) withRow.appendChild(el(`<div style="font-size:10px;color:#8a99ab">nobody else in</div>`));
+    const open = _areaWithOpen === a.id;
+    if (!open) {
+      const names = areaHelpers(a).map((p) => p.name.split(' ')[0]);
+      const add = el(`<button class="freqmini" style="flex:0 0 auto;padding:5px 9px;font-size:10px;`
+        + (names.length ? 'border-color:#0284c7;color:#0369a1' : '') + `">`
+        + (names.length ? `＋ with ${esc(names.join(', '))}` : '＋ someone else') + `</button>`);
+      add.onclick = () => { _areaWithOpen = a.id; render(); };
+      withRow.appendChild(add);
+    } else {
+      withRow.appendChild(el(`<div style="font-size:10px;color:#5f7189;font-weight:700">Also on it:</div>`));
+      others.forEach((p) => {
+        const on = chosen.indexOf(p.id) >= 0;
+        const b = el(`<button class="freqmini ${on ? 'on' : ''}" style="flex:0 0 auto;padding:5px 9px;font-size:10px">`
+          + `${on ? '✓ ' : ''}${esc(p.name.split(' ')[0])}</button>`);
+        b.onclick = () => toggleAreaHelper(a.id, p.id);
+        withRow.appendChild(b);
+      });
+      if (!others.length) withRow.appendChild(el(`<div style="font-size:10px;color:#8a99ab">nobody else in</div>`));
+      const shut = el(`<button class="freqmini" style="flex:0 0 auto;padding:5px 9px;font-size:10px">Done</button>`);
+      shut.onclick = () => { _areaWithOpen = null; render(); };
+      withRow.appendChild(shut);
+    }
     item.appendChild(withRow);
   }
 
@@ -6796,9 +6834,10 @@ function viewTick() {
   const areaById = {};
   (state.areas || []).forEach((a) => { areaById[a.id] = a; });
 
+  const grid = el('<div class="jobcols"></div>');
   cols.forEach((c) => {
     if (!c.jobs.length) return;                 // nothing to tick is nothing to show here
-    const grp = el('<div style="margin-bottom:16px"></div>');
+    const grp = el('<div></div>');
     const cDone = c.jobs.filter((j) => j.done).length;
     const head = el('<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:6px"></div>');
     head.appendChild(el(`<div style="font-size:12px;font-weight:800;letter-spacing:0.04em;`
@@ -6835,9 +6874,10 @@ function viewTick() {
       list.appendChild(row);
     });
     grp.appendChild(list);
-    wrap.appendChild(grp);
+    grid.appendChild(grp);
   });
-  wrap.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin-top:4px">`
+  wrap.appendChild(grid);
+  wrap.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin-top:12px">`
     + `Tap a row to mark it clean, tap it again to undo. The TV follows within a minute.</div>`));
   return wrap;
 }
@@ -7293,7 +7333,7 @@ function viewRollCall() {
     // Both now come off tvColumns(), so they cannot disagree about who has what — the
     // order, the grouping and the jobs are one calculation with two renderings. The
     // difference that remains is the one that should: this one you can tap.
-    const board = el('<div></div>');
+    const board = el('<div class="jobcols"></div>');
     const unitById = {};
     (state.servicedUnits || []).forEach((x) => { unitById[x.id] = x; });
     const areaById = {};
@@ -9861,6 +9901,10 @@ function render() {
   // A tab with no view renders an empty screen, so never trust it blindly:
   // fall back to Roll Call rather than showing a header over nothing.
   if (!titles[state.tab]) state.tab = 'rollcall';
+  // Screens made of jobs get the whole monitor; screens made of sentences keep the
+  // reading-width cap. Set here rather than per view, so it can never be left behind
+  // on the next screen.
+  document.body.classList.toggle('wide', state.tab === 'tick');
   header.appendChild(el(`<div class="h-title">${titles[state.tab]}</div>`));
   // ON THE PLAN SCREEN, SAY WHICH DAY IS BEING PLANNED.
   // It opens on TOMORROW but the header printed today's date, so the office planned
