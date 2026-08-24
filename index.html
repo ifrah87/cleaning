@@ -935,6 +935,27 @@ const heldBack = (u, day) => !!(u.holdUntil && String(day) < String(u.holdUntil)
 // Nothing is ever skipped to tidy the schedule. It lapses the moment it is done.
 const extraCleanDue = (u, day) => !!(u.alsoCleanOn && String(u.alsoCleanOn) === String(day)
   && String(lastCleanDate(u) || '') !== String(day));
+// A ROOM ON TODAY'S BOARD IS NOT THE SCHEDULE'S TO WITHDRAW.
+// The week levels itself and the day-pinning runs on its own, and both of them move
+// rooms between the two weekday patterns — which decides, among other things, whether
+// a room is due TODAY. They run when the first phone opens the app, which is not first
+// thing: on Monday 24 Aug the board went up at 06:09 with 401 and 204 on it, somebody
+// opened the app at 07:24, eight every-other-day rooms were moved onto Sun/Tue/Thu, and
+// those two vanished off a board the crew were already working — assigned, in a named
+// column, in front of everyone. From the floor that is indistinguishable from the app
+// losing the room, and it is the third time the office has reported rooms "changing on
+// the board".
+//
+// So a day-change may decide every day EXCEPT the one being worked. If the room was due
+// today before the change and would not be after it, it is given today outright — the
+// one-off extra clean the schedule already understands — and the new pattern governs
+// from tomorrow. The week still levels; nothing is ever taken off the board mid-round.
+function keepTodayThroughDayChange(u, change) {
+  const day = workToday();
+  const wasDue = dueOnDay(u, day);
+  change();
+  if (wasDue && !dueOnDay(u, day)) u.alsoCleanOn = day;
+}
 // "Is this due today?" is the same question the plan asks about a future day, so
 // it is answered in one place. It used to count days against the CALENDAR day
 // while everything else worked off the WORK day, and between midnight and the 3am
@@ -1563,12 +1584,43 @@ function applyRemote(saved) {
   // The same rule for the date stamped on the room itself, which is the other half of
   // "was this cleaned today" — otherwise a stale copy hands the tick back but reverts
   // the room's own record, and the room reads as due anyway.
+  // A COMMUNAL AREA ONLY THIS DEVICE HAS SEEN SURVIVES THE PULL, and one deleted on
+  // purpose stays deleted — word for word the rule rooms already had. Areas never got
+  // it, so a laptop with an older copy silently put Trash / Recycling back on the board
+  // and took OFFSITE- 2 DHAGAX off it, and the office watched the wall change for no
+  // reason anybody could name.
+  const goneAreas = { ...(saved.removedAreas || {}), ...(state.removedAreas || {}) };
+  let mergedAreas = Array.isArray(saved.areas) ? saved.areas : null;
+  let areasKept = 0;
+  if (mergedAreas) {
+    const haveArea = new Set(mergedAreas.map((a) => a.id));
+    const extraA = (state.areas || []).filter((a) => a && !haveArea.has(a.id) && !goneAreas[a.id]);
+    mergedAreas = mergedAreas.concat(extraA);
+    areasKept = extraA.length;
+    const beforeA = mergedAreas.length;
+    mergedAreas = mergedAreas.filter((a) => !goneAreas[a.id]);
+    if (mergedAreas.length !== beforeA) areasKept = Math.max(areasKept, 1);
+  }
+
   if (mergedUnits) {
     const mineById = {};
     (state.servicedUnits || []).forEach((u) => { mineById[u.id] = u; });
     mergedUnits = mergedUnits.map((u) => {
       const mine = mineById[u.id];
       if (!mine) return u;
+      // THE NEWEST HAND EDIT WINS, NOT THE NEWEST PUSH. Set a frequency on the laptop
+      // and a phone that had not looked since breakfast pushed the old one straight
+      // back. Every edit somebody makes carries the moment it was made (stampUnitEdit),
+      // so a copy that predates an edit can no longer undo it. Untouched rooms are
+      // unaffected: with no stamp on either side this changes nothing.
+      if (mine.editedAt && (!u.editedAt || String(mine.editedAt) > String(u.editedAt))) {
+        u = { ...u,
+          unit: mine.unit, guest: mine.guest, note: mine.note, type: mine.type,
+          freq: mine.freq, days: mine.days || null, daysAuto: mine.daysAuto,
+          startDate: mine.startDate, alsoCleanOn: mine.alsoCleanOn || null,
+          holdUntil: mine.holdUntil || null, rollCallOn: mine.rollCallOn || null,
+          paused: mine.paused, editedAt: mine.editedAt };
+      }
       const stamp = (src) => ({ ...u,
         lastCleaned: src.lastCleaned || null,
         lastCleanedBy: src.lastCleanedBy || null,
@@ -1587,6 +1639,8 @@ function applyRemote(saved) {
   Object.keys(localSeeded).forEach((d) => { if (mergedPlans[d]) mergedSeeded[d] = mergedSeeded[d] || localSeeded[d]; });
 
   state = { ...state, ...saved, tab: keepTab, pendingCover: null, editingUnit: null, editingArea: null, editingEmp: null };
+  if (mergedAreas) state.areas = mergedAreas;
+  state.removedAreas = goneAreas;
   // TURN THE MORNING HAND-OUT BACK ON, ONCE. It was switched off at some point and the
   // office has asked for the rooms to be dealt automatically again — but a setting lives
   // in the saved state, where no new build can reach it. Done here, on the settings as
@@ -1622,13 +1676,13 @@ function applyRemote(saved) {
   state.completions = mergedDone;
   state.untick = untick;
   if (mergedUnits) state.servicedUnits = mergedUnits;
-  if ((rescued || unitsKept || ticksKept) && !TV_MODE) markDirty();   // ours to deliver — the server has not got these
+  if ((rescued || unitsKept || areasKept || ticksKept) && !TV_MODE) markDirty();   // ours to deliver — the server has not got these
   if (state.coverageDay !== todayKey()) { state.coverage = {}; state.unitCover = {}; state.pendingCover = null; state.coverageDay = todayKey(); }
   finalizeState();
   try { localStorage.setItem(STORE, JSON.stringify(state)); } catch (e) {}
   stampSynced();             // fresh from the server counts as in sync, same as a push
   tvLastData = Date.now();   // the TV board dates itself off the last thing it heard
-  if ((rescued || unitsKept || ticksKept) && !TV_MODE) remotePush();  // get them up before anything overwrites them
+  if ((rescued || unitsKept || areasKept || ticksKept) && !TV_MODE) remotePush();  // get them up before anything overwrites them
   route();
 }
 
@@ -2048,8 +2102,16 @@ const UNIT_TYPE_ORDER = ['airbnb', 'office', 'building'];
 // asked for. It is a rule, so it lives in the code. The Airbnb tab still has its own
 // list, its own schedule and its own hand-out button — that is where they are picked.
 const OFF_ROLL_CALL_TYPES = ['airbnb'];
-const onRollCall = (u) => OFF_ROLL_CALL_TYPES.indexOf(unitType(u)) < 0
-  && (!Array.isArray(state.rollCallTypes) || state.rollCallTypes.includes(unitType(u)));
+// ONE ROOM, PUT ON TODAY'S BOARD BY HAND. The rule below is about a KIND of room —
+// Airbnb is its own job, cleaned after the offices by its own pair, and it never joins
+// the morning round. That stays exactly as it was. What it never had was an exception:
+// a guest checks out, that one room has to be cleaned with everything else today, and
+// there was nowhere to say so. Stamped with the WORK day, so it lapses by itself
+// tomorrow — the kind is never quietly moved onto the roll call for good.
+const onRollCallToday = (u) => !!u && String(u.rollCallOn || '') === workToday();
+const onRollCall = (u) => onRollCallToday(u)
+  || (OFF_ROLL_CALL_TYPES.indexOf(unitType(u)) < 0
+      && (!Array.isArray(state.rollCallTypes) || state.rollCallTypes.includes(unitType(u))));
 // How many rooms the customer asked a morning time for one cleaner is given before
 // the next person in starts taking them. The building has more early rooms than
 // cleaners, so without a limit the first arrival would be handed the lot.
@@ -2107,6 +2169,20 @@ function removeServicedUnit(id) {
     save(); render();
   });
 }
+// AN EDIT MADE BY A PERSON IS A FACT WITH A TIME ON IT.
+// The whole state travels as one blob and the last writer wins, so a room's schedule
+// was simply whatever the most recent device to push happened to hold. Set a frequency
+// on the laptop, and a phone that had not looked since breakfast pushed the old one
+// back — no error, nothing on screen, the room just went back to how it was and the TV
+// showed that. It is the same failure that ticks and plans already have their own
+// answers to; the schedule never got one.
+//
+// So every edit somebody makes by hand carries the moment it was made, and the merge
+// keeps the NEWEST hand edit rather than the newest push. A copy that has not heard
+// about an edit can no longer undo it.
+function stampUnitEdit(u) {
+  if (u) u.editedAt = new Date().toISOString();
+}
 // Pin or unpin one weekday on a room. Clearing the last day hands the room back to
 // its frequency, so this is always reversible.
 function toggleUnitDay(id, dow) {
@@ -2118,12 +2194,13 @@ function toggleUnitDay(id, dow) {
   cur.sort((a, b) => a - b);
   u.days = cur.length ? cur : null;
   u.daysAuto = false;              // typed by hand — the levelling pass leaves it alone
+  stampUnitEdit(u);
   save(); render();
 }
 function clearUnitDays(id) {
   const u = (state.servicedUnits || []).find((x) => x.id === id);
   if (!u) return;
-  u.days = null; save(); render();
+  u.days = null; stampUnitEdit(u); save(); render();
 }
 // SETTING THE FREQUENCY HAS TO ACTUALLY DO SOMETHING. A room pinned to weekdays is
 // its days and nothing else — dueOnDayFrom checks days before it ever looks at the
@@ -2134,7 +2211,7 @@ function clearUnitDays(id) {
 // goes by that frequency, so it takes the room off its fixed days.
 function setUnitFreq(id, freq) {
   const u = state.servicedUnits.find(x => x.id === id);
-  if (u) { u.freq = freq; u.days = null; u.startDate = todayKey(); }  // reset cycle anchor to today
+  if (u) { u.freq = freq; u.days = null; u.startDate = todayKey(); stampUnitEdit(u); }  // reset cycle anchor to today
   save(); render();
 }
 // Flip a whole group of rooms onto one schedule at once — one-by-one is painful
@@ -2148,7 +2225,7 @@ function setUnitsFreqBulk(ids, freq, groupLabel) {
     `${groupLabel} only. Any set days come off, so the frequency is what they go by.`,
     () => {
       (state.servicedUnits || []).forEach(u => {
-        if (ids.includes(u.id)) { u.freq = freq; u.days = null; u.startDate = todayKey(); }
+        if (ids.includes(u.id)) { u.freq = freq; u.days = null; u.startDate = todayKey(); stampUnitEdit(u); }
       });
       save(); render();
     },
@@ -2172,7 +2249,7 @@ function setUnitsDaysBulk(ids, days, groupLabel) {
       ? `${groupLabel} only. They come round on those days from now on. Any room can still be changed on its own.`
       : `They go back to coming round on their frequency, counted from the last clean.`,
     () => {
-      list.forEach((u) => { u.days = what ? days.slice() : null; u.daysAuto = false; });
+      list.forEach((u) => { u.days = what ? days.slice() : null; u.daysAuto = false; stampUnitEdit(u); });
       save(); render();
     },
     what ? 'Set days' : 'Clear days',
@@ -2376,10 +2453,12 @@ function levelEodPlan() {
 }
 function applyEodLevel(plan) {
   plan.moves.forEach((m) => {
-    m.u.days = m.days.slice();
-    // The move is the app's, so it stays the app's to revisit. A set typed by hand is
-    // marked differently and never re-spread — see eodSetIndex.
-    m.u.daysAuto = true;
+    keepTodayThroughDayChange(m.u, () => {
+      m.u.days = m.days.slice();
+      // The move is the app's, so it stays the app's to revisit. A set typed by hand is
+      // marked differently and never re-spread — see eodSetIndex.
+      m.u.daysAuto = true;
+    });
   });
   save();
 }
@@ -2460,7 +2539,7 @@ function autoPinDaysFromFreq() {
   return { pinned: plan.proposals.length };
 }
 function applySuggestedDays(plan) {
-  plan.proposals.forEach((p) => { p.u.days = p.days.slice(); });
+  plan.proposals.forEach((p) => { keepTodayThroughDayChange(p.u, () => { p.u.days = p.days.slice(); }); });
   save();
 }
 function suggestDaysFromFreqConfirm() {
@@ -3897,6 +3976,34 @@ function toggleServicedDone(id) {
 }
 const servicedDone = (id) => !!state.completions['su:' + id + '::' + workToday()];
 
+// ADD A ROOM TO TODAY, FROM THE PHONE. Rooms get cleaned that today's schedule never
+// asked for — a guest checked out, a customer rang — and the only way to record one was
+// to open the room and change its dates, which moves its rhythm for good. This is the
+// one-off the app already had (alsoCleanOn: due today, lapses the moment it is cleaned,
+// leaves the cycle alone) reached by tapping the room instead of editing it.
+//
+// A room kept off the roll call by its kind is also given rollCallOn, so it lands on the
+// morning list and in its cleaner's column on the TV rather than on the Airbnb page. It
+// is part of today's round now — that is the whole reason for adding it.
+function toggleRoomOnToday(id) {
+  const u = (state.servicedUnits || []).find((x) => x.id === id);
+  if (!u) return;
+  const day = workToday();
+  if (String(u.alsoCleanOn || '') === day) {
+    // Taking it back off. A room already ticked stays: the clean happened, and dropping
+    // it from the list would leave real work with nowhere to show.
+    if (cleanedToday(u)) return;
+    delete u.alsoCleanOn;
+    delete u.rollCallOn;
+  } else {
+    u.alsoCleanOn = day;
+    delete u.holdUntil;                 // asked for today outranks a hold-back
+    if (!onRollCall(u)) u.rollCallOn = day;
+  }
+  save(); render();
+}
+const addedToToday = (u) => !!u && String(u.alsoCleanOn || '') === workToday();
+
 // Ticking off a communal area is a cleaning like any other: it goes to History with
 // who did it and when, and un-ticking takes that entry back out again.
 function toggleAreaDone(id) {
@@ -4550,6 +4657,11 @@ function addArea(label, kind, freq) {
 function removeArea(id) {
   showConfirm('Remove this area?', 'This cleaning area will be permanently deleted.', () => {
     state.areas = state.areas.filter(a => a.id !== id);
+    // Write down that it went ON PURPOSE, the same as a room. Without this the delete
+    // simply travels back from whichever device had not heard about it — which is how
+    // Trash / Recycling kept reappearing on the board after being taken off.
+    if (!state.removedAreas) state.removedAreas = {};
+    state.removedAreas[id] = todayKey();
     save(); render();
   });
 }
@@ -7033,7 +7145,9 @@ function viewRollCall() {
         box.appendChild(fix);
       }
       // Tapping any room still gives the full reason for that one room.
-      box.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin-top:6px">Tap a room above for the reason it is on today.</div>`));
+      box.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin-top:6px">`
+        + `Tap a room above to mark it cleaned — it goes green here and on the TV. `
+        + `Press and hold for the reason it is on today.</div>`));
     }
 
     // The button that hands rooms out belongs above the list it produces.
@@ -7223,18 +7337,83 @@ function viewRollCall() {
         || String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }));
     if (notDue.length) {
       const ndBox = el('<div style="margin-bottom:18px"></div>');
-      ndBox.appendChild(el(`<div style="font-size:11px;color:#5f7189;font-weight:700">Not due today (${notDue.length})</div>`));
+      ndBox.appendChild(el(`<div style="font-size:11px;color:#5f7189;font-weight:700">`
+        + `Not due today (${notDue.length}) — tap one to add it to today</div>`));
       const ndChips = el('<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px"></div>');
       notDue.forEach((u) => {
         const nd = nextDueDate(u);
         const when = !nd ? 'no date yet'
           : nd === shiftDay(todayKey(), 1) ? 'tomorrow'
           : new Date(nd + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short' });
-        ndChips.appendChild(el(`<div class="freqmini" style="flex:0 0 auto;padding:5px 9px;opacity:0.6;font-size:11px" `
-          + `title="${esc((FREQ_LABEL[u.freq] || 'Daily') + (nd ? ' · next due ' + nd : ''))}">${esc(u.unit)} · ${esc(when)}</div>`));
+        // TAP ONE AND IT IS ON TODAY. A room off its day still gets cleaned — a guest
+        // checks out, somebody asks — and the only way to record that was to open the
+        // room and move its dates, which moves every clean after it too. This is the
+        // one-off extra clean: on today's list, on the board, back on its own rhythm
+        // tomorrow. The ＋ is there because a phone has no hover to reveal a title.
+        const chip = el(`<button class="freqmini" style="flex:0 0 auto;padding:7px 10px;opacity:0.75;font-size:11px" `
+          + `title="${esc((FREQ_LABEL[u.freq] || 'Daily') + (nd ? ' · next due ' + nd : '') + ' — tap to clean it today as a one-off')}">`
+          + `＋ ${esc(u.unit)} · ${esc(when)}</button>`);
+        chip.onclick = () => toggleRoomOnToday(u.id);
+        ndChips.appendChild(chip);
       });
       ndBox.appendChild(ndChips);
       body.appendChild(ndBox);
+    }
+
+    // WHAT WAS ADDED BY HAND, AND HOW TO TAKE IT BACK OFF. A mis-tap on the list above
+    // otherwise puts a room on the morning with no way to undo it short of finding the
+    // room and clearing a date nobody knows is set. Ticked rooms are not offered: the
+    // clean happened, and removing it would leave the work with nowhere to show.
+    {
+      const added = (state.servicedUnits || []).filter((u) => addedToToday(u) && !u.paused).slice()
+        .sort((a, b) => String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }));
+      if (added.length) {
+        const aBox = el('<div style="margin-bottom:18px"></div>');
+        aBox.appendChild(el(`<div style="font-size:11px;color:#5f7189;font-weight:700">`
+          + `Added to today by hand (${added.length}) — tap to take one back off</div>`));
+        const aChips = el('<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px"></div>');
+        added.forEach((u) => {
+          const done = cleanedToday(u);
+          const chip = el(`<button class="freqmini" style="flex:0 0 auto;padding:7px 10px;font-size:11px;`
+            + (done ? 'background:#eaf7ee;border-color:#bfe3ca;color:#15803d' : 'border-color:#0284c7;color:#0369a1')
+            + `" title="${esc(done ? 'Cleaned today — it stays on the list' : 'Added to today — tap to remove it again')}">`
+            + `${esc(u.unit)}${done ? ' ✓' : ' ✕'}</button>`);
+          if (!done) chip.onclick = () => toggleRoomOnToday(u.id);
+          aChips.appendChild(chip);
+        });
+        aBox.appendChild(aChips);
+        body.appendChild(aBox);
+      }
+    }
+
+    // OFF THE ROLL CALL, BUT WANTED TODAY. Airbnb is a separate job with its own pair,
+    // its own tab and its own page on the board, and that rule is not what this is. This
+    // is the single room: one guest checks out, it is cleaned with the morning round, and
+    // the office wants it on the phone list and in somebody's column on the wall like any
+    // other room. Tapping one puts it there for today and today only — tomorrow it is
+    // back on its own tab, and the kind is still off the roll call.
+    {
+      const offRoll = (state.servicedUnits || []).filter((u) => !onRollCall(u) && !u.paused).slice()
+        .sort((a, b) => String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }));
+      if (offRoll.length) {
+        const offKinds = [...new Set(offRoll.map((u) => UNIT_TYPES[unitType(u)].label))].join(' / ');
+        const offBox = el('<div style="margin-bottom:18px"></div>');
+        offBox.appendChild(el(`<div style="font-size:11px;color:#5f7189;font-weight:700">`
+          + `${esc(offKinds)} — off the roll call (${offRoll.length}) — tap one to put it on today's board</div>`));
+        const offChips = el('<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px"></div>');
+        offRoll.forEach((u) => {
+          const chip = el(`<button class="freqmini" style="flex:0 0 auto;padding:7px 10px;font-size:11px;opacity:0.85" `
+            + `title="${esc('Put ' + u.unit + " on today's roll call and TV board — today only")}">`
+            + `＋ ${esc(u.unit)}${u.guest ? ' · ' + esc(u.guest.split(' ')[0]) : ''}</button>`);
+          chip.onclick = () => toggleRoomOnToday(u.id);
+          offChips.appendChild(chip);
+        });
+        offBox.appendChild(offChips);
+        offBox.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin-top:6px">`
+          + `Today only. It joins the rooms above and its cleaner's column on the TV; `
+          + `tomorrow it is back on the ${esc(offKinds)} tab.</div>`));
+        body.appendChild(offBox);
+      }
     }
   }
 
