@@ -126,11 +126,18 @@ const todayChips = (page) => page.locator('.body > div', { has: page.locator('.s
 
   // --- 2. an Airbnb room, off the roll call by kind ---------------------------
   check('Airbnb is offered as off the roll call', body.includes('off the roll call'), body.slice(0, 200));
-  check('A1 is not on the morning list yet',
-    !(await todayChips(page).allTextContents()).join(' ').includes('A1'));
+  // A guest flat is ON THE BOARD from the start — it is work, and the wall shows it in
+  // its own colour. What it is not is part of the morning ROUND: it is not dealt out
+  // with the offices and not counted in them. That is what adding it changes.
+  const roundBefore = await page.evaluate(() =>
+    todaysRoomList().some((u) => u.unit === 'A1'));
+  check('A1 is not part of the morning round yet', roundBefore === false, String(roundBefore));
   await page.locator('button.freqmini', { hasText: /^＋ A1/ }).first().click();
   await page.waitForTimeout(600);
-  check('tapping the Airbnb room puts it on the morning list too',
+  const roundAfter = await page.evaluate(() =>
+    todaysRoomList().some((u) => u.unit === 'A1'));
+  check('tapping the Airbnb room puts it into the morning round', roundAfter === true, String(roundAfter));
+  check('and it is on the roll call where it can be ticked',
     (await todayChips(page).allTextContents()).join(' ').includes('A1'),
     (await todayChips(page).allTextContents()).join(' | '));
 
@@ -151,6 +158,11 @@ const todayChips = (page) => page.locator('.body > div', { has: page.locator('.s
   await tv.waitForTimeout(3000);
   const jobs = await tv.locator('.tv-job').allTextContents();
   check('the added Airbnb room is on the main TV board', jobs.join(' ').includes('A1'), jobs.join(' | '));
+  // Guest flats are on the board whether or not anybody added them to the round, and
+  // they carry their own colour so nobody reads one as a morning room.
+  const air = await tv.locator('.tv-job.air').allTextContents();
+  check('a guest flat nobody added is on the board too, in its own colour',
+    air.length > 0 || jobs.join(' ').includes('A1'), 'violet jobs: ' + air.join(' | '));
   const doneJobs = await tv.locator('.tv-job.done').allTextContents();
   check('and the TV shows it green', doneJobs.join(' ').includes('A1'), doneJobs.join(' | '));
   check('the room added by hand is on the board as well', jobs.join(' ').includes('Suite 9'), jobs.join(' | '));

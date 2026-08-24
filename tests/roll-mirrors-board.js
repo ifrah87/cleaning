@@ -127,6 +127,26 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
   await page.waitForTimeout(300);
   const after = await page.locator('.body').first().textContent();
   check('the phone names them too', /Corridors \+ Hodan/.test(after), 'not found in the roll call body');
+  // --- the ticking screen ------------------------------------------------------
+  // Same board again, with everything that is not a job taken away.
+  await page.locator('.nav button', { hasText: 'Tick off' }).first().click();
+  await page.waitForTimeout(600);
+  const tickText = await page.locator('.body').first().textContent();
+  const jobs = await page.evaluate(() => tvColumns().flatMap((c) => c.jobs).map((j) => j.label));
+  check('the Tick off tab lists every job on the board',
+    jobs.every((j) => tickText.includes(j)), jobs.join(' | '));
+  check('and nothing else — no attendance, no set-up',
+    !tickText.includes('Sync Staff') && !tickText.includes('badged in'), tickText.slice(0, 120));
+  const wasDone = await page.evaluate(() => cleanedToday(state.servicedUnits.find((x) => x.unit === '102')));
+  await page.locator('button', { hasText: /^102$/ }).first().click();
+  await page.waitForTimeout(700);
+  const nowDone = await page.evaluate(() => ({
+    done: cleanedToday(state.servicedUnits.find((x) => x.unit === '102')),
+    board: (tvColumns().flatMap((c) => c.jobs).find((j) => j.label === '102') || {}).done,
+  }));
+  check('tapping a row there ticks the job', wasDone === false && nowDone.done === true, JSON.stringify({ wasDone, nowDone }));
+  check('and the wall agrees immediately', nowDone.board === true, JSON.stringify(nowDone));
+
   check('no console errors', errs.length === 0, errs.join('\n       '));
 
   await browser.close(); s.close();

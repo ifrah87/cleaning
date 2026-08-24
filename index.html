@@ -412,6 +412,11 @@
     --tv-done-bg: #123020;  --tv-done-fg: #86efac;  --tv-done-ln: #22c55e;
     --tv-area-bg: #1a2438;  --tv-area-fg: #b7c8de;  --tv-area-ln: #64748b;
     --tv-cover-bg: #3d2c08; --tv-cover-fg: #fde68a; --tv-cover-ln: #f59e0b;
+    /* AIRBNB IS ITS OWN COLOUR. Red is "wanted first thing", amber is "nobody is on
+       this", blue is an ordinary room — three colours already carrying three meanings.
+       The guest flats are a different job done by a different pair, so they get violet
+       rather than a fourth shade of something that already means something else. */
+    --tv-air-bg: #2b1b45;   --tv-air-fg: #ddd0fb;   --tv-air-ln: #a855f7;
     --tv-none-bg: #2b2008;  --tv-none-fg: #fbbf24;
     --tv-out-bg: #241a06;   --tv-out-fg: #fcd34d;
     background: var(--tv-bg); color: var(--tv-fg);
@@ -427,6 +432,7 @@
     --tv-done-bg: #dcfce7;  --tv-done-fg: #166534;  --tv-done-ln: #16a34a;
     --tv-area-bg: #f1f5f9;  --tv-area-fg: #475569;  --tv-area-ln: #64748b;
     --tv-cover-bg: #fef3c7; --tv-cover-fg: #92400e; --tv-cover-ln: #f59e0b;
+    --tv-air-bg: #f3efff;   --tv-air-fg: #5b21b6;   --tv-air-ln: #a855f7;
     --tv-none-bg: #fff7ed;  --tv-none-fg: #b45309;
     --tv-out-bg: #fffbeb;   --tv-out-fg: #b45309;
   }
@@ -519,6 +525,7 @@
      handed out, or the person it was handed to is off sick. Same colour either
      way, because from across the room they are the same problem. */
   .tv-job.cover { background: var(--tv-cover-bg); color: var(--tv-cover-fg); border-left-color: var(--tv-cover-ln); }
+  .tv-job.air   { background: var(--tv-air-bg); color: var(--tv-air-fg); border-left-color: var(--tv-air-ln); }
   .tv-col.none { background: var(--tv-none-bg); }
   .tv-col.none .tv-who, .tv-col.none .tv-count { color: var(--tv-none-fg); }
   .tv-col.out { background: var(--tv-out-bg); }
@@ -623,7 +630,7 @@ const isAway = (pid) => AWAY.includes(state.attendance[pid] || 'present');
 // typed in, so removing one and adding it back sent it to the bottom of every list it
 // appears in and there was no way to get the order back except retyping the lot.
 const byLabel = (a, b) => String(a.label).localeCompare(String(b.label), undefined, { numeric: true, sensitivity: 'base' });
-function areasInterior() { return (state.areas || []).filter(a => a.kind === 'interior').sort(byLabel); }
+function areasInterior() { return (state.areas || []).filter(a => a.kind === 'interior' && oneOffLive(a)).sort(byLabel); }
 function areasExterior() { return (state.areas || []).filter(a => a.kind === 'exterior').sort(byLabel); }
 
 // --- Communal areas as work --------------------------------------------------
@@ -4064,10 +4071,14 @@ function toggleAreaDone(id) {
     state.untick[k] = todayKey();
     const ref = state.logRefs[k];
     if (ref) { unlogClean(ref); delete state.logRefs[k]; }
+    if (a.oneOff) delete a.doneOn;         // un-ticked, so it is outstanding again
     save(); render();
   } else {
     state.completions[k] = true;
     delete state.untick[k];
+    // A standing area comes round again on its frequency; a one-off is finished. The
+    // day it was finished is what takes it off the board tomorrow.
+    if (a.oneOff) a.doneOn = workToday();
     save(); render();
     // An area has no floor to fall back on, so an unassigned one is logged as Office
     // rather than being credited to whoever happens to own the floor it sits on.
@@ -4720,6 +4731,27 @@ function addArea(label, kind, freq) {
   state.areas.push({ id: 'a' + Date.now(), label: label.trim(), kind: kind||'interior', freq: freq||'daily', assignedTo: null });
   save(); render();
 }
+// WORK THAT IS NOT A ROOM AND NOT A ROUND. The electrician is coming, two rooms are
+// being cleaned off site, something has to be moved out of the stairwell — jobs that
+// belong to one morning, have to be given to somebody, and have to be ticked off where
+// everything else is ticked off. The office was recording these by adding a communal
+// area, which is a standing job: it then came back every day for ever and had to be
+// deleted by hand. ("Offsite is the note that keeps being typed.")
+//
+// So: the same thing an area is — named, handed out, ticked, logged to History — but
+// stamped with the day it was raised. It shows on that day, and after that only until
+// somebody says it is done, because work nobody got to is still work.
+function addOneOffJob(label, pid) {
+  if (!label || !label.trim()) return;
+  state.areas.push({
+    id: 'a' + Date.now(), label: label.trim(), kind: 'interior', freq: 'daily',
+    assignedTo: pid || null, oneOff: workToday(),
+  });
+  save(); render();
+}
+// Raised today, or raised earlier and still not done. A one-off that has been ticked
+// leaves the board the next day and stays in History, which is where it belongs.
+const oneOffLive = (a) => !a.oneOff || a.oneOff === workToday() || !a.doneOn;
 function removeArea(id) {
   showConfirm('Remove this area?', 'This cleaning area will be permanently deleted.', () => {
     state.areas = state.areas.filter(a => a.id !== id);
@@ -6730,6 +6762,86 @@ function viewRooms() {
   return wrap;
 }
 
+// TICKING OFF IS ITS OWN SCREEN.
+// The roll call is where the morning is decided: who is in, who gets what, what the
+// schedule is doing, what is not due. All of it is worth reading once a day. None of it
+// is worth scrolling past on the twentieth time somebody says "204 is done" — and that
+// is the thing the office does all day, standing up, on a phone, one hand.
+//
+// So the same board, with everything else taken away: a row per job, big enough to hit,
+// grouped by the cleaner it belongs to, in the same order as the wall. Same source as
+// the roll call and the TV (tvColumns), so no screen can disagree with another about
+// who has what.
+function viewTick() {
+  const wrap = el('<div class="body"></div>');
+  const cols = tvColumns();
+  const all = cols.reduce((n, c) => n + c.jobs.length, 0);
+  const done = cols.reduce((n, c) => n + c.jobs.filter((j) => j.done).length, 0);
+  const left = all - done;
+
+  if (!all) {
+    wrap.appendChild(el(`<div class="empty" style="text-align:center;padding:32px 0;color:#15803d;font-weight:700">`
+      + `✓ Nothing on today.</div>`));
+    return wrap;
+  }
+  // The count first and nothing above it, because it is the answer to the only
+  // question this screen exists for: how much is left.
+  wrap.appendChild(el(`<div style="display:flex;align-items:baseline;gap:10px;margin-bottom:12px">`
+    + `<div style="font-size:26px;font-weight:800;color:${left ? '#b45309' : '#15803d'}">${left}</div>`
+    + `<div style="font-size:13px;font-weight:700;color:#5f7189">left</div>`
+    + `<div style="font-size:13px;font-weight:700;color:#15803d;margin-left:auto">${done} done</div></div>`));
+
+  const unitById = {};
+  (state.servicedUnits || []).forEach((u) => { unitById[u.id] = u; });
+  const areaById = {};
+  (state.areas || []).forEach((a) => { areaById[a.id] = a; });
+
+  cols.forEach((c) => {
+    if (!c.jobs.length) return;                 // nothing to tick is nothing to show here
+    const grp = el('<div style="margin-bottom:16px"></div>');
+    const cDone = c.jobs.filter((j) => j.done).length;
+    const head = el('<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:6px"></div>');
+    head.appendChild(el(`<div style="font-size:12px;font-weight:800;letter-spacing:0.04em;`
+      + `color:${c.none ? '#b45309' : '#243b53'}">${esc((c.none ? 'NOBODY YET' : c.name).toUpperCase())}</div>`));
+    head.appendChild(el(`<div style="margin-left:auto;font-size:12px;font-weight:700;`
+      + `color:${cDone === c.jobs.length ? '#15803d' : '#5f7189'}">${cDone}/${c.jobs.length}</div>`));
+    grp.appendChild(head);
+
+    const list = el(`<div style="border:1px solid #e6ecf3;border-radius:10px;overflow:hidden"></div>`);
+    c.jobs.forEach((j, i) => {
+      const u = j.area ? null : unitById[j.id];
+      const a = j.area ? areaById[j.id] : null;
+      if (!u && !a) return;
+      // A WHOLE ROW IS THE TARGET, not a chip inside it. This is used one-handed while
+      // walking, and a 24px chip in a wrapped row is a miss waiting to happen.
+      const row = el(`<button style="display:flex;align-items:center;gap:10px;width:100%;`
+        + `padding:14px 12px;border:0;border-top:${i ? '1px solid #eef2f7' : '0'};`
+        + `background:${j.done ? '#f2fbf5' : '#ffffff'};text-align:left;cursor:pointer"></button>`);
+      const name = el(`<div style="flex:1;min-width:0;font-size:16px;font-weight:700;`
+        + `color:${j.done ? '#8aa79a' : j.early ? '#b91c1c' : j.air ? '#6d28d9' : '#243b53'};`
+        + `${j.done ? 'text-decoration:line-through' : ''}">`
+        + `${j.early && !j.done ? '🌅 ' : ''}${esc(j.label)}</div>`);
+      row.appendChild(name);
+      if (j.area) row.appendChild(el(`<div style="font-size:10px;font-weight:700;color:#475569">AREA</div>`));
+      if (j.air) row.appendChild(el(`<div style="font-size:10px;font-weight:700;color:#6d28d9">AIRBNB</div>`));
+      // ○ / ✓ — the state of the job said twice, in colour and in shape, because the
+      // board is read across a room and this is read in the sun.
+      row.appendChild(el(`<div style="flex:0 0 auto;width:30px;height:30px;border-radius:15px;`
+        + `display:flex;align-items:center;justify-content:center;font-size:17px;font-weight:800;`
+        + `border:2px solid ${j.done ? '#15803d' : '#cbd6e3'};`
+        + `background:${j.done ? '#15803d' : '#ffffff'};color:${j.done ? '#ffffff' : '#cbd6e3'}">`
+        + `${j.done ? '✓' : ''}</div>`));
+      row.onclick = () => { if (j.area) toggleAreaDone(a.id); else toggleServicedDone(u.id); };
+      list.appendChild(row);
+    });
+    grp.appendChild(list);
+    wrap.appendChild(grp);
+  });
+  wrap.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin-top:4px">`
+    + `Tap a row to mark it clean, tap it again to undo. The TV follows within a minute.</div>`));
+  return wrap;
+}
+
 // What still has to be cleaned on tonight's round. The roll call is a morning
 // tool; the crew works into the night, so "what's left" needs its own screen that
 // uses the work day (rolling over at 3am) rather than the calendar day.
@@ -6803,6 +6915,7 @@ function viewMore() {
   const wrap = el('<div class="body"></div>');
   const items = [
     { id: 'tonight', label: 'Tonight', ico: '🌙', sub: 'What still needs cleaning on tonight’s round' },
+    { id: 'team', label: 'Team', ico: '☰', sub: 'Cleaners, teams, floors and the rota' },
     { id: 'building', label: 'Floors & Common Areas', ico: '▦', sub: 'Rooftop → floors → ground checklist' },
     { id: 'exterior', label: 'Exterior', ico: '⛅', sub: 'Outside areas and their frequencies' },
     { id: 'history', label: 'Cleaning History', ico: '◷', sub: 'What was cleaned, by day' },
@@ -7206,10 +7319,13 @@ function viewRollCall() {
         if (!u && !a) return;
         const done = j.done;
         const early = !done && j.early;
+        // The wall's colour language, on the phone: green done, red wanted first thing,
+        // violet a guest flat, amber nobody on it, slate a communal walk, blue a room.
         const tone = done ? 'background:#eaf7ee;border-color:#bfe3ca;color:#15803d'
           : early ? 'background:#fee2e2;border-color:#dc2626;color:#b91c1c;font-weight:800'
+          : j.air ? 'background:#f3efff;border-color:#ddd0fb;color:#6d28d9'
           : c.none ? 'background:#fff7ed;border-color:#fcd9a8;color:#b45309'
-          : j.area ? 'background:#f3efff;border-color:#ddd0fb;color:#6d28d9'
+          : j.area ? 'background:#f1f5f9;border-color:#dbe3ec;color:#475569'
           : 'background:#eef6fd;border-color:#cfe8fb;color:#0369a1';
         const signed = u && u.assignedTo && assignConfirmedToday(u);
         const tip = j.area ? 'Communal area — tap to tick it off'
@@ -7576,6 +7692,46 @@ function viewRollCall() {
         chips.appendChild(chip);
       });
       abox.appendChild(chips);
+    }
+
+    // RAISE A JOB THAT IS NOT A ROOM. The electrician, two flats being done off site,
+    // something to be shifted out of a stairwell. It goes to somebody, it shows in their
+    // column on the wall, it is ticked off here with everything else, and it is gone
+    // tomorrow — unlike the communal area the office used to add for it, which then came
+    // round every morning for ever until somebody remembered to delete it.
+    {
+      const jbox = el('<div style="margin-top:10px;padding:8px 10px;border-radius:8px;background:#f7f9fc;border:1px solid #e6ecf3"></div>');
+      jbox.appendChild(el(`<div style="font-size:11px;color:#5f7189;font-weight:700;margin-bottom:6px">`
+        + `Something else today — the electrician, work off site, a one-off</div>`));
+      const jIn = el(`<input id="oneOffLabel" placeholder="What has to be done" style="width:100%;margin-bottom:6px">`);
+      jbox.appendChild(jIn);
+      // Handed to whoever it is handed to, from the same list the areas use — leaders,
+      // and only the ones actually in when there are any.
+      const leaders = cleaningStaff().filter((p) => p.isLeader);
+      const inNow = leaders.filter((p) => hikArrivals[p.id]);
+      const pool = inNow.length ? inNow : leaders;
+      let jWho = '';
+      const jRow = el('<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px"></div>');
+      const jBtns = {};
+      pool.forEach((p) => {
+        const b = el(`<button class="freqmini" style="flex:0 0 auto;padding:6px 10px;font-size:11px">${esc(p.name.split(' ')[0])}</button>`);
+        b.onclick = () => {
+          jWho = (jWho === p.id) ? '' : p.id;
+          Object.values(jBtns).forEach((x) => x.classList.remove('on'));
+          if (jWho) b.classList.add('on');
+        };
+        jBtns[p.id] = b;
+        jRow.appendChild(b);
+      });
+      jbox.appendChild(jRow);
+      const jAdd = el(`<button class="add-btn" style="width:100%">＋ Add it to today</button>`);
+      jAdd.onclick = () => {
+        const v = document.getElementById('oneOffLabel');
+        if (!v || !v.value.trim()) { if (v) v.focus(); return; }
+        addOneOffJob(v.value, jWho);
+      };
+      jbox.appendChild(jAdd);
+      abox.appendChild(jbox);
     }
     body.appendChild(abox);
   }
@@ -9047,6 +9203,19 @@ function tvJobsByPerson() {
       area: false,
     });
   });
+  // THE GUEST FLATS GO ON THE BOARD WITH EVERYTHING ELSE. They are off the morning roll
+  // call — a separate job, done by their own pair after the offices — and that stays
+  // true of the HAND-OUT. It was never a good reason to keep the work off the wall: it
+  // lived on a page of its own that the board rotated to, so a flat somebody had just
+  // cleaned was invisible for most of every minute, and "what has been done today"
+  // could not be read off the screen in one look. They sit in their cleaner's column
+  // now, in a colour of their own so nobody mistakes one for a morning room.
+  tvOffRollCall().forEach((u) => {
+    bucket(u.assignedTo).push({
+      id: u.id, label: u.unit, done: cleanedToday(u),
+      early: timeSlot(u) === 'early', area: false, air: true,
+    });
+  });
   areasInterior().forEach((a) => {
     const h = areaHelpers(a);
     bucket(a.assignedTo).push({
@@ -9060,6 +9229,9 @@ function tvJobsByPerson() {
     buckets[k].sort((x, y) =>
       (x.done ? 1 : 0) - (y.done ? 1 : 0)
       || (y.early ? 1 : 0) - (x.early ? 1 : 0)
+      // The morning's own rooms first, then the guest flats that follow them, which is
+      // the order the work is actually done in.
+      || (x.air ? 1 : 0) - (y.air ? 1 : 0)
       || String(x.label).localeCompare(String(y.label), undefined, { numeric: true }));
   });
   return { buckets: buckets, order: order };
@@ -9390,7 +9562,10 @@ function renderTV() {
   const wrap = el(`<div class="tv-wrap"></div>`);
 
   const cols = tvColumns();
-  const air = tvOffRollCall();
+  // The guest flats are in the columns now, so the page that used to carry them would
+  // simply show the same rooms a second time. Kept as an empty list rather than torn
+  // out, so the board falls back to it the day somebody wants it again.
+  const air = [];
   const boardPages = Math.max(1, Math.ceil(cols.length / TV_COLS_PER_PAGE));
   const tvPages = boardPages + (air.length ? 1 : 0);
   if (tvPage >= tvPages) tvPage = 0;
@@ -9516,7 +9691,11 @@ function renderTV() {
     const chip = (j) => {
       // An away person's unfinished room is nobody's room until someone picks it
       // up, so it wears the same amber as work that was never handed out.
-      const cls = j.done ? 'done' : (c.out || c.none) ? 'cover' : j.early ? 'early' : j.area ? 'area' : '';
+      // Done first, then the deadline, then what kind of work it is. A guest flat keeps
+      // its own colour even in the amber column — the heading there already says nobody
+      // is on it, and what the job IS should not change with who is holding it.
+      const cls = j.done ? 'done' : j.early ? 'early' : j.air ? 'air'
+        : (c.out || c.none) ? 'cover' : j.area ? 'area' : '';
       return el(`<div class="tv-job ${cls}">${j.early && !j.done ? '🌅 ' : ''}${esc(j.label)}</div>`);
     };
     const rooms = c.jobs.filter((j) => !j.area);
@@ -9678,7 +9857,7 @@ function render() {
   header.appendChild(topbar);
   header.appendChild(el(`<div class="h-eyebrow">66-UNIT BUILDING · 11 FLOORS</div>`));
   const ROOMS_TITLE = { all: 'All Rooms', airbnb: 'Airbnb Rooms', office: 'Office Cleaning', building: 'Building Cleaning' };
-  const titles = { more:'More', rollcall:'Morning Roll Call', building:'Floors & Common Areas', exterior:'Exterior', history:'Cleaning History', team:'Team', settings:'Settings', plan:'Plan a Day', rooms: ROOMS_TITLE[roomsFilter()], tonight:'Tonight’s Round' };
+  const titles = { more:'More', rollcall:'Morning Roll Call', building:'Floors & Common Areas', exterior:'Exterior', history:'Cleaning History', team:'Team', settings:'Settings', plan:'Plan a Day', rooms: ROOMS_TITLE[roomsFilter()], tonight:'Tonight’s Round', tick:'Tick Off' };
   // A tab with no view renders an empty screen, so never trust it blindly:
   // fall back to Roll Call rather than showing a header over nothing.
   if (!titles[state.tab]) state.tab = 'rollcall';
@@ -9730,6 +9909,7 @@ function render() {
   app.appendChild(header);
 
   if (state.tab==='more') app.appendChild(viewMore());
+  else if (state.tab==='tick') app.appendChild(viewTick());
   else if (state.tab==='plan') app.appendChild(viewPlan());
   else if (state.tab==='tonight') app.appendChild(viewTonight());
   else if (state.tab==='rooms') app.appendChild(viewRoomsHub());
@@ -9809,13 +9989,17 @@ function render() {
   // thing and pushed Plan and Team — used every day — behind "More".
   const tabs = [
     { id:'rollcall', label:'Roll Call', ico:'☀' },
+    // SECOND, NOT FIFTH. Ticking work off is the thing done most often and in the worst
+    // conditions — standing up, one hand, in a corridor — so it gets a thumb-reachable
+    // place of its own. Team moves in with the rest of the set-up under More, where a
+    // screen consulted once a week belongs.
+    { id:'tick', label:'Tick off', ico:'✓' },
     { id:'rooms', label:'Rooms', ico:'▤' },
     { id:'plan', label:'Plan', ico:'🗓' },
-    { id:'team', label:'Team', ico:'☰' },
     { id:'more', label:'More', ico:'⋯' },
   ];
   // "More" stays highlighted while you're on any of its sub-pages.
-  const moreIds = ['more','tonight','building','exterior','history','settings'];
+  const moreIds = ['more','tonight','building','exterior','history','settings','team'];
   tabs.forEach(t => {
     const isActive = t.id === 'more' ? moreIds.includes(state.tab) : state.tab === t.id;
     const b = el(`<button class="${isActive?'active':''}"><div class="ico">${t.ico}</div><div>${t.label}</div></button>`);

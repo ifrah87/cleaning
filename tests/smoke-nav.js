@@ -81,16 +81,16 @@ for (const [label,vp] of [['PHONE',{width:420,height:900}],['DESKTOP',{width:144
  await page.waitForTimeout(2500);
  console.log(`\n\x1b[1m${label}\x1b[0m`);
  const navLabels=await page.locator('.nav button').allTextContents();
- check('bottom bar is Roll Call / Rooms / Plan / Team / More',
-   navLabels.join('|').includes('Roll Call')&&navLabels.join('|').includes('Rooms')&&navLabels.join('|').includes('Plan')&&navLabels.join('|').includes('Team'),navLabels.join(' | '));
+ check('bottom bar is Roll Call / Tick off / Rooms / Plan / More',
+   ['Roll Call','Tick off','Rooms','Plan','More'].every(l=>navLabels.join('|').includes(l)),navLabels.join(' | '));
  // every screen renders
- for (const [tab,idx] of [['Rooms',1],['Plan',2],['Team',3],['More',4]]) {
+ for (const [tab,idx] of [['Tick off',1],['Rooms',2],['Plan',3],['More',4]]) {
    await page.locator('.nav button').nth(idx).click(); await page.waitForTimeout(500);
    const t=await page.locator('.h-title').textContent();
    check(`${tab} renders (title: ${t})`, !!t);
  }
  // room segments
- await page.locator('.nav button').nth(1).click(); await page.waitForTimeout(400);
+ await page.locator('.nav button').nth(2).click(); await page.waitForTimeout(400);
  const segs=await page.locator('.segbtn').allTextContents();
  check('Rooms tab has All/Airbnb/Offices/Buildings filter', segs.length===4, segs.join(' | '));
  await page.locator('.segbtn').nth(1).click(); await page.waitForTimeout(400);
@@ -108,7 +108,8 @@ for (const [label,vp] of [['PHONE',{width:420,height:900}],['DESKTOP',{width:144
  await page.locator('.sr-row').first().click(); await page.waitForTimeout(600);
  check('tapping a hit lands on the room list', (await page.locator('.h-title').textContent()).length>0, await page.locator('.h-title').textContent());
  // floors
- await page.locator('.nav button').nth(3).click(); await page.waitForTimeout(600);
+ await page.locator('.nav button').nth(4).click(); await page.waitForTimeout(500);
+ await page.locator('.su-card',{hasText:'Team'}).first().click(); await page.waitForTimeout(600);
  const body=await page.locator('.body').first().textContent();
  check('Team shows the floor-by-floor allocation', body.includes('Who cleans which floor'), body.slice(0,160));
  const floorRows=await page.locator('.sr-row').count();
@@ -129,7 +130,7 @@ for (const [label,vp] of [['PHONE',{width:420,height:900}],['DESKTOP',{width:144
  check('the set it picks keeps the room two days apart', gaps.length>0&&gaps.every(g=>g.gap===2), JSON.stringify(gaps));
  // The search box has to stay reachable once the list is scrolled — that is the
  // whole point of pinning it under the header.
- await page.locator('.nav button').nth(1).click(); await page.waitForTimeout(500);
+ await page.locator('.nav button').nth(2).click(); await page.waitForTimeout(500);
  await page.evaluate(()=>window.scrollTo(0,1400)); await page.waitForTimeout(400);
  const boxSeen=await page.locator('.stickbar input').first().isVisible().catch(()=>false);
  const boxBox=await page.locator('.stickbar input').first().boundingBox().catch(()=>null);
@@ -223,7 +224,7 @@ for (const [label,vp] of [['PHONE',{width:420,height:900}],['DESKTOP',{width:144
  check('and the same number of them', agree.rc.length===agree.pl.length,
    `${agree.rc.length} vs ${agree.pl.length}`);
  // Plan a Day opens on the day the roll call is showing, not on tomorrow.
- await page.locator('.nav button').nth(2).click(); await page.waitForTimeout(700);
+ await page.locator('.nav button').nth(3).click(); await page.waitForTimeout(700);
  const planHdr=await page.locator('.h-date').first().textContent();
  check('Plan a Day opens on today', /TODAY/.test(planHdr), planHdr);
  await page.locator('.nav button').nth(0).click(); await page.waitForTimeout(500);
@@ -360,7 +361,7 @@ for (const [label,vp] of [['PHONE',{width:420,height:900}],['DESKTOP',{width:144
    }
    state.plans[day]=plan; save();
  });
- await page.locator('.nav button').nth(2).click(); await page.waitForTimeout(700);
+ await page.locator('.nav button').nth(3).click(); await page.waitForTimeout(700);
  await page.locator('button', {hasText:'Hand-out sheet'}).first().click(); await page.waitForTimeout(700);
  check('the hand-out sheet opens', await page.locator('.sheet-paper').count()>0);
  const rowN=await page.locator('.sp-row').count();
