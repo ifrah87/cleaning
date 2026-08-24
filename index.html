@@ -1196,7 +1196,12 @@ let state = {
 // Runs after both local load and remote sync so the shapes are always valid.
 function finalizeState() {
   if (!Array.isArray(state.staff)) state.staff = DEFAULT_STAFF.map(p => ({ ...p }));
-  if (!Array.isArray(state.areas)) state.areas = DEFAULT_AREAS.map(a => ({ ...a }));
+  // MARKED AS A STARTING GUESS, NOT A DECISION. These are seeded into a board that has
+  // none, and a moment later the server's real list arrives and replaces them. The stamp
+  // is what keeps the rescue in applyRemote honest: an area the office ADDED must survive
+  // a stale copy, but nine defaults this device invented on the way past must not be
+  // pushed onto a building that deliberately deleted them.
+  if (!Array.isArray(state.areas)) state.areas = DEFAULT_AREAS.map(a => ({ ...a, seeded: true }));
   // ============================================================
   // KEEP THE STATE SMALL. The whole of it travels as one blob on every save AND is
   // broadcast to every other device by realtime — so anything that grows for ever
@@ -1594,7 +1599,7 @@ function applyRemote(saved) {
   let areasKept = 0;
   if (mergedAreas) {
     const haveArea = new Set(mergedAreas.map((a) => a.id));
-    const extraA = (state.areas || []).filter((a) => a && !haveArea.has(a.id) && !goneAreas[a.id]);
+    const extraA = (state.areas || []).filter((a) => a && !haveArea.has(a.id) && !goneAreas[a.id] && !a.seeded);
     mergedAreas = mergedAreas.concat(extraA);
     areasKept = extraA.length;
     const beforeA = mergedAreas.length;
@@ -2385,9 +2390,23 @@ const eodSetIndex = (u) => {
   for (let i = 0; i < EOD_LEGACY_SETS.length; i += 1) if (sameDays(d, EOD_LEGACY_SETS[i])) return -1;
   return null;
 };
+// WHOSE WEEK A ROOM SITS IN. Not who is holding it today — that is dealt fresh every
+// morning off the door reader — but whose round it belongs to: the cleaner it is pinned
+// to, or failing that whoever owns the floor. Stable enough to schedule against.
+const roundOwnerId = (u) => (u && u.usualTo)
+  || ((ownerOfFloor(floorOfUnit(u && u.unit)) || {}).id)
+  || null;
 function levelEodPlan() {
   const rooms = (state.servicedUnits || []).filter((u) => !u.paused && onRollCall(u));
   const load = [0, 0, 0, 0, 0, 0, 0];
+  // AND THE SAME COUNT PER PERSON. The week can be level across the building while one
+  // cleaner's own week is not: put both of Sadaaq's every-other-day rooms on Sun/Tue/Thu
+  // and he carries four on a Tuesday and two on a Monday, which the building-wide count
+  // cannot see because somebody else's rooms fill the Monday. The office sees it though
+  // — it is the difference between a hard morning and an easy one — and it is free to
+  // fix: which rooms go on which set costs the building nothing once the counts are set.
+  const ownerLoad = {};
+  const ownerWeek = (id) => (ownerLoad[id] = ownerLoad[id] || [0, 0, 0, 0, 0, 0, 0]);
   const movable = [];
   rooms.forEach((u) => {
     const days = fixedDays(u);
@@ -2398,8 +2417,8 @@ function levelEodPlan() {
     // a daily that is due whatever we do — is load to work around.
     // daysAuto === false is a set somebody typed, even if it happens to match one of
     // ours. Their decision, so it stays where they put it.
-    if (isEod && u.daysAuto !== false && (idx !== null || !days)) { movable.push({ u, at: idx, was: days }); return; }
-    if (days) days.forEach((x) => { load[x] += 1; });
+    if (isEod && u.daysAuto !== false && (idx !== null || !days)) { movable.push({ u, at: idx, was: days, own: roundOwnerId(u) }); return; }
+    if (days) { const o = roundOwnerId(u); days.forEach((x) => { load[x] += 1; if (o) ownerWeek(o)[x] += 1; }); }
   });
   if (!movable.length) return { moves: [], load, before: load.slice() };
 
@@ -2411,6 +2430,14 @@ function levelEodPlan() {
   const shapeOf = (t) => [Math.max.apply(null, t), t.reduce((a, b) => a + b * b, 0)];
   const after = (set) => { const t = load.slice(); set.forEach((x) => { t[x] += 1; }); return shapeOf(t); };
   const flatter = (a, b) => (a[0] !== b[0]) ? a[0] - b[0] : a[1] - b[1];
+  // The same question asked of one person's own rooms. No owner — a room on a floor
+  // nobody holds — scores flat either way and is decided by the building as before.
+  const afterOwner = (id, set) => {
+    if (!id) return [0, 0];
+    const t = ownerWeek(id).slice(); set.forEach((x) => { t[x] += 1; });
+    return shapeOf(t);
+  };
+  const worstPerson = () => Object.keys(ownerLoad).reduce((m, k) => Math.max(m, Math.max.apply(null, ownerLoad[k])), 0);
 
   // WHICH ROOMS GO WHERE IS FREE ONCE THE COUNTS ARE DECIDED. Six on each pattern is
   // six either way, so the choice of WHICH six costs the balance nothing — and it is
@@ -2430,26 +2457,41 @@ function levelEodPlan() {
   const cares = (u) => Math.abs(beat(u, EOD_SETS[0]) - beat(u, EOD_SETS[1]));
   movable.sort((a, b) => (cares(b.u) - cares(a.u))
     || String(a.u.unit).localeCompare(String(b.u.unit), undefined, { numeric: true }));
+  // The heaviest single morning anybody carries, before any of this moves.
+  const ownerPeakBefore = (() => {
+    const t = {};
+    movable.forEach((m) => { if (m.own && m.was) m.was.forEach((x) => { (t[m.own] = t[m.own] || ownerWeek(m.own).slice())[x] += 1; }); });
+    Object.keys(ownerLoad).forEach((k) => { t[k] = t[k] || ownerLoad[k]; });
+    return Object.keys(t).reduce((mx, k) => Math.max(mx, Math.max.apply(null, t[k])), 0);
+  })();
+
   const moves = [];
   movable.forEach((m) => {
-    const scored = EOD_SETS.map((set, i) => ({ i, set, s: after(set), b: beat(m.u, set) })).sort((a, b) =>
-      flatter(a.s, b.s)
-      // The week's shape first — that is what the crew feel — then the room's own
-      // rhythm, which is free whenever the two sets leave the week equally flat.
+    const scored = EOD_SETS.map((set, i) => ({ i, set, s: after(set), o: afterOwner(m.own, set), b: beat(m.u, set) })).sort((a, b) =>
+      // The building's worst morning first — that is what the crew as a whole feel.
+      (a.s[0] - b.s[0])
+      // THEN THE PERSON'S OWN WORST MORNING. Which of the two sets a room takes costs
+      // the building nothing once the day counts are equal, and it is the whole
+      // difference between a cleaner's Tuesday and their Monday.
+      || (a.o[0] - b.o[0])
+      || (a.o[1] - b.o[1])
+      // Then the building's finer shape, then the room's own rhythm, which is free
+      // whenever everything above leaves the week equally flat.
+      || (a.s[1] - b.s[1])
       || (a.b - b.b)
       // A TIE STAYS PUT. Churning a room between two equally good sets changes when it
       // is cleaned for no gain at all, and the office has to re-learn the week for it.
       || ((a.i === m.at ? 0 : 1) - (b.i === m.at ? 0 : 1))
       || (a.i - b.i));
     const pick = scored[0];
-    pick.set.forEach((x) => { load[x] += 1; });
+    pick.set.forEach((x) => { load[x] += 1; if (m.own) ownerWeek(m.own)[x] += 1; });
     if (pick.i !== m.at) moves.push({ u: m.u, from: m.at, to: pick.i, days: pick.set.slice() });
   });
   // A room sitting on a day the office picks by hand has to come off it whatever the
   // rest of the week looks like — that day is not the app's to fill, so "it barely
   // changes the peak" is not a reason to leave it there.
   const frees = moves.filter((m) => (m.u.days || []).some(isManualDay)).length;
-  return { moves, load, before, frees };
+  return { moves, load, before, frees, ownerPeakBefore, ownerPeakAfter: worstPerson() };
 }
 function applyEodLevel(plan) {
   plan.moves.forEach((m) => {
@@ -2479,7 +2521,12 @@ function autoLevelEodDays() {
   const peakAfter = Math.max.apply(null, plan.load);
   // Only worth disturbing the schedule for a real difference — two rooms off the
   // worst morning. Anything less is churn the office has to re-learn for nothing.
-  if (!plan.moves.length || ((peakBefore - peakAfter) < 2 && !plan.frees)) { state.eodLevelledOn = todayKey(); return { moves: 0 }; }
+  // ...OR IT TAKES A MORNING OFF SOMEBODY. The building's peak is one measure of "worth
+  // disturbing the schedule for" and it is blind to the case the office actually reports:
+  // one cleaner carrying four rooms on a Tuesday and two on a Monday while the building's
+  // own count is flat. Lifting one room off anybody's worst morning is worth a move.
+  const ownerGain = (plan.ownerPeakBefore || 0) - (plan.ownerPeakAfter || 0);
+  if (!plan.moves.length || ((peakBefore - peakAfter) < 2 && !plan.frees && ownerGain < 1)) { state.eodLevelledOn = todayKey(); return { moves: 0 }; }
   state.eodLevelledOn = todayKey();
   state.lastEodLevel = {
     day: todayKey(),
@@ -4327,6 +4374,26 @@ function areaWorkCard(a, opts) {
   }
   sel.onchange = (e) => setAreaAssign(a.id, e.target.value);
   row.appendChild(sel);
+  item.appendChild(row);
+
+  // WHO ELSE IS ON IT. The dropdown names the one who answers for the area; these name
+  // everybody else walking it with them. Only offered once somebody is answerable —
+  // "also on it" means nothing until there is an it to be on.
+  if (a.assignedTo) {
+    const withRow = el(`<div style="display:flex;flex-wrap:wrap;gap:5px;padding:0 9px 8px 40px;align-items:center"></div>`);
+    withRow.appendChild(el(`<div style="font-size:10px;color:#5f7189;font-weight:700">Also on it:</div>`));
+    const others = pool.filter((p) => p.id !== a.assignedTo);
+    const chosen = Array.isArray(a.assignedWith) ? a.assignedWith : [];
+    others.forEach((p) => {
+      const on = chosen.indexOf(p.id) >= 0;
+      const b = el(`<button class="freqmini ${on ? 'on' : ''}" style="flex:0 0 auto;padding:5px 9px;font-size:10px">`
+        + `${on ? '✓ ' : ''}${esc(p.name.split(' ')[0])}</button>`);
+      b.onclick = () => toggleAreaHelper(a.id, p.id);
+      withRow.appendChild(b);
+    });
+    if (!others.length) withRow.appendChild(el(`<div style="font-size:10px;color:#8a99ab">nobody else in</div>`));
+    item.appendChild(withRow);
+  }
 
   // The controls belong to one area at a time. Repeated on every row they tripled the
   // height of the list to show a frequency that's already printed next to the name.
@@ -4335,7 +4402,6 @@ function areaWorkCard(a, opts) {
     more.onclick = () => { _areaCtlOpen = _areaCtlOpen === a.id ? null : a.id; render(); };
     row.appendChild(more);
   }
-  item.appendChild(row);
 
   // Buildings tab only — on Roll Call these would be rows of controls nobody uses at 7am.
   if (opts.manage && _areaCtlOpen === a.id) {
@@ -4667,7 +4733,41 @@ function removeArea(id) {
 }
 function setAreaFreq(id, freq) { const a = state.areas.find(x=>x.id===id); if (a) a.freq = freq; save(); render(); }
 function setAreaKind(id, kind) { const a = state.areas.find(x=>x.id===id); if (a) a.kind = kind; save(); render(); }
-function setAreaAssign(id, pid) { const a = state.areas.find(x=>x.id===id); if (a) a.assignedTo = pid || null; save(); render(); }
+function setAreaAssign(id, pid) {
+  const a = state.areas.find(x=>x.id===id);
+  if (a) {
+    a.assignedTo = pid || null;
+    // Somebody cannot be their own second pair of hands.
+    if (pid && Array.isArray(a.assignedWith)) a.assignedWith = a.assignedWith.filter((x) => x !== pid);
+  }
+  save(); render();
+}
+// MORE THAN ONE PERSON ON A COMMUNAL AREA. A room is one cleaner's; the corridors, the
+// lobby and the stairwells are walks of the building that two people do together, and
+// the app could only ever name one of them. The second name was then carried in
+// somebody's head, which is the same as not being on the board at all.
+//
+// One of them still ANSWERS for it — that is assignedTo, and it is what the counts and
+// the columns are built on, so a shared area is still one job done once rather than two
+// jobs half-counted. The others are named alongside.
+function toggleAreaHelper(id, pid) {
+  const a = (state.areas || []).find((x) => x.id === id);
+  if (!a || !pid) return;
+  if (a.assignedTo === pid) return;                 // already answerable for it
+  const cur = Array.isArray(a.assignedWith) ? a.assignedWith.slice() : [];
+  const at = cur.indexOf(pid);
+  if (at >= 0) cur.splice(at, 1); else cur.push(pid);
+  a.assignedWith = cur.length ? cur : null;
+  save(); render();
+}
+// The names to print after a shared area, on the phone and on the wall alike. Empty for
+// an area one person holds, which is most of them — it must not add noise to those.
+function areaHelpers(a) {
+  if (!a || !Array.isArray(a.assignedWith)) return [];
+  return a.assignedWith
+    .map((id) => (state.staff || []).find((p) => p.id === id))
+    .filter(Boolean);
+}
 function renameArea(id, label) { const a = state.areas.find(x=>x.id===id); if (a && label.trim()) a.label = label.trim(); state.editingArea=null; save(); render(); }
 function startEditArea(id){ state.editingArea = id; render(); }
 
@@ -7072,54 +7172,83 @@ function viewRollCall() {
       + (toCheck.length ? ` · <b style="color:#b45309">${toCheck.length} to check</b>` : '')
       + (doneR.length ? ` · <span style="color:#15803d">${doneR.length} done</span>` : '')
       + `</div>`));
-    const chips = el('<div style="display:flex;flex-wrap:wrap;gap:6px"></div>');
-    todaysRooms.forEach((u) => {
-      const done = cleanedToday(u);
-      const who = (state.staff || []).find((p) => p.id === u.assignedTo);
-      // A room the customer asked for first thing reads RED here, the same red the
-      // Plan chips and the TV board already use for it — one colour for one fact, so
-      // the early round is seen at a glance instead of being a 🌅 to hunt for.
-      // Done still wins: a room that is cleaned is finished, however early it was due.
-      const early = !done && timeSlot(u) === 'early';
-      const tone = done ? 'background:#eaf7ee;border-color:#bfe3ca;color:#15803d'
-        : early ? 'background:#fee2e2;border-color:#dc2626;color:#b91c1c;font-weight:800'
-        : who ? 'background:#eef6fd;border-color:#cfe8fb;color:#0369a1'
-        : 'background:#fff7ed;border-color:#fcd9a8;color:#b45309';
-      const signed = who && assignConfirmedToday(u);
-      const noRecord = !lastCleanDate(u);
-      const tip = (early ? 'Wanted first thing — ' : '')
-        + (done ? 'Cleaned today'
-        : noRecord ? 'No record of this room ever being cleaned'
-        : who ? (signed ? 'Confirmed for ' + who.name : 'Suggested for ' + who.name + ' — not checked yet')
-        : 'Not assigned yet');
-      const chip = el(`<button class="freqmini" style="flex:0 0 auto;padding:6px 10px;${tone}" title="${esc(tip)} — tap to mark clean, hold to see why it is on today">`
-        + `${flags(u)}${esc(u.unit)}`
-        + `${done ? ' ✓' : who ? ' · ' + esc(who.name.split(' ')[0]) + (signed ? '' : ' ?') : ''}</button>`);
-      // TAP TICKS IT OFF. This screen is where the office actually stands while the
-      // round is running, and the thing they came to do is say a room is finished —
-      // which until now meant leaving here, finding the room on another tab and
-      // ticking it there. Tapping opened an explanation instead, which is a fine
-      // answer to a question nobody was asking at that moment.
-      //
-      // The explanation is kept, on a press-and-hold. "Why is this room here?" is a
-      // real question, just a rarer one than "that one's done", and the rarer of two
-      // actions is the one that should cost the extra half-second.
-      let held = false, holdT = null;
-      const startHold = () => {
-        held = false;
-        clearTimeout(holdT);
-        holdT = setTimeout(() => { held = true; showDueReason(u); }, 550);
-      };
-      const endHold = () => clearTimeout(holdT);
-      chip.addEventListener('pointerdown', startHold);
-      ['pointerup', 'pointerleave', 'pointercancel'].forEach((ev) => chip.addEventListener(ev, endHold));
-      chip.onclick = () => {
-        if (held) { held = false; return; }   // the hold already answered
-        toggleServicedDone(u.id);
-      };
-      chips.appendChild(chip);
+    // THE PHONE IS LAID OUT LIKE THE WALL. The board groups the morning into a column
+    // per cleaner; the roll call listed the same rooms as one flat run of chips, so the
+    // two screens showed the same work in two shapes and could not be read against each
+    // other. "The roll doesn't mirror the TV" was that, every time.
+    //
+    // Both now come off tvColumns(), so they cannot disagree about who has what — the
+    // order, the grouping and the jobs are one calculation with two renderings. The
+    // difference that remains is the one that should: this one you can tap.
+    const board = el('<div></div>');
+    const unitById = {};
+    (state.servicedUnits || []).forEach((x) => { unitById[x.id] = x; });
+    const areaById = {};
+    (state.areas || []).forEach((a) => { areaById[a.id] = a; });
+    tvColumns().forEach((c) => {
+      const openJobs = c.jobs.filter((j) => !j.done).length;
+      const blk = el(`<div style="margin:0 0 10px;padding:8px 10px;border-radius:8px;`
+        + `background:${c.none ? '#fff7ed' : '#f7f9fc'};border:1px solid ${c.none ? '#fcd9a8' : '#e6ecf3'}"></div>`);
+      const head = el('<div style="display:flex;align-items:baseline;gap:6px;margin-bottom:6px"></div>');
+      head.appendChild(el(`<div style="font-size:12px;font-weight:800;color:${c.none ? '#b45309' : '#243b53'}">`
+        + `${esc(c.none ? 'NOBODY YET' : c.name)}</div>`));
+      // Exactly what the wall says under the name, so the two read alike.
+      const sub = [c.team || '', c.with || '', c.out ? 'AWAY' : '', c.at ? 'in ' + c.at : ''].filter(Boolean).join(' · ');
+      if (sub) head.appendChild(el(`<div style="font-size:11px;color:#5f7189;font-weight:600">${sub}</div>`));
+      head.appendChild(el(`<div style="margin-left:auto;font-size:11px;font-weight:700;`
+        + `color:${openJobs ? '#5f7189' : '#15803d'}">${c.jobs.length - openJobs}/${c.jobs.length}</div>`));
+      blk.appendChild(head);
+      if (!c.jobs.length) blk.appendChild(el(`<div style="font-size:11px;color:#8a99ab">—</div>`));
+      const row = el('<div style="display:flex;flex-wrap:wrap;gap:6px"></div>');
+      c.jobs.forEach((j) => {
+        const u = j.area ? null : unitById[j.id];
+        const a = j.area ? areaById[j.id] : null;
+        if (!u && !a) return;
+        const done = j.done;
+        const early = !done && j.early;
+        const tone = done ? 'background:#eaf7ee;border-color:#bfe3ca;color:#15803d'
+          : early ? 'background:#fee2e2;border-color:#dc2626;color:#b91c1c;font-weight:800'
+          : c.none ? 'background:#fff7ed;border-color:#fcd9a8;color:#b45309'
+          : j.area ? 'background:#f3efff;border-color:#ddd0fb;color:#6d28d9'
+          : 'background:#eef6fd;border-color:#cfe8fb;color:#0369a1';
+        const signed = u && u.assignedTo && assignConfirmedToday(u);
+        const tip = j.area ? 'Communal area — tap to tick it off'
+          : (early ? 'Wanted first thing — ' : '')
+            + (done ? 'Cleaned today'
+              : !lastCleanDate(u) ? 'No record of this room ever being cleaned'
+              : c.none ? 'Not assigned yet'
+              : signed ? 'Confirmed for ' + c.name
+              : 'Suggested for ' + c.name + ' — not checked yet');
+        const chip = el(`<button class="freqmini" style="flex:0 0 auto;padding:7px 10px;${tone}" `
+          + `title="${esc(tip)}${j.area ? '' : ' — tap to mark clean, hold to see why it is on today'}">`
+          + `${j.area ? '' : flags(u)}${esc(j.label)}`
+          + `${done ? ' ✓' : (!j.area && !c.none && !signed) ? ' ?' : ''}</button>`);
+        if (j.area) {
+          chip.onclick = () => toggleAreaDone(a.id);
+        } else {
+          // TAP TICKS IT OFF, HOLD SAYS WHY IT IS HERE. This screen is where the office
+          // stands while the round runs, and the thing they came to do is say a room is
+          // finished. The explanation is the rarer question, so it costs the half-second.
+          let held = false, holdT = null;
+          const startHold = () => {
+            held = false;
+            clearTimeout(holdT);
+            holdT = setTimeout(() => { held = true; showDueReason(u); }, 550);
+          };
+          const endHold = () => clearTimeout(holdT);
+          chip.addEventListener('pointerdown', startHold);
+          ['pointerup', 'pointerleave', 'pointercancel'].forEach((ev) => chip.addEventListener(ev, endHold));
+          chip.onclick = () => {
+            if (held) { held = false; return; }   // the hold already answered
+            toggleServicedDone(u.id);
+          };
+        }
+        row.appendChild(chip);
+      });
+      blk.appendChild(row);
+      board.appendChild(blk);
     });
-    box.appendChild(chips);
+    box.appendChild(board);
     // Sits under the chips so the counts above stay the first thing read.
     // WHY THE LIST IS THIS LONG, NAMED. "Why is 102 coming up?" was being asked room
     // by room, and the answer was only ever available by opening each one. Every room
@@ -8911,6 +9040,7 @@ function tvJobsByPerson() {
   };
   todaysRoomList().forEach((u) => {
     bucket(u.assignedTo).push({
+      id: u.id,
       label: u.unit,
       done: cleanedToday(u),
       early: timeSlot(u) === 'early',
@@ -8918,7 +9048,12 @@ function tvJobsByPerson() {
     });
   });
   areasInterior().forEach((a) => {
-    bucket(a.assignedTo).push({ label: a.label, done: areaDone(a), early: false, area: true });
+    const h = areaHelpers(a);
+    bucket(a.assignedTo).push({
+      id: a.id,
+      label: a.label + (h.length ? ' + ' + h.map((p) => p.name.split(' ')[0]).join(', ') : ''),
+      done: areaDone(a), early: false, area: true,
+    });
   });
   // Red first, then whatever is still open, then the finished ones out of the way.
   Object.keys(buckets).forEach((k) => {
