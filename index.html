@@ -4434,6 +4434,12 @@ function areaWorkCard(a, opts) {
     const open = _areaWithOpen === a.id;
     if (!open) {
       const names = areaHelpers(a).map((p) => p.name.split(' ')[0]);
+      if (!names.length) {
+        const quick = el(`<button class="freqmini" style="flex:0 0 auto;padding:5px 9px;font-size:10px;`
+          + `border-color:#0284c7;color:#0369a1">Everyone in</button>`);
+        quick.onclick = () => setAreaEveryone(a.id);
+        withRow.appendChild(quick);
+      }
       const add = el(`<button class="freqmini" style="flex:0 0 auto;padding:5px 9px;font-size:10px;`
         + (names.length ? 'border-color:#0284c7;color:#0369a1' : '') + `">`
         + (names.length ? `＋ with ${esc(names.join(', '))}` : '＋ someone else') + `</button>`);
@@ -4449,6 +4455,10 @@ function areaWorkCard(a, opts) {
         withRow.appendChild(b);
       });
       if (!others.length) withRow.appendChild(el(`<div style="font-size:10px;color:#8a99ab">nobody else in</div>`));
+      const everyone = el(`<button class="freqmini" style="flex:0 0 auto;padding:5px 9px;font-size:10px;`
+        + `border-color:#0284c7;color:#0369a1;font-weight:800">Everyone in</button>`);
+      everyone.onclick = () => setAreaEveryone(a.id);
+      withRow.appendChild(everyone);
       const shut = el(`<button class="freqmini" style="flex:0 0 auto;padding:5px 9px;font-size:10px">Done</button>`);
       shut.onclick = () => { _areaWithOpen = null; render(); };
       withRow.appendChild(shut);
@@ -4840,6 +4850,25 @@ function toggleAreaHelper(id, pid) {
   const at = cur.indexOf(pid);
   if (at >= 0) cur.splice(at, 1); else cur.push(pid);
   a.assignedWith = cur.length ? cur : null;
+  save(); render();
+}
+// EVERYONE, IN ONE TAP. A communal space is not one person's job — the corridors, the
+// lobby and the stairwells are the building's, and on most mornings the answer to "who
+// is on this" is "whoever is in". Adding seven names one at a time is how a true answer
+// turns into a wrong one: the office taps three, gets interrupted, and the board says
+// three people are on a walk the whole crew did.
+function setAreaEveryone(id) {
+  const a = (state.areas || []).find((x) => x.id === id);
+  if (!a) return;
+  // The people who could actually be on it: leaders who are in. Nobody badged in yet —
+  // early, or the reader is behind — falls back to the whole roster rather than nobody.
+  const leaders = cleaningStaff().filter((p) => p.isLeader);
+  const inNow = leaders.filter((p) => hikArrivals[p.id]);
+  const pool = inNow.length ? inNow : leaders;
+  if (!pool.length) return;
+  if (!a.assignedTo || !pool.some((p) => p.id === a.assignedTo)) a.assignedTo = pool[0].id;
+  const rest = pool.filter((p) => p.id !== a.assignedTo).map((p) => p.id);
+  a.assignedWith = rest.length ? rest : null;
   save(); render();
 }
 // The names to print after a shared area, on the phone and on the wall alike. Empty for
@@ -9956,7 +9985,18 @@ function render() {
   searchBtn.onclick = openSearch;
   topbar.appendChild(searchBtn);
   header.appendChild(topbar);
-  header.appendChild(el(`<div class="h-eyebrow">66-UNIT BUILDING · 11 FLOORS</div>`));
+  // WHICH VERSION AM I LOOKING AT? Every report today of "it still does the old thing"
+  // could have been either a broken fix or a browser two deploys behind, and there was
+  // no way to tell them apart from the screen. document.lastModified is the file's own
+  // date, so the stamp cannot lie about which build is running.
+  const built = (() => {
+    try {
+      const d = new Date(document.lastModified);
+      return isNaN(d) ? '' : d.toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    } catch (e) { return ''; }
+  })();
+  header.appendChild(el(`<div class="h-eyebrow">66-UNIT BUILDING · 11 FLOORS`
+    + (built ? ` · BUILD ${esc(built)}` : '') + `</div>`));
   const ROOMS_TITLE = { all: 'All Rooms', airbnb: 'Airbnb Rooms', office: 'Office Cleaning', building: 'Building Cleaning' };
   const titles = { more:'More', rollcall:'Morning Roll Call', building:'Floors & Common Areas', exterior:'Exterior', history:'Cleaning History', team:'Team', settings:'Settings', plan:'Plan a Day', rooms: ROOMS_TITLE[roomsFilter()], tonight:'Tonight’s Round', tick:'Tick Off' };
   // A tab with no view renders an empty screen, so never trust it blindly:

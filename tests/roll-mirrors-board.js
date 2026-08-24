@@ -148,6 +148,22 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
     shared.counted === 4 && shared.rows === 5, JSON.stringify(shared));
   check('and one of them still answers for it', shared.answerable === 'p1', JSON.stringify(shared));
 
+  // A communal space is the building's, not one person's: whoever is in is on it.
+  const everyone = await page.evaluate(() => {
+    setAreaEveryone('corridors');
+    const a = state.areas.find((x) => x.id === 'corridors');
+    const cols = tvColumns();
+    return {
+      onIt: [a.assignedTo].concat(a.assignedWith || []).sort(),
+      columns: cols.filter((c) => c.jobs.some((j) => j.area && j.id === 'corridors')).length,
+      counted: countJobs(cols).all,
+    };
+  });
+  check('"Everyone in" puts the whole crew on a communal space',
+    JSON.stringify(everyone.onIt) === JSON.stringify(['p1', 'p2']), JSON.stringify(everyone));
+  check('and it is on every one of their boards', everyone.columns === 2, JSON.stringify(everyone));
+  check('still counted once, however many are on it', everyone.counted === 4, JSON.stringify(everyone));
+
   await page.waitForTimeout(400);
   const after = await page.locator('.body').first().textContent();
   check('the phone names them too', /Corridors \+ Hodan/.test(after), 'not found on the ticking screen');
