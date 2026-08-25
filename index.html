@@ -6422,8 +6422,8 @@ function planBoard(day) {
         chip.appendChild(el(`<span class="bd-lbl" style="cursor:default">`
           + `${esc(String(j.label).replace(/^Unit\s+/, ''))}</span>`));
         const grip = el(`<button class="bd-grip" title="Drag onto somebody, or tap then tap a person">⠿</button>`);
-        let from = null, ghost = null, moved = false;
-        const killGhost = () => { if (ghost) { ghost.remove(); ghost = null; } };
+        let from = null, moved = false;
+
         grip.addEventListener('pointerdown', (e) => {
           from = { x: e.clientX, y: e.clientY }; moved = false;
           if (grip.setPointerCapture) grip.setPointerCapture(e.pointerId);
@@ -6432,32 +6432,26 @@ function planBoard(day) {
           if (!from) return;
           if (!moved && Math.abs(e.clientX - from.x) + Math.abs(e.clientY - from.y) < 8) return;
           moved = true;
-          if (!ghost) {
-            ghost = el(`<div style="position:fixed;z-index:9999;pointer-events:none;padding:9px 13px;`
-              + `border-radius:9px;background:#0284c7;color:#fff;font-weight:800;font-size:14px;`
-              + `box-shadow:0 8px 22px rgba(0,0,0,0.45)">${esc(String(j.label).replace(/^Unit\s+/, ''))}</div>`);
-            document.body.appendChild(ghost);
-          }
-          ghost.style.left = (e.clientX + 12) + 'px';
-          ghost.style.top = (e.clientY - 16) + 'px';
+          dragGhost(String(j.label).replace(/^Unit\s+/, ''));
+          moveGhost(e.clientX, e.clientY);
           e.preventDefault();
         });
         grip.addEventListener('pointerup', (e) => {
-          killGhost();
+          clearGhost();
           if (moved) {
             const t = document.elementFromPoint(e.clientX, e.clientY);
             const drop = t && t.closest && t.closest('[data-plandrop]');
             if (drop) {
               const to = drop.getAttribute('data-plandrop');
               setPlanAssignee(day, j.key, to === '__none__' ? '' : to);
-            } else { render(); }
+            }
           } else {
             _picked = (_picked && _picked.planKey === j.key) ? null : { planKey: j.key, label: j.label };
             render();
           }
           from = null; moved = false;
         });
-        grip.addEventListener('pointercancel', () => { killGhost(); from = null; moved = false; });
+        grip.addEventListener('pointercancel', () => { clearGhost(); from = null; moved = false; });
         chip.appendChild(grip);
         row.appendChild(chip);
       });
@@ -7194,14 +7188,40 @@ let _giveTo = null;        // whose card is showing the "give them more work" li
 // dragging at all. So the same gesture degrades honestly: TAP the job to pick it up,
 // tap the person to put it down. One rule, two devices, and the tap works on both.
 let _picked = null;        // { kind, id, label } — a job in the hand, waiting for a name
+
+// THE THING UNDER YOUR FINGER, AND ONLY ONE OF THEM.
+// The ghost used to be created by whichever chip you grabbed and removed by that same
+// chip on pointerup. Re-render mid-drag — a sync landing, a tick saving — and that chip
+// is rebuilt, its listeners go with it, and the ghost is left floating over the board
+// for ever: 1102 stuck across Mahad Hussein's card at nine in the morning. One ghost
+// now, owned by the page, cleared on every render and on any pointerup anywhere.
+let _ghost = null;
+function dragGhost(label) {
+  if (!_ghost) {
+    _ghost = el(`<div style="position:fixed;left:0;top:0;z-index:9999;pointer-events:none;`
+      + `padding:9px 13px;border-radius:9px;background:#0284c7;color:#fff;font-weight:800;`
+      + `font-size:14px;box-shadow:0 8px 22px rgba(0,0,0,0.45);will-change:transform"></div>`);
+    document.body.appendChild(_ghost);
+  }
+  _ghost.textContent = label;
+  return _ghost;
+}
+function moveGhost(x, y) {
+  // transform, not left/top: the browser can move it without laying the page out again,
+  // which is the difference between the chip following your hand and lagging behind it.
+  if (_ghost) _ghost.style.transform = `translate3d(${x + 12}px, ${y - 16}px, 0)`;
+}
+function clearGhost() { if (_ghost) { _ghost.remove(); _ghost = null; } }
+window.addEventListener('pointerup', () => { setTimeout(clearGhost, 0); });
+window.addEventListener('pointercancel', clearGhost);
 function assignPicked(kind, id, pid) {
   if (kind === 'area') setAreaAssign(id, pid);
   else setUnitAssignee(id, pid);
   _picked = null;
 }
 function dragToAssign(node, kind, id, label) {
-  let from = null, ghost = null, moved = false;
-  const kill = () => { if (ghost) { ghost.remove(); ghost = null; } };
+  let from = null, moved = false;
+
   node.addEventListener('pointerdown', (e) => {
     from = { x: e.clientX, y: e.clientY, mouse: e.pointerType === 'mouse' };
     moved = false;
@@ -7211,24 +7231,17 @@ function dragToAssign(node, kind, id, label) {
     if (!from || !from.mouse) return;                 // a finger moving is the page scrolling
     if (!moved && Math.abs(e.clientX - from.x) + Math.abs(e.clientY - from.y) < 8) return;
     moved = true;
-    if (!ghost) {
-      ghost = el(`<div style="position:fixed;z-index:9999;pointer-events:none;padding:8px 12px;`
-        + `border-radius:8px;background:#0284c7;color:#fff;font-weight:800;font-size:13px;`
-        + `box-shadow:0 6px 18px rgba(0,0,0,0.25)">${esc(label)}</div>`);
-      document.body.appendChild(ghost);
-    }
-    ghost.style.left = (e.clientX + 12) + 'px';
-    ghost.style.top = (e.clientY - 14) + 'px';
+    dragGhost(String(label));
+    moveGhost(e.clientX, e.clientY);
     e.preventDefault();
   });
   node.addEventListener('pointerup', (e) => {
-    kill();
+    clearGhost();
     if (moved) {
       // Whatever is under the pointer, or the nearest thing above it that accepts a job.
       const t = document.elementFromPoint(e.clientX, e.clientY);
       const drop = t && t.closest && t.closest('[data-drop]');
       if (drop) assignPicked(kind, id, drop.getAttribute('data-drop'));
-      else render();
     } else {
       // A tap: pick it up, or put down the one already in hand.
       _picked = (_picked && _picked.id === id) ? null : { kind, id, label };
@@ -7397,8 +7410,8 @@ function viewTick() {
         // should have the room — a finger dragging down a screen is the page scrolling,
         // so touch gets the two-tap version of the same gesture.
         const grip = el(`<button class="bd-grip" title="Drag to move, or tap then tap a person">⠿</button>`);
-        let from = null, ghost = null, moved = false;
-        const killGhost = () => { if (ghost) { ghost.remove(); ghost = null; } };
+        let from = null, moved = false;
+
         grip.addEventListener('pointerdown', (e) => {
           from = { x: e.clientX, y: e.clientY, mouse: e.pointerType === 'mouse' };
           moved = false;
@@ -7408,23 +7421,16 @@ function viewTick() {
           if (!from) return;
           if (!moved && Math.abs(e.clientX - from.x) + Math.abs(e.clientY - from.y) < 8) return;
           moved = true;
-          if (!ghost) {
-            ghost = el(`<div style="position:fixed;z-index:9999;pointer-events:none;padding:9px 13px;`
-              + `border-radius:9px;background:#0284c7;color:#fff;font-weight:800;font-size:14px;`
-              + `box-shadow:0 8px 22px rgba(0,0,0,0.45)">${esc(j.label)}</div>`);
-            document.body.appendChild(ghost);
-          }
-          ghost.style.left = (e.clientX + 12) + 'px';
-          ghost.style.top = (e.clientY - 16) + 'px';
+          dragGhost(String(j.label));
+          moveGhost(e.clientX, e.clientY);
           e.preventDefault();
         });
         grip.addEventListener('pointerup', (e) => {
-          killGhost();
+          clearGhost();
           if (moved) {
             const t = document.elementFromPoint(e.clientX, e.clientY);
             const drop = t && t.closest && t.closest('[data-drop]');
             if (drop) assignPicked(kind, j.id, drop.getAttribute('data-drop'));
-            else render();
           } else {
             // A tap on the grip: pick it up, or put down the one already in hand.
             _picked = (_picked && _picked.id === j.id) ? null : { kind, id: j.id, label: j.label };
@@ -7432,7 +7438,7 @@ function viewTick() {
           }
           from = null; moved = false;
         });
-        grip.addEventListener('pointercancel', () => { killGhost(); from = null; moved = false; });
+        grip.addEventListener('pointercancel', () => { clearGhost(); from = null; moved = false; });
         chip.appendChild(grip);
         row.appendChild(chip);
       });
@@ -10595,6 +10601,7 @@ function render() {
   // One entry point, so every existing caller — realtime, save, the arrival
   // poller — lands on the board without knowing the board exists.
   if (TV_MODE) { renderTV(); return; }
+  clearGhost();                       // nothing left floating from a drag that is over
   const app = document.getElementById('app');
   app.innerHTML = '';
   const now = new Date();
