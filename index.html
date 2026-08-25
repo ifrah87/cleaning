@@ -223,12 +223,18 @@
      times a day and it must never cost them a thought. Moving a room is the rarer,
      more deliberate act, so it gets its own grip on the edge: nothing is picked up by
      accident, and a mis-tap is a tick that untaps rather than a room in somebody's hand. */
-  .bd-job { min-height: 46px; min-width: 76px; border: 0; border-left: 5px solid #3d557f;
-            border-radius: 9px; background: #1c2b45; color: #dce8f8; font-size: 16px;
-            font-weight: 800; font-variant-numeric: tabular-nums;
+  /* A chip is as wide as its name and no wider than the card it is in. "Main Lobby/Office
+     · Hoolka & Xafiiska" is three times the width of "402", and without the cap it simply
+     ran off the edge, taking its grip with it — the name was cut off and the one part you
+     drag by was unreachable. Long names wrap inside the chip now. */
+  .bd-job { min-height: 46px; min-width: 76px; max-width: 100%; border: 0;
+            border-left: 5px solid #3d557f; border-radius: 9px; background: #1c2b45;
+            color: #dce8f8; font-size: 16px; font-weight: 800;
+            font-variant-numeric: tabular-nums;
             display: flex; align-items: stretch; overflow: hidden; }
-  .bd-lbl { flex: 1; min-width: 0; padding: 11px 12px; cursor: pointer; text-align: center;
-            background: transparent; border: 0; color: inherit; font: inherit; }
+  .bd-lbl { flex: 1 1 auto; min-width: 0; padding: 11px 12px; cursor: pointer; text-align: center;
+            background: transparent; border: 0; color: inherit; font: inherit;
+            overflow-wrap: anywhere; line-height: 1.25; }
   .bd-job.area .bd-lbl { text-align: left; }
   .bd-grip { flex: 0 0 auto; width: 26px; display: flex; align-items: center; justify-content: center;
              cursor: grab; color: #7f9abf; font-size: 13px; background: rgba(255,255,255,0.06);
@@ -859,6 +865,14 @@ function cleaningStaff() {
   return (tagged.length ? tagged : (state.staff || []).slice())
     .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, { numeric: true, sensitivity: 'base' }));
 }
+// WHO IS IN THE ROOM HAND-OUT. The Lead crew is the offsite job, the Mosque and the
+// communal round — a walk of the building rather than a floor of rooms. Left in the
+// deal they counted as a cleaner carrying nothing, so they read as the lightest person
+// on the board every morning and the levelling pass pulled rooms off other people's
+// floors to feed them. They are still handed communal work; they are simply not part
+// of the count that decides who is light on rooms.
+const LEAD_CREW = 'Lead';
+const takesRooms = (p) => !!p && String((p.crew || '')).trim() !== LEAD_CREW;
 function buildUnits() {
   const u = [];
   const floors = (state && state.floors) ? state.floors : DEFAULT_FLOORS;
@@ -3584,7 +3598,7 @@ function runAutoAssign(rooms, people, inIds, load, slotSeed, silent) {
   // so any earlier sign-off for today is void.
   rooms.forEach((u) => { u.assignedTo = null; delete state.assignConfirmed[u.id]; });
 
-  const order = people.map((p) => p.id);   // clocked-in ids, earliest arrival first
+  const order = people.filter(takesRooms).map((p) => p.id);   // clocked-in ids, earliest arrival first
   const staffById = {};
   for (const s of (state.staff || [])) staffById[s.id] = s;
   // Nobody gets handed a kind of room they aren't cleared for — a trainee kept off
@@ -3809,14 +3823,35 @@ function runAutoAssign(rooms, people, inIds, load, slotSeed, silent) {
   // Second in the order, so a room with no preference is always spent first and a
   // preference is only disturbed when nothing else will close the gap.
   const timedButMovable = (u) => !u.usualTo && !withFloorOwner(u) && timeSlot(u) !== 'any';
-  let moved = 0;
+  // A FLOOR IS A STRONG PREFERENCE, NOT A PROMISE — PAST A POINT. Freezing every room
+  // that sits with its floor's owner keeps people off the stairs, but it also meant a
+  // day whose floors fell unevenly STAYED uneven: one leader carrying four rooms while
+  // another held one, and the pass that exists to prevent exactly that watching it
+  // happen with nothing it was allowed to move. Four-and-one is not geography worth
+  // protecting — it is somebody finishing at ten while somebody else is still going.
+  //
+  // So a floor-owned room may move after all, but only once the board is three or more
+  // apart, and only until the gap is back to two: the extremes go, the floors otherwise
+  // hold. Last in the order, so a room with no claim on it is always spent first and a
+  // floor is disturbed only when nothing else will close the gap.
+  //
+  // A room TIED TO A PERSON (usualTo) is still absolute. That is the office deciding
+  // this room is that person's, and a rule of thumb does not overrule a decision.
+  const floorOwned = (u) => !u.usualTo && withFloorOwner(u);
+  const LEVEL_FLOORS_AT = 3;              // gap at which a floor stops being a promise
+  let moved = 0, offFloor = 0;
   for (let guard = rooms.length * 4; guard > 0; guard -= 1) {
     const ranked = order.slice().sort((a, b) => load[a] - load[b]);
     const hi = ranked[ranked.length - 1];
-    if (load[hi] - load[ranked[0]] <= 1) break;             // as even as it can get
+    const gap = load[hi] - load[ranked[0]];
+    if (gap <= 1) break;                                    // as even as it can get
     let done = false;
-    // Unpinned rooms first, everywhere they can help, before disturbing any pin.
-    for (const pass of [freeToMove, timedButMovable]) {
+    // Unpinned rooms first, everywhere they can help, before disturbing any pin — and
+    // a floor is only opened up once the round is wide enough to be worth the walking.
+    const passes = gap >= LEVEL_FLOORS_AT
+      ? [freeToMove, timedButMovable, floorOwned]
+      : [freeToMove, timedButMovable];
+    for (const pass of passes) {
       for (const lo of ranked) {
         if (load[hi] - load[lo] <= 1) break;
         if (!underCap(lo)) continue;   // never level a room ONTO a leader who is full
@@ -3828,6 +3863,7 @@ function runAutoAssign(rooms, people, inIds, load, slotSeed, silent) {
         const ms = timeSlot(move);
         if (ms !== 'any') { slotLoad[ms][hi] -= 1; slotLoad[ms][lo] = (slotLoad[ms][lo] || 0) + 1; }
         move.assignedTo = lo; load[hi] -= 1; load[lo] += 1; moved += 1;
+        if (pass === floorOwned) offFloor += 1;
         done = true; break;
       }
       if (done) break;
@@ -3837,6 +3873,10 @@ function runAutoAssign(rooms, people, inIds, load, slotSeed, silent) {
 
   const notes = [];
   if (moved) notes.push(`${moved} moved to even it out`);
+  // Taking somebody off their own floor is a cost, so it is named rather than done
+  // quietly: the office should see that the round was lopsided enough to be worth it.
+  if (offFloor) notes.push(`${offFloor} taken off their own floor — the round was `
+    + `${LEVEL_FLOORS_AT} or more apart`);
   // More asked-for rooms than the crew in can hold is the normal early morning, not a
   // fault. The rooms are not lost — the next person through the door picks them up —
   // but the office has to be able to see that is what happened.
@@ -5643,7 +5683,7 @@ function autoPlanDay(day) {
   const plan = getPlan(day);
   // Marked sick or off is a statement about today, so it only overrides the rota
   // for today — a rota says who is expected next Thursday, not who is ill now.
-  const crew = cleaningStaff().filter((p) => worksOnDay(p, day) && !(day === todayKey() && isAway(p.id)))
+  const crew = cleaningStaff().filter((p) => takesRooms(p) && worksOnDay(p, day) && !(day === todayKey() && isAway(p.id)))
     .slice().sort((a, b) => String(a.name).localeCompare(String(b.name)));
   if (!crew.length) return { assigned: 0, crew: 0, reason: 'nobody is rostered on' };
   const unitById = {};
@@ -5705,16 +5745,20 @@ function autoPlanDay(day) {
     });
   };
   deal('early'); deal('late'); deal(null);
-  // Communal areas go out too. They were left for the morning to decide, which in
-  // practice meant nobody was named on them and they got missed. No clearance test:
-  // an area is a walk of the building, not a kind of room somebody is signed off on.
+  // COMMUNAL AREAS STAY IN THE NOBODY BOX. They were dealt out here for a while,
+  // because leaving them for the morning had meant nobody was named on them and they
+  // got missed. Handing them out automatically fixed the wrong half of that: an area
+  // is a walk of the building, and who walks it depends on who is actually in and what
+  // the morning looks like — so the app was making a call the office wanted to make.
+  // Worse, an area counted towards a load, which quietly pushed rooms off their floor
+  // to compensate for a lobby nobody had agreed to yet.
+  //
+  // They are laid out on the day, unassigned, and picked up from the nobody box. The
+  // missed-area problem is a visibility one and belongs on the board, not here.
   const areaKeys = Object.keys(plan).filter((k) => plan[k].kind !== 'unit');
-  areaKeys.forEach((k) => { plan[k].assignedTo = null; });
-  areaKeys.forEach((k) => {
-    const pick = order.slice().sort((a, b) => (load[a] - load[b]) || (order.indexOf(a) - order.indexOf(b)))[0];
-    if (!pick) return;
-    plan[k].assignedTo = pick; load[pick] += 1;
-  });
+  // An area the office put on somebody by hand (byHand, set in setPlanAssignee) is a
+  // decision and stays exactly where it was put. Only the machine's own picks clear.
+  areaKeys.forEach((k) => { if (!plan[k].byHand) plan[k].assignedTo = null; });
 
   // Even it out, exactly as the morning does. A room the customer asked a time for
   // stays where it is; that was their decision, not a balancing one.
@@ -5776,7 +5820,15 @@ function rebuildPlanDay(day) {
     if (!wantKeys.has(k)) { delete plan[k]; removed += 1; }
   });
   const added = applySuggestions(day, want);
-  const dealt = (day === todayKey()) ? { assigned: 0 } : autoPlanDay(day);
+  // A DAY THAT HAS BEEN WORKED IS A RECORD, NOT A PLAN. Re-dealing only ever skipped
+  // TODAY, so pointing this at yesterday wiped every assignment and dealt the day
+  // again from scratch — nineteen of Aug 24's twenty rooms changed hands overnight,
+  // while the ticks stayed exactly where they were. The board then said a room had
+  // been cleaned by somebody who never touched it, and the week's history read as
+  // scatter because it had been re-scattered after the fact.
+  // Rooms can still be added or dropped to match the schedule; who did the work is
+  // no longer the schedule's to decide once the day has happened.
+  const dealt = (day <= workToday()) ? { assigned: 0 } : autoPlanDay(day);
   save();
   return { added, removed, assigned: dealt.assigned || 0 };
 }
@@ -8095,6 +8147,13 @@ function viewRollCall(opts) {
         + `${all - doneN}</div><div style="font-size:11px;font-weight:700;color:#5f7189">LEFT TODAY</div></div>`));
       sum.appendChild(el(`<div><div style="font-size:22px;font-weight:800;color:#15803d">${doneN}</div>`
         + `<div style="font-size:11px;font-weight:700;color:#5f7189">DONE</div></div>`));
+      if (state.lastEarlyEven && state.lastEarlyEven.day === workToday() && state.lastEarlyEven.moves.length) {
+        const m = state.lastEarlyEven.moves;
+        box.appendChild(el(`<div style="font-size:11px;color:#7ea6dc;font-weight:700;margin:-4px 0 8px">`
+          + `🌅 Early round levelled: `
+          + esc(m.map((x) => x.unit + ' → ' + String(x.to).split(' ')[0]).join(', '))
+          + ` — nobody starts on more than ${earlyCap()}.</div>`));
+      }
       const go = el(`<button class="freqmini" style="margin-left:auto;flex:0 0 auto;padding:10px 14px;`
         + `background:#15803d;border-color:#15803d;color:#ffffff;font-size:13px">✓ Tick off →</button>`);
       go.onclick = () => setTab('board');
@@ -11114,6 +11173,70 @@ function renderLogin() {
 // week, where boot runs once and the day rolls over without anything re-planning.
 // So the chain lives in its own function and a watcher re-runs it when the work day
 // changes, with nobody touching anything.
+// NOBODY STARTS THE MORNING HOLDING FOUR ASKED-FOR ROOMS.
+// The early rooms are the ones with a clock on them, and the hand-out has always had a
+// cap of two each — but the hand-out is switched off on this building, so nothing
+// enforced it. Pins do the allocating instead, and pins do not count: four early rooms
+// pinned to one person are four early rooms that person starts the day with.
+//
+// This levels the early round ONCE, at the first sight of the day, before anybody has
+// ticked anything — and then never again, which is the other half of what the office
+// asked for: no movement once people are working. It only ever takes an early room off
+// somebody holding more than the cap and gives it to somebody holding fewer. Nothing
+// else on the board is touched, no pin is changed, and every move it makes is stamped as
+// a decision so the day cannot re-deal it afterwards.
+function evenOutEarlyRooms() {
+  if (TV_MODE) return { moved: 0 };
+  const day = workToday();
+  if (state.earlyEvenedOn === day) return { moved: 0 };     // once a day, and once only
+  const cap = earlyCap();
+  const staffById = {};
+  (state.staff || []).forEach((p) => { staffById[p.id] = p; });
+  // Only people who could actually take one: on the crew, here, and cleared for the kind.
+  const takers = cleaningStaff().filter((p) => p.isLeader && !isAway(p.id) && worksToday(p));
+  if (takers.length < 2) return { moved: 0 };
+
+  const early = todaysRoomList().filter((u) => timeSlot(u) === 'early' && !cleanedToday(u));
+  if (!early.length) { state.earlyEvenedOn = day; return { moved: 0 }; }
+
+  const load = {};
+  takers.forEach((p) => { load[p.id] = 0; });
+  early.forEach((u) => { if (load[u.assignedTo] != null) load[u.assignedTo] += 1; });
+
+  const moves = [];
+  let guard = 0;
+  for (;;) {
+    if (++guard > 50) break;                                 // a loop that cannot run away
+    const over = Object.keys(load).filter((id) => load[id] > cap)
+      .sort((a, b) => load[b] - load[a])[0];
+    if (!over) break;
+    const under = Object.keys(load).filter((id) => load[id] < cap)
+      .sort((a, b) => load[a] - load[b] || String(staffById[a].name).localeCompare(String(staffById[b].name)))[0];
+    if (under === undefined) break;                          // everybody is at the cap already
+    const room = early.find((u) => u.assignedTo === over && !moves.some((m) => m.u.id === u.id)
+      && canCleanUnit(staffById[under], u));
+    if (!room) break;                                        // nothing of theirs the other may clean
+    moves.push({ u: room, from: over, to: under });
+    load[over] -= 1; load[under] += 1;
+  }
+
+  state.earlyEvenedOn = day;
+  if (!moves.length) return { moved: 0 };
+  moves.forEach((m) => {
+    m.u.assignedTo = m.to;
+    state.assignConfirmed[m.u.id] = todayKey();               // a decision: never re-dealt
+  });
+  // Said out loud on the morning screen, because a board that rearranges itself in
+  // silence is one nobody trusts.
+  state.lastEarlyEven = {
+    day,
+    moves: moves.map((m) => ({ unit: m.u.unit,
+      from: (staffById[m.from] || {}).name || '—', to: (staffById[m.to] || {}).name || '—' })),
+  };
+  save();
+  return { moved: moves.length };
+}
+
 function planningPass() {
   // THE BOARD PLANS NOTHING. maybeAutoAssign() has always known this — "a hand-out it
   // worked out would exist only on the TV, until the next pull wipes them" — but the
@@ -11134,6 +11257,7 @@ function planningPass() {
   ensureWeekPlanned();   // the week ahead is laid out and handed round without anyone asking
   topUpTodayPlan();      // and anything the schedule says is due today but the frozen plan missed
   carryPlanToBoardOnOpen();   // and last night's plan for today is on the board already
+  evenOutEarlyRooms();   // ...and nobody starts the day holding four asked-for rooms
 }
 
 let _plannedForDay = null;
