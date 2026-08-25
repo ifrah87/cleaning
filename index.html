@@ -191,6 +191,13 @@
              grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); }
   .bd-col { background: #101c30; border-radius: 12px; padding: 12px; margin: 0;
             display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  /* NOBODY YET holds everything nobody has been given, so on a morning where that is
+     most of the guest flats it is three times the size of any other card. Two columns
+     wide when it is carrying a crowd, so the chips lay out instead of stacking — but
+     only where there are two columns to span. Spanning two in a one-column grid does
+     not widen the card, it splits the whole board in half and squeezes every name on
+     the phone into a ribbon. */
+  @media (min-width: 900px) { .bd-col.wide2 { grid-column: span 2; } }
   .bd-col.none { background: #2b2008; }
   .bd-col.out  { background: #241a06; }
   .bd-hd { display: flex; align-items: baseline; gap: 8px; border-bottom: 1px solid #1e2f4d;
@@ -7358,7 +7365,8 @@ function viewTick() {
   fcols.forEach((c) => {
     const giving = _giveTo === c.key;
     if (!c.jobs.length && !giving) return;      // nothing to tick is nothing to show here
-    const col = el(`<div class="bd-col${c.none ? ' none' : ''}${c.out ? ' out' : ''}${_picked && !c.none ? ' drop' : ''}"></div>`);
+    const col = el(`<div class="bd-col${c.none ? ' none' : ''}${c.out ? ' out' : ''}`
+      + `${c.none && c.jobs.length > 6 ? ' wide2' : ''}${_picked && !c.none ? ' drop' : ''}"></div>`);
     if (!c.none) makeDropTarget(col, c.key);
 
     const hd = el('<div class="bd-hd"></div>');
@@ -9859,13 +9867,14 @@ function tvJobsByPerson() {
     return buckets[k];
   };
   todaysRoomList().forEach((u) => {
-    // THE GUEST FLATS GO IN ONE BOX. They are one job, worked as a block by whoever is
-    // free after the offices, and split across seven columns they read as seven people's
-    // odd jobs. This is where they SHOW; it is not who they belong to — the name on the
-    // room record is untouched, and is printed on the chip when there is one.
+    // THE FLATS NOBODY HOLDS GO IN ONE BOX — and the ones somebody holds go to them.
+    // Forcing every flat into NOBODY YET whatever its name said made the box a wall of
+    // eleven chips that never emptied, and worse: drag one onto a cleaner and it stayed
+    // put, because the display was pinning it there. The work moved and the board denied
+    // it. Unhanded flats still sit together, which is what that box is for.
     const air = unitType(u) === 'airbnb';
     const who = (state.staff || []).find((p) => p.id === u.assignedTo);
-    bucket(air ? null : u.assignedTo).push({
+    bucket(u.assignedTo).push({
       id: u.id,
       air,                               // its own colour, wherever it is handed
       late: timeSlot(u) === 'late',      // ...and after the morning round in the column
@@ -9888,7 +9897,7 @@ function tvJobsByPerson() {
   tvOffRollCall().forEach((u) => {
     const air = unitType(u) === 'airbnb';
     const who = (state.staff || []).find((p) => p.id === u.assignedTo);
-    bucket(air ? null : u.assignedTo).push({          // the flats share one box, as above
+    bucket(u.assignedTo).push({                       // handed flats go to their cleaner
       id: u.id, label: u.unit + (air && who ? ' · ' + who.name.split(' ')[0] : ''),
       done: cleanedToday(u), kind: unitType(u),
       early: timeSlot(u) === 'early', area: false, air,

@@ -201,7 +201,12 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
     return {
       hasOwnColumn: cols.some((c) => c.name && c.name.indexOf('Hodan') === 0),
       namedWithLeader: (cols.find((c) => (c.name || '').indexOf('Amina') === 0) || {}).with || '',
-      airIsDealt: !!(air && air.none),          // the flats share the NOBODY YET box
+      airIsDealt: !!(air && !air.none),         // a flat with a name goes to that person
+      airUnhandedInNobody: (() => {             // ...and one without sits in NOBODY YET
+        state.servicedUnits.push({ id: 'suA2', unit: 'A2', type: 'airbnb', freq: 'daily', preferLate: true });
+        const c = tvColumns().find((x) => x.jobs.some((j) => j.label === 'A2'));
+        return !!(c && c.none);
+      })(),
       // Afternoon work sits below the morning round. Finished jobs sort below both —
       // they are done — so the question is where it falls among what is still open.
       airIsLast: (() => {
@@ -216,11 +221,12 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
   check('they are named on their leader instead', /Hodan/.test(shape.namedWithLeader), shape.namedWithLeader);
   await page.waitForTimeout(400);
   const rollText = await page.locator('.body').first().textContent();
-  // THE FLATS SHARE ONE BOX. They are one job, worked as a block by whoever is free
-  // after the offices, and the office hands them out on finish times — so they are not
-  // dealt to a cleaner and they do not sit in anybody's column.
-  check('a guest flat sits in the NOBODY YET box, not a cleaner’s column',
-    shape.airIsDealt === true, JSON.stringify(shape));
+  // A FLAT GOES WHERE ITS NAME SAYS. Forcing every one into NOBODY YET made that box a
+  // wall of chips that never emptied — and worse, dragging one onto a cleaner left it
+  // sitting there, because the display was pinning it. Unhanded flats still sit together.
+  check('a guest flat with a name goes to that cleaner', shape.airIsDealt === true, JSON.stringify(shape));
+  check('and one nobody holds sits in the NOBODY YET box',
+    shape.airUnhandedInNobody === true, JSON.stringify(shape));
 
   // --- a button per kind of work, and the group's frequency behind it -------------
   await page.evaluate(() => setTab('board'));
