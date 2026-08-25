@@ -4561,12 +4561,13 @@ function areaWorkCard(a, opts) {
   // office unable to allocate at all — fall back to the full roster.
   // Leaders only here too. An area is a leader's job and an assistant works it with
   // them, so offering the assistant is offering a way to get it wrong.
-  // LEADERS, AND ONLY LEADERS. A communal walk is a leader's job — the bins included —
-  // and an assistant works it with them. Offering anybody else is offering a way to get
-  // it wrong, and the office has said plainly that these go to the team leaders.
-  const leaders = cleaningStaff().filter(p => p.isLeader);
-  const present = leaders.filter(p => hikArrivals[p.id]);
-  const pool = (presentOnly && present.length) ? present : leaders;
+  // LEADERS, AND THE OUTSIDE TEAM. A communal walk is a leader's job and an assistant
+  // works it with them, so offering assistants is offering a way to get it wrong. The
+  // outside team is the exception the building actually has: the bins go out with them.
+  // Everything else on this list is still a leader's.
+  const pickable = cleaningStaff().filter((p) => p.isLeader || tvOutside(p));
+  const present = pickable.filter(p => hikArrivals[p.id]);
+  const pool = (presentOnly && present.length) ? present : pickable;
   pool.forEach(p => {
     const o = el(`<option value="${esc(p.id)}">${esc(p.name)}</option>`);
     if (a.assignedTo === p.id) o.setAttribute('selected', '');
@@ -9949,6 +9950,12 @@ const tvOnTeam = (p) => {
   const c = String((p && p.crew) || '').trim();
   return !!c && !/outside/i.test(c);
 };
+// ...EXCEPT THAT THE OFFICE WANTS TO SEE THEM. The outside team are in the building
+// every day, they take work by hand, and a board that will not admit they exist is a
+// board somebody has to hold half of in their head. They get columns like everyone
+// else; nothing is dealt to them automatically, so an empty one says exactly what it
+// should — here, and free.
+const tvOutside = (p) => /outside/i.test(String((p && p.crew) || ''));
 
 // WHAT TIME SOMEBODY CAME IN. The badge data is already loaded for the roll call;
 // the board simply never showed it. Blank when there is no scan — Hik's Time Card
@@ -10036,7 +10043,7 @@ function tvColumns() {
     cols.push({ key: '__none__', name: 'NOBODY YET', jobs: unassigned, none: true, out: false, status: null });
   }
   const seen = {};
-  cleaningStaff().filter((p) => worksToday(p) && tvOnTeam(p) && !tvNamedElsewhere(p, spare)).forEach((p) => {
+  cleaningStaff().filter((p) => worksToday(p) && (tvOnTeam(p) || tvOutside(p)) && !tvNamedElsewhere(p, spare)).forEach((p) => {
     seen[p.id] = true;
     const st = state.attendance[p.id] || 'present';
     cols.push({
@@ -10187,7 +10194,7 @@ function tvCrewStrip() {
 // was never a cleaner.
 function tvAlsoIn() {
   return cleaningStaff()
-    .filter((p) => p && !tvOnTeam(p) && tvArrival(p))
+    .filter((p) => p && !tvOnTeam(p) && !tvOutside(p) && tvArrival(p))
     .sort((a, b) => String(tvArrival(a)).localeCompare(String(tvArrival(b))));
 }
 
