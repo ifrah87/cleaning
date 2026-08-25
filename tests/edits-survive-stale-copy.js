@@ -141,6 +141,53 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
   check('after two minutes stuck, an incoming copy is taken', deaf.floors === 12, JSON.stringify(deaf));
   check('and what it owed is still owed', deaf.stillOwed === true, JSON.stringify(deaf));
 
+  // --- THE ROSTER SURVIVES A STALE COPY, THE SAME WAY THE ROOMS DO -----------------
+  // The floor map was wiped twice in two days: the whole state travels as one blob, and
+  // staff was the one collection with no merge behind it, so a device whose roster
+  // predated the floors pushed its own and took every floor with it.
+  const roster = await page.evaluate((stale) => {
+    setFloorOwner(7, 'p1');                                  // give Amina floor 7 here
+    const before = (state.staff.find((x) => x.id === 'p1').floors || []).slice();
+    const stamped = !!state.staff.find((x) => x.id === 'p1').editedAt;
+    const old = JSON.parse(JSON.stringify(stale));           // a copy that never saw it
+    old._fromAnotherDevice = 9;
+    applyRemote(old);
+    const p = state.staff.find((x) => x.id === 'p1');
+    return { before, stamped, after: (p && p.floors) || [], names: state.staff.map((x) => x.name) };
+  }, APP_STATE).catch((e) => ({ error: String(e) }));
+  check('a floor handed to somebody is stamped with the moment it happened',
+    roster.stamped === true, JSON.stringify(roster));
+  check('and a roster that never saw it cannot take the floor back',
+    JSON.stringify(roster.after) === JSON.stringify(roster.before), JSON.stringify(roster));
+  check('the seeded demo crew is not smuggled onto a real building',
+    !(roster.names || []).some((n) => /Sofia Reyes|Jamal Brooks|Marcus Hill/.test(n)),
+    JSON.stringify(roster.names));
+
+  // --- somebody taken off the roster stays off it ----------------------------------
+  const gone = await page.evaluate((stale) => {
+    const u = state.servicedUnits.find((x) => x.unit === '401');
+    u.assignedTo = 'p1'; u.usualTo = 'p1';                   // their room and their pin
+    const ask = window.showConfirm;
+    window.showConfirm = (t, b, onYes) => onYes();           // take the confirm as read
+    removeEmployee('p1');
+    window.showConfirm = ask;
+    const afterDelete = state.staff.map((x) => x.id);
+    const room = state.servicedUnits.find((x) => x.unit === '401');
+    const held = { assignedTo: room.assignedTo, usualTo: room.usualTo };
+    const old = JSON.parse(JSON.stringify(stale));           // a copy that still has them
+    old._fromAnotherDevice = 10;
+    applyRemote(old);
+    return { afterDelete, held, back: state.staff.map((x) => x.id),
+             tomb: !!(state.removedStaff || {}).p1 };
+  }, APP_STATE).catch((e) => ({ error: String(e) }));
+  check('removing somebody takes them off the roster', !(gone.afterDelete || []).includes('p1'),
+    JSON.stringify(gone));
+  check('and hands back the room they were holding, tie and all',
+    gone.held && gone.held.assignedTo === null && gone.held.usualTo === null, JSON.stringify(gone.held));
+  check('it is written down that they went on purpose', gone.tomb === true, JSON.stringify(gone));
+  check('so a copy that still has them cannot bring them back',
+    !(gone.back || []).includes('p1'), JSON.stringify(gone.back));
+
   check('no console errors', errs.length === 0, errs.join('\n       '));
 
   await browser.close(); s.close();

@@ -865,14 +865,14 @@ function cleaningStaff() {
   return (tagged.length ? tagged : (state.staff || []).slice())
     .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, { numeric: true, sensitivity: 'base' }));
 }
-// WHO IS IN THE ROOM HAND-OUT. The Lead crew is the offsite job, the Mosque and the
-// communal round — a walk of the building rather than a floor of rooms. Left in the
-// deal they counted as a cleaner carrying nothing, so they read as the lightest person
-// on the board every morning and the levelling pass pulled rooms off other people's
-// floors to feed them. They are still handed communal work; they are simply not part
-// of the count that decides who is light on rooms.
-const LEAD_CREW = 'Lead';
-const takesRooms = (p) => !!p && String((p.crew || '')).trim() !== LEAD_CREW;
+// WHO IS IN THE ROOM HAND-OUT. "Rooms by hand only" (noAuto) already keeps somebody
+// out of the morning deal; it did not reach the planner, so a day laid out the night
+// before handed them rooms anyway and the office unpicked it again in the morning.
+// It matters more than a stray room now: carrying no floor and no rooms, they read as
+// the lightest person on the board, and levelling pulled rooms off other people's
+// floors to feed a round they were never meant to have. Communal work still goes to
+// them like anybody else — this is only the room count.
+const takesRooms = (p) => !!p && !noAuto(p);
 function buildUnits() {
   const u = [];
   const floors = (state && state.floors) ? state.floors : DEFAULT_FLOORS;
@@ -1866,6 +1866,49 @@ function applyRemote(saved) {
     if (mergedAreas.length !== beforeA) areasKept = Math.max(areasKept, 1);
   }
 
+  // THE ROSTER MERGES LIKE THE ROOMS DO. Everything else in this function already
+  // survives a stale copy — plans, rooms, areas, ticks — because each carries the
+  // moment it was last touched. Staff did not, and `state = { ...state, ...saved }`
+  // replaces the array outright, so the last device to push decided the whole roster:
+  // its floors, its teams, its "rooms by hand only" switches. A phone that had added
+  // people but never seen the floor map pushed both — the new people arrived and every
+  // floor went with them.
+  //
+  // Three rules, the same three the rooms get: a person edited here more recently than
+  // there keeps their edit; a person only this device has is kept and pushed rather
+  // than dropped; and a person deleted on purpose stays deleted, in both directions.
+  const goneStaff = { ...(saved.removedStaff || {}), ...(state.removedStaff || {}) };
+  const remoteStaff = Array.isArray(saved.staff) ? saved.staff : null;
+  let staffKept = 0, mergedStaff = remoteStaff;
+  if (remoteStaff) {
+    const mineStaff = {};
+    (state.staff || []).forEach((x) => { if (x && x.id) mineStaff[x.id] = x; });
+    mergedStaff = remoteStaff.map((x) => {
+      const mine = mineStaff[x.id];
+      if (!mine) return x;
+      // Newest hand edit wins, not the newest push. Mine fills over theirs so anything
+      // only their copy knows (a door-reader id, say) still comes through.
+      if (mine.editedAt && (!x.editedAt || String(mine.editedAt) > String(x.editedAt))) {
+        return { ...x, ...mine };
+      }
+      return x;
+    });
+    const haveStaff = new Set(remoteStaff.map((x) => x && x.id));
+    // ONLY SOMEBODY THIS DEVICE ACTUALLY ADDED IS RESCUED. Rooms can be rescued on id
+    // alone because an unsaved room does not exist until somebody makes one — but the
+    // roster is SEEDED with a demo crew (DEFAULT_STAFF) before the first pull lands, so
+    // "anybody the server has not got" meant Sofia Reyes and Jamal Brooks walking onto
+    // a real building's board and being dealt real rooms. A person added here carries
+    // the moment they were added (addEmployee stamps it); the seeded crew carries
+    // nothing, and nothing is what it is worth.
+    const extraP = (state.staff || []).filter((x) => x && x.editedAt && !haveStaff.has(x.id) && !goneStaff[x.id]);
+    mergedStaff = mergedStaff.concat(extraP);
+    staffKept = extraP.length;
+    const beforeP = mergedStaff.length;
+    mergedStaff = mergedStaff.filter((x) => !goneStaff[x.id]);
+    if (mergedStaff.length !== beforeP) staffKept = Math.max(staffKept, 1);
+  }
+
   if (mergedUnits) {
     const mineById = {};
     (state.servicedUnits || []).forEach((u) => { mineById[u.id] = u; });
@@ -1941,7 +1984,9 @@ function applyRemote(saved) {
   state.completions = mergedDone;
   state.untick = untick;
   if (mergedUnits) state.servicedUnits = mergedUnits;
-  if ((rescued || unitsKept || areasKept || ticksKept) && !TV_MODE) markDirty();   // ours to deliver — the server has not got these
+  if (mergedStaff) { state.staff = mergedStaff; STAFF = state.staff; }
+  state.removedStaff = goneStaff;
+  if ((rescued || unitsKept || areasKept || ticksKept || staffKept) && !TV_MODE) markDirty();   // ours to deliver — the server has not got these
   if (state.coverageDay !== todayKey()) { state.coverage = {}; state.unitCover = {}; state.pendingCover = null; state.coverageDay = todayKey(); }
   finalizeState();
   try { localStorage.setItem(STORE, JSON.stringify(state)); } catch (e) {}
@@ -4851,22 +4896,34 @@ function refreshTeamColors() { getTeams().forEach(t => { TEAM_COLORS[t.name] = t
 const allFloors = () => Array.from({ length: (state.floors || DEFAULT_FLOORS) }, (_, i) => i + 1);
 // A floor has ONE owner. Handing it to somebody therefore takes it off whoever had
 // it, rather than leaving the building with two people who each think it is theirs.
+// WHEN THIS PERSON WAS LAST EDITED BY HAND. Rooms have carried this for a while
+// (stampUnitEdit) and plans carry it too, because the whole state travels as one blob
+// and the last writer wins. Staff carried nothing — so a device whose roster predated
+// the floor map pushed its own copy and took every floor with it. That is what wiped
+// the floors on 24 and 25 Aug, and why Ahmed Daahir came back on Team A: the array is
+// replaced wholesale, so a roster that had never heard of the floors won on arrival.
+function stampStaffEdit(p) { if (p) p.editedAt = new Date().toISOString(); }
 function toggleFloorFor(pid, floor) {
   const p = (state.staff || []).find((x) => x.id === pid);
   if (!p) return;
   const mine = (p.floors || []).includes(floor);
   (state.staff || []).forEach((x) => {
-    if (Array.isArray(x.floors) && x.floors.includes(floor)) x.floors = x.floors.filter((f) => f !== floor);
+    if (Array.isArray(x.floors) && x.floors.includes(floor)) {
+      x.floors = x.floors.filter((f) => f !== floor); stampStaffEdit(x);
+    }
   });
   if (!mine) p.floors = (p.floors || []).concat(floor).sort((a, b) => a - b);
+  stampStaffEdit(p);
   save(); render();
 }
 function setFloorOwner(floor, pid) {
   (state.staff || []).forEach((x) => {
-    if (Array.isArray(x.floors) && x.floors.includes(floor)) x.floors = x.floors.filter((f) => f !== floor);
+    if (Array.isArray(x.floors) && x.floors.includes(floor)) {
+      x.floors = x.floors.filter((f) => f !== floor); stampStaffEdit(x);
+    }
   });
   const p = pid ? (state.staff || []).find((x) => x.id === pid) : null;
-  if (p) p.floors = (p.floors || []).concat(floor).sort((a, b) => a - b);
+  if (p) { p.floors = (p.floors || []).concat(floor).sort((a, b) => a - b); stampStaffEdit(p); }
   save(); render();
 }
 // The same allocation read the other way round: a person's row of floors.
@@ -4924,6 +4981,7 @@ function addEmployee(name, crew, floorsStr) {
     crew: crew || 'Team A',
     color: teamColor(crew),
     floors: parseFloors(floorsStr),
+    editedAt: new Date().toISOString(),
   });
   state.attendance[pid] = 'present';
   save(); render();
@@ -4934,6 +4992,7 @@ function editEmployee(id, name, crew, floorsStr) {
   if (name != null && name.trim()) p.name = name.trim();
   if (crew) { p.crew = crew; p.color = teamColor(crew); }
   if (floorsStr != null) p.floors = parseFloors(floorsStr);
+  stampStaffEdit(p);
   state.editingEmp = null;
   save(); render();
 }
@@ -4974,6 +5033,7 @@ function toggleNoAuto(id) {
   const p = (state.staff || []).find((s) => s.id === id);
   if (!p) return;
   if (p.noAuto) delete p.noAuto; else p.noAuto = true;
+  stampStaffEdit(p);
   save(); render();
 }
 function setRole(id, role) {
@@ -4981,11 +5041,12 @@ function setRole(id, role) {
   if (!p) return;
   p.isCleaner = role !== 'none';
   p.isLeader = role === 'leader';
+  stampStaffEdit(p);
   save(); render();
 }
 function toggleCleaner(id) {
   const p = state.staff.find((s) => s.id === id);
-  if (p) p.isCleaner = !p.isCleaner;
+  if (p) { p.isCleaner = !p.isCleaner; stampStaffEdit(p); }
   save(); render();
 }
 // Team leader — mark as many as you like. This used to allow exactly one per team
@@ -4995,6 +5056,7 @@ function toggleLeader(id) {
   const p = state.staff.find((s) => s.id === id);
   if (!p) return;
   p.isLeader = !p.isLeader;
+  stampStaffEdit(p);
   save(); render();
 }
 // Shifts — a person works Day (default), Afternoon, or Night. Tapping the chip
@@ -5050,11 +5112,37 @@ function cycleCleanType(id) {
   p.cleanType = TYPE_ORDER[(i + 1) % TYPE_ORDER.length];
   save(); render();
 }
+// IT SAID "REMOVED FROM ALL TEAMS AND ASSIGNMENTS" AND DID NEITHER. Taking somebody
+// off the roster dropped them from state.staff and state.attendance and stopped there,
+// so their id stayed on rooms, on areas and on every day already laid out — the board
+// then held work for a person who was not on it, and a room tied to them could not be
+// dealt to anybody. And with no tombstone they simply came back: the whole state is one
+// blob, so the next device that had not heard about the delete pushed them in again.
+// That is the same fault that kept resurrecting Trash / Recycling, which is why areas
+// have carried a tombstone since. Now so does a person.
 function removeEmployee(id) {
   showConfirm('Remove this employee?', 'They will be removed from all teams and assignments.', () => {
-    state.staff = state.staff.filter(p => p.id !== id);
+    state.staff = (state.staff || []).filter(p => p.id !== id);
     STAFF = state.staff;
     delete state.attendance[id];
+    // Written down that it went ON PURPOSE, so the delete cannot travel back.
+    if (!state.removedStaff) state.removedStaff = {};
+    state.removedStaff[id] = todayKey();
+    // Hand back everything that was theirs. A room tied to them loses the tie as well:
+    // the tie names a person, and there is no longer a person of that name.
+    (state.servicedUnits || []).forEach((u) => {
+      if (u.assignedTo === id) u.assignedTo = null;
+      if (u.usualTo === id) u.usualTo = null;
+    });
+    (state.areas || []).forEach((a) => {
+      if (a.assignedTo === id) a.assignedTo = null;
+      if (Array.isArray(a.assignedWith)) a.assignedWith = a.assignedWith.filter((x) => x !== id);
+    });
+    Object.keys(state.plans || {}).forEach((day) => {
+      Object.values(state.plans[day] || {}).forEach((j) => {
+        if (j && j.assignedTo === id) { j.assignedTo = null; delete j.byHand; }
+      });
+    });
     save(); render();
   });
 }
@@ -5716,7 +5804,25 @@ function autoPlanDay(day) {
   };
   const repeats = (id, u) => (u.lastCleanedBy && id === u.lastCleanedBy) ? 1 : 0;
 
-  keys.forEach((k) => { plan[k].assignedTo = null; });
+  // A ROOM SOMEBODY PUT ON A PERSON BY HAND SURVIVES A REBUILD. "Rebuild this day from
+  // the schedule" exists to re-cut which ROOMS fall on a day, but it re-dealt the
+  // cleaners too, so one tap undid an evening's arranging — the last remaining way to
+  // lose a day that had already been settled. The schedule has an opinion about which
+  // rooms are due; it has none about who they belong to once a person has said.
+  // Machine picks still clear and are dealt again, so a rebuild does what it says.
+  keys.forEach((k) => {
+    if (plan[k].byHand && plan[k].assignedTo) return;
+    plan[k].assignedTo = null;
+  });
+  // Hand-held rooms are counted before anything is dealt, or the deal hands somebody a
+  // full round on top of the rooms they are already holding.
+  keys.forEach((k) => {
+    const who = plan[k].byHand && plan[k].assignedTo;
+    if (!who || !(who in load)) return;
+    load[who] += 1;
+    const sl = timeSlot(roomOf(k));
+    if (sl !== 'any') slotLoad[sl][who] += 1;
+  });
   // ROOMS TIED TO ONE CLEANER FIRST, so their pins count towards the round before any
   // ordinary morning room is dealt. Otherwise somebody with two pinned early rooms is
   // dealt a full round on top of them and starts the day holding four.
