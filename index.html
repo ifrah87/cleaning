@@ -198,6 +198,12 @@
      not widen the card, it splits the whole board in half and squeezes every name on
      the phone into a ribbon. */
   @media (min-width: 900px) { .bd-col.wide2 { grid-column: span 2; } }
+  /* ...and three wide once it is carrying most of a morning, on a screen with
+     three columns to give it. The wall is read from across a room: chips that
+     wrap into a narrow ribbon are the thing that makes it unreadable. */
+  @media (min-width: 1300px) { .bd-col.wide3 { grid-column: span 3; } }
+  .bd-col.none { padding: 14px 16px; }
+  .bd-col.none .bd-chip, .bd-col.none .freqmini { padding: 8px 13px; }
   .bd-col.none { background: #2b2008; }
   .bd-col.out  { background: #241a06; }
   .bd-hd { display: flex; align-items: baseline; gap: 8px; border-bottom: 1px solid #1e2f4d;
@@ -239,6 +245,7 @@
   .bd-more { width: 100%; padding: 9px; border-radius: 8px; border: 1px dashed #3d557f;
              background: transparent; color: #7ea6dc; font-size: 11px; font-weight: 700; cursor: pointer; }
   .bd-col.drop { outline: 2px dashed #38bdf8; }
+  @media (hover: hover) { .bd-job { cursor: grab; } .bd-job:active { cursor: grabbing; } }
   .bd-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
   .bd-tab { flex: 1 1 0; min-width: 84px; padding: 11px 10px; border-radius: 9px;
             border: 1px solid #1e2f4d; background: #101c30; color: #7f9abf;
@@ -1564,9 +1571,36 @@ let _retryTimer = null;
 let _retryDelay = 0;
 let _pushing = false;
 
+const DIRTY_SINCE = DIRTY_KEY + '_since';
 function isDirty() { try { return localStorage.getItem(DIRTY_KEY) === '1'; } catch (e) { return false; } }
-function markDirty() { try { localStorage.setItem(DIRTY_KEY, '1'); } catch (e) {} }
-function clearDirty() { try { localStorage.removeItem(DIRTY_KEY); } catch (e) {} }
+function markDirty() {
+  try {
+    if (localStorage.getItem(DIRTY_KEY) !== '1') localStorage.setItem(DIRTY_SINCE, String(Date.now()));
+    localStorage.setItem(DIRTY_KEY, '1');
+  } catch (e) {}
+}
+function clearDirty() {
+  try { localStorage.removeItem(DIRTY_KEY); localStorage.removeItem(DIRTY_SINCE); } catch (e) {}
+}
+// How long this device has been sitting on something it could not send. Zero when there
+// is nothing owed, which is nearly always.
+function dirtyForMs() {
+  if (!isDirty()) return 0;
+  try {
+    const t = Number(localStorage.getItem(DIRTY_SINCE) || 0);
+    return t ? Math.max(0, Date.now() - t) : 0;
+  } catch (e) { return 0; }
+}
+// A DEVICE THAT CANNOT SEND MUST NOT GO DEAF FOR EVER.
+// Refusing an incoming copy while holding an unsent change is right for a moment: it
+// stops somebody else's older copy wiping a tick that has not gone up yet. But the push
+// can keep failing — a weak signal, a locked phone, a sleeping tab — and then that
+// device never accepts anything again. It sits on its own morning and pushes it at
+// everybody, which is how 1102 came to be cleaned on the laptop and not on the phone.
+// After two minutes it takes the incoming copy and merges: ticks are unioned, rooms and
+// areas it alone has seen survive, the newest hand edit wins. Nothing recorded is lost —
+// and what it owed is still owed, so it pushes straight afterwards.
+const DEAF_LIMIT_MS = 2 * 60 * 1000;
 
 // Debounced push: collapses a burst of saves into one network write.
 // COALESCE THE RUSH. Every save sends the WHOLE state and realtime then broadcasts it
@@ -1730,7 +1764,7 @@ function applyRemote(saved) {
   const serialized = JSON.stringify(saved);
   if (serialized === _lastRemoteJSON) return;   // this is our own write echoing back
   // Never discard a change this device has not delivered yet; send ours instead.
-  if (isDirty() && !TV_MODE) { pushNow(); return; }   // the board has nothing of its own to send
+  if (isDirty() && !TV_MODE && dirtyForMs() < DEAF_LIMIT_MS) { pushNow(); return; }
   _lastRemoteJSON = serialized;
   const keepTab = state.tab;
   // A DAY THAT ONLY THIS DEVICE HAS SEEN SURVIVES THE PULL.
@@ -1746,6 +1780,20 @@ function applyRemote(saved) {
   Object.keys(localPlans).forEach((d) => {
     if (mergedPlans[d] || !Object.keys(localPlans[d] || {}).length) return;
     mergedPlans[d] = localPlans[d]; rescued += 1;
+  });
+  // A DAY ARRANGED BY HAND HERE, MORE RECENTLY THAN THERE, STAYS. Same rule the rooms
+  // have. Without it a balanced morning could be undone a minute after it was made by
+  // any device that still held the old one — which is exactly what happened on 24 Aug.
+  const localEdited = state.planEdited || {};
+  const mergedEdited = { ...(saved.planEdited || {}) };
+  Object.keys(localEdited).forEach((d) => {
+    const mine = localEdited[d], theirs = mergedEdited[d];
+    if (!mine) return;
+    if (!theirs || String(mine) > String(theirs)) {
+      if (localPlans[d] && Object.keys(localPlans[d]).length) mergedPlans[d] = localPlans[d];
+      mergedEdited[d] = mine;
+      rescued += 1;
+    }
   });
   // A ROOM ONLY THIS DEVICE HAS SEEN SURVIVES THE PULL, for the same reason a plan
   // does: the whole state is one blob and the last writer wins, so adding rooms on
@@ -1874,6 +1922,7 @@ function applyRemote(saved) {
   }
   state.plans = mergedPlans;
   state.planSeeded = mergedSeeded;
+  state.planEdited = mergedEdited;
   state.removedUnits = gone;
   state.completions = mergedDone;
   state.untick = untick;
@@ -3323,7 +3372,18 @@ function maybeAutoAssign() {
   // more, it is a gap: nobody is coming to clean it. Those go back in the pool
   // however they were assigned, or they sit with an absent name against them all
   // morning and are simply never done.
-  const decided = (u) => (state.assignConfirmed || {})[u.id] === day && !isAway(u.assignedTo);
+  // ALLOCATED IS ALLOCATED. This used to protect only rooms carrying today's sign-off
+  // stamp — and the morning hand-out deletes that stamp from everything it deals, so
+  // every automatically-dealt room stayed fair game. The next person to badge in re-dealt
+  // the lot, and a room could move off somebody who had ALREADY CLEANED IT: 1102 was
+  // cleaned by Mahad Hussein at half past eight and was sitting in Team E's column by
+  // noon, with Mahad's name still on the clean. A cleaner cannot work a board that is
+  // rewritten underneath them. So a room with a name on it KEEPS that name, however it
+  // got there, and only rooms nobody holds are dealt out to whoever turns up next.
+  //
+  // The one exception stays what it was: a room held for somebody marked AWAY is not a
+  // decision, it is a gap — nobody is coming to clean it — so those go back in the pool.
+  const decided = (u) => !isAway(u.assignedTo);
   // A PLAN MADE THE NIGHT BEFORE IS THE DECISION, NOT A SUGGESTION. If the office sat
   // down and set who takes what, the morning hands out exactly that — it does not
   // re-deal the day because the split is uneven or because more people turned up than
@@ -6175,6 +6235,7 @@ function planPool() {
   return [...rooms, ...areas];
 }
 function togglePlanJob(day, kind, id, label) {
+  stampPlanEdit(day);
   const plan = getPlan(day); const k = planKey(kind, id);
   // Taking a job off a day is a decision, and it has to outlast the next re-sync —
   // otherwise the schedule quietly puts it back and it looks like the tap did nothing.
@@ -6194,7 +6255,16 @@ function unmarkPlanDropped(day, k) {
   delete d[k];
   if (!Object.keys(d).length) delete state.planDropped[day];
 }
+// WHEN THIS DAY WAS LAST ARRANGED BY A PERSON. Rooms carry this already: the newest
+// hand edit wins the merge rather than the newest push. A day's plan carried nothing, so
+// a device with an older copy could — and did — undo a morning that had just been laid
+// out. Stamped on every hand move, and read in applyRemote.
+function stampPlanEdit(day) {
+  if (!state.planEdited) state.planEdited = {};
+  state.planEdited[day] = new Date().toISOString();
+}
 function setPlanAssignee(day, k, pid) {
+  stampPlanEdit(day);
   const plan = getPlan(day);
   // MARK IT AS A HUMAN DECISION. Every hand move — the drag, the move sheet, the
   // dropdown — comes through here, and the re-sync needs to tell a room somebody
@@ -7260,7 +7330,7 @@ function dragToAssign(node, kind, id, label) {
     }
     from = null; moved = false;
   });
-  node.addEventListener('pointercancel', () => { kill(); from = null; moved = false; });
+  node.addEventListener('pointercancel', () => { clearGhost(); from = null; moved = false; });
 }
 // Anything that can be given a job says so, once, in one place.
 function makeDropTarget(node, pid) {
@@ -7279,9 +7349,19 @@ function viewTick() {
   // GROUP's frequency can sensibly be changed, because a group is what you are looking at.
   const filter = state.tickFilter || 'all';
   const keep = (j) => filter === 'all' ? true : filter === 'area' ? !!j.area : (!j.area && j.kind === filter);
-  const fcols = cols.map((c) => Object.assign({}, c, { jobs: c.jobs.filter(keep) }));
-  const counted = countJobs(fcols);
+  const kcols = cols.map((c) => Object.assign({}, c, { jobs: c.jobs.filter(keep) }));
+  // THE TALLY COUNTS THE WHOLE ROUND, whatever the board is showing. Hiding the done
+  // rooms must not make the morning look like it has not been started — the counts are
+  // the one thing on this screen that has to mean the same at nine as it does at six.
+  const counted = countJobs(kcols);
   const all = counted.all, done = counted.done, left = all - done;
+  // CLEARING THE WALL. A ticked room stays on the board all day so the morning can be
+  // read off it in one look, which is right until the board is mostly ✓ and the work
+  // that is LEFT is the thing you cannot find. A switch, not a rule: the rooms are still
+  // there, and one tap brings them back.
+  const fcols = state.hideDone
+    ? kcols.map((c) => Object.assign({}, c, { jobs: c.jobs.filter((j) => !j.done) }))
+    : kcols;
 
   // ONE SURFACE. The counts, the buttons and the close-out used to be pale controls
   // stacked above a dark board, so the screen read as two designs meeting in the middle.
@@ -7309,6 +7389,12 @@ function viewTick() {
   tally.appendChild(el(`<b style="color:${left ? '#fbbf24' : '#22c55e'}">${left}</b>`));
   tally.appendChild(el(`<span>left</span>`));
   tally.appendChild(el(`<span style="margin-left:auto;color:#22c55e">${done} done</span>`));
+  if (done || state.hideDone) {
+    const hd = el(`<button class="bd-tab ${state.hideDone ? 'on' : ''}" style="flex:0 0 auto;margin-left:10px">`
+      + (state.hideDone ? `Show ${done} done` : `Hide ${done} done`) + `</button>`);
+    hd.onclick = () => { state.hideDone = !state.hideDone; save(); render(); };
+    tally.appendChild(hd);
+  }
   top.appendChild(tally);
 
   // HOW OFTEN THIS KIND IS CLEANED, from the screen where you are looking at it. Offered
@@ -7366,7 +7452,7 @@ function viewTick() {
     const giving = _giveTo === c.key;
     if (!c.jobs.length && !giving) return;      // nothing to tick is nothing to show here
     const col = el(`<div class="bd-col${c.none ? ' none' : ''}${c.out ? ' out' : ''}`
-      + `${c.none && c.jobs.length > 6 ? ' wide2' : ''}${_picked && !c.none ? ' drop' : ''}"></div>`);
+      + `${c.none && c.jobs.length > 8 ? ' wide3' : c.none && c.jobs.length > 3 ? ' wide2' : ''}${_picked && !c.none ? ' drop' : ''}"></div>`);
     if (!c.none) makeDropTarget(col, c.key);
 
     const hd = el('<div class="bd-hd"></div>');
@@ -7412,7 +7498,12 @@ function viewTick() {
         // THE LABEL IS THE TICK. Twenty times a day, one tap, no thought.
         const lbl = el(`<button class="bd-lbl" style="touch-action:manipulation">`
           + `${j.early && !j.done ? '🌅 ' : ''}${esc(j.label)}${j.done ? ' ✓' : ''}</button>`);
+        // ...unless the tap was the end of a drag. Letting go of a room over somebody
+        // else's column fires a click on the label on the way out, and the room you just
+        // moved would tick itself off as done. Swallow exactly that one click.
+        let swallowClick = false;
         lbl.onclick = () => {
+          if (swallowClick) { swallowClick = false; return; }
           if (_picked && _picked.id === j.id) { _picked = null; render(); return; }
           if (j.area) toggleAreaDone(a.id); else toggleServicedDone(u.id);
         };
@@ -7452,6 +7543,47 @@ function viewTick() {
         });
         grip.addEventListener('pointercancel', () => { clearGhost(); from = null; moved = false; });
         chip.appendChild(grip);
+
+        // THE WHOLE CHIP IS THE GRIP, FOR A MOUSE.
+        // Aiming a mouse at a 14px ⠿ to move a room is a fiddle, and the room you were
+        // trying to move looked like it refused to move at all: press anywhere else on
+        // the chip and nothing happens, press the label and it ticks itself off. With a
+        // pointer you can see, the whole chip is the handle. A FINGER dragging a chip is
+        // the board being scrolled — which is the entire reason the grip exists — so
+        // touch is left exactly as it was.
+        let cFrom = null, cMoved = false;
+        chip.addEventListener('pointerdown', (e) => {
+          if (e.pointerType !== 'mouse') return;
+          if (e.target.closest && e.target.closest('.bd-grip')) return;   // the grip has its own
+          cFrom = { x: e.clientX, y: e.clientY }; cMoved = false;
+          // NOT captured yet. Capturing on pointerdown makes the chip the target of the
+          // click that follows, so the click never reaches the label inside it and a tap
+          // stops ticking the room off — the one thing on this board done twenty times a
+          // day. Capture only once the pointer has actually travelled, by which point it
+          // is a drag and there is no tap left to break.
+        });
+        chip.addEventListener('pointermove', (e) => {
+          if (!cFrom) return;
+          if (!cMoved && Math.abs(e.clientX - cFrom.x) + Math.abs(e.clientY - cFrom.y) < 8) return;
+          if (!cMoved && chip.setPointerCapture) { try { chip.setPointerCapture(e.pointerId); } catch (err) {} }
+          cMoved = true;
+          dragGhost(String(j.label));
+          moveGhost(e.clientX, e.clientY);
+          e.preventDefault();
+        });
+        chip.addEventListener('pointerup', (e) => {
+          if (!cFrom) return;
+          clearGhost();
+          if (cMoved) {
+            swallowClick = true;
+            const t = document.elementFromPoint(e.clientX, e.clientY);
+            const drop = t && t.closest && t.closest('[data-drop]');
+            if (drop) assignPicked(kind, j.id, drop.getAttribute('data-drop'));
+          }
+          cFrom = null; cMoved = false;
+        });
+        chip.addEventListener('pointercancel', () => { clearGhost(); cFrom = null; cMoved = false; });
+
         row.appendChild(chip);
       });
       col.appendChild(row);
@@ -10702,6 +10834,22 @@ function render() {
       + `<div style="font-size:12px;font-weight:700;color:#7f9abf">${esc(dateStr)}</div></div>`));
   }
   bar.appendChild(el(`<div style="flex:1"></div>`));
+  // IS THIS SCREEN TELLING ME THE TRUTH? A board nobody can tell is stale is worse than
+  // no board — the televisions have said so in the corner since the day they went up,
+  // and every phone and laptop said nothing at all. So a room ticked on the laptop and
+  // not on the phone looked like a bug in the ticking rather than one screen being
+  // behind. Three states, and only the middle one needs anybody to do anything.
+  {
+    const owed = dirtyForMs();
+    const dot = owed > DEAF_LIMIT_MS ? ['#f59e0b', 'not sent yet']
+      : owed ? ['#7ea6dc', 'saving…']
+      : offlineMode ? ['#f59e0b', 'offline']
+      : ['#22c55e', 'up to date'];
+    const sync = el(`<div title="${esc(owed ? 'This device is holding a change it has not managed to send' : 'This device has the current board')}" `
+      + `style="display:flex;align-items:center;gap:5px;font-size:11px;font-weight:700;color:${dot[0]}">`
+      + `<span style="width:7px;height:7px;border-radius:4px;background:${dot[0]};display:inline-block"></span>${dot[1]}</div>`);
+    bar.appendChild(sync);
+  }
   const searchBtn = el(`<button class="tb-btn">⌕</button>`);
   searchBtn.onclick = openSearch;
   bar.appendChild(searchBtn);

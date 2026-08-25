@@ -108,6 +108,39 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
   check('an area the office added is still there', (r.areas || []).includes('OFFSITE- 2 DHAGAX'), (r.areas || []).join(', '));
   check('an area the office deleted does not come back', !(r.areas || []).includes('Main Lobby/Office'), (r.areas || []).join(', '));
   check('and the deletion is recorded so it keeps biting', (r.tombstoned || []).includes('lobby'), JSON.stringify(r.tombstoned));
+  // --- a morning arranged by hand is not undone by an older copy --------------------
+  const plan = await page.evaluate((stale) => {
+    const day = workToday();
+    // Lay a day out and hand one job to somebody, here, now.
+    togglePlanJob(day, 'unit', 'su401', 'Unit 401');
+    const k = Object.keys(state.plans[day])[0];
+    setPlanAssignee(day, k, 'p1');
+    const mine = JSON.parse(JSON.stringify(state.plans[day]));
+    localStorage.removeItem('cleaning_app_v5_dirty');
+    // A device that still holds the day as it was before pushes its copy.
+    const older = JSON.parse(JSON.stringify(stale));
+    older.plans = { [day]: {} };
+    older.planEdited = { [day]: '2000-01-01T00:00:00.000Z' };
+    older._fromAnotherDevice = 2;
+    applyRemote(older);
+    return { after: state.plans[day], mineKeys: Object.keys(mine) };
+  }, { ...APP_STATE, _fromAnotherDevice: 1 }).catch((e) => ({ error: String(e) }));
+  check('a plan made by hand survives an older copy landing on it',
+    plan.after && Object.keys(plan.after).length === plan.mineKeys.length, JSON.stringify(plan));
+
+  // --- a device that cannot send does not go deaf for ever -------------------------
+  const deaf = await page.evaluate((stale) => {
+    markDirty();
+    try { localStorage.setItem('cleaning_app_v5_dirty_since', String(Date.now() - 5 * 60 * 1000)); } catch (e) {}
+    const incoming = JSON.parse(JSON.stringify(stale));
+    incoming._fromAnotherDevice = 3;
+    incoming.floors = 12;                       // something plainly new to notice
+    applyRemote(incoming);
+    return { floors: state.floors, stillOwed: isDirty() };
+  }, { ...APP_STATE, _fromAnotherDevice: 1 }).catch((e) => ({ error: String(e) }));
+  check('after two minutes stuck, an incoming copy is taken', deaf.floors === 12, JSON.stringify(deaf));
+  check('and what it owed is still owed', deaf.stillOwed === true, JSON.stringify(deaf));
+
   check('no console errors', errs.length === 0, errs.join('\n       '));
 
   await browser.close(); s.close();
