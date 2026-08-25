@@ -4561,15 +4561,12 @@ function areaWorkCard(a, opts) {
   // office unable to allocate at all — fall back to the full roster.
   // Leaders only here too. An area is a leader's job and an assistant works it with
   // them, so offering the assistant is offering a way to get it wrong.
-  // LEADERS, AND THE OUTSIDE TEAM. An area is normally a leader's job and an assistant
-  // works it with them, so offering assistants is offering a way to get it wrong. The
-  // outside team is the exception the building actually has: the bins go out with them,
-  // not with a leader's round, and until now they could not be given the job at all —
-  // they are not leaders, so they were not on the list.
-  const outside = (p) => /outside/i.test(String(p.crew || ''));
-  const pickable = cleaningStaff().filter((p) => p.isLeader || outside(p));
-  const present = pickable.filter(p => hikArrivals[p.id]);
-  const pool = (presentOnly && present.length) ? present : pickable;
+  // LEADERS, AND ONLY LEADERS. A communal walk is a leader's job — the bins included —
+  // and an assistant works it with them. Offering anybody else is offering a way to get
+  // it wrong, and the office has said plainly that these go to the team leaders.
+  const leaders = cleaningStaff().filter(p => p.isLeader);
+  const present = leaders.filter(p => hikArrivals[p.id]);
+  const pool = (presentOnly && present.length) ? present : leaders;
   pool.forEach(p => {
     const o = el(`<option value="${esc(p.id)}">${esc(p.name)}</option>`);
     if (a.assignedTo === p.id) o.setAttribute('selected', '');
