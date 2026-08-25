@@ -10042,10 +10042,39 @@ function tvColumns() {
   if (unassigned.length) {
     cols.push({ key: '__none__', name: 'NOBODY YET', jobs: unassigned, none: true, out: false, status: null });
   }
+  // A CREW WITH NO LEADER IS A PAIR, AND A PAIR IS ONE COLUMN.
+  // Where a team has a leader, the board names the others beside them — "with Nur Ali
+  // Sidow" — because the work is the leader's round and they are on it. The outside team
+  // has no leader: two people who go round together, and neither of them is the one it
+  // belongs to. So they share a column with both names on it, Mohamed Salaal / Nur Ali
+  // Sidow, and whatever either of them is holding is in it.
+  const crewOf = (p) => String((p && p.crew) || '').trim();
+  const pairMates = (p) => {
+    const c = crewOf(p);
+    if (!c) return null;
+    const mates = cleaningStaff().filter((x) => crewOf(x) === c && worksToday(x) && tvHere(x));
+    if (mates.length < 2 || mates.some((x) => x.isLeader)) return null;
+    return mates.sort((a, b) => String(tvArrival(b) ? 0 : 1).localeCompare(String(tvArrival(a) ? 0 : 1))
+      || String(a.name).localeCompare(String(b.name)));
+  };
+
   const seen = {};
   cleaningStaff().filter((p) => worksToday(p) && (tvOnTeam(p) || tvOutside(p)) && !tvNamedElsewhere(p, spare)).forEach((p) => {
+    const pair = pairMates(p);
+    if (pair && pair[0].id !== p.id) { seen[p.id] = true; return; }   // their mate carries the column
     seen[p.id] = true;
     const st = state.attendance[p.id] || 'present';
+    if (pair) {
+      pair.forEach((x) => { seen[x.id] = true; });
+      cols.push({
+        key: p.id,                                   // work dropped on the pair lands on them
+        name: pair.map((x) => tvName(x)).join(' / '),
+        jobs: pair.reduce((all, x) => all.concat(grouped.buckets[x.id] || []), []),
+        none: false, out: AWAY.indexOf(st) >= 0, status: st, with: '',
+        team: tvTeam(p), at: tvArrival(p), left: tvLeft(p), note: p.note || '',
+      });
+      return;
+    }
     cols.push({
       key: p.id, name: tvName(p), jobs: grouped.buckets[p.id] || [],
       none: false, out: AWAY.indexOf(st) >= 0, status: st, with: tvWithLabel(p, spare),
@@ -10082,9 +10111,17 @@ function tvColumns() {
     // on the board purely because "Outside team" sorts before "Team A". Somebody in
     // with nothing on them is worth showing — it is how you notice a spare pair of
     // hands — but at the end, not in the place the eye lands first.
+    // ...AND A TEAMMATE WITH NOTHING STAYS WITH THEIR TEAM. An empty column sorts last,
+    // because on a wall full of work it reads as somebody with nothing to do — but that
+    // separated a pair who work together: Salaal with the bins near the front, Nur empty
+    // and stranded on the bottom row, when the whole point is that they are one team
+    // standing next to each other. Empty AND nobody on your crew is working: last.
+    // Empty while your crew has work: beside them.
+    const crewWorking = {};
+    cols.forEach((c) => { if (c.team && c.jobs.length) crewWorking[c.team] = true; });
     const rank = (c) => c.none ? 0
       : (c.out && c.jobs.some((j) => !j.done)) ? 1
-      : c.jobs.length ? 2 : 3;
+      : (c.jobs.length || (c.team && crewWorking[c.team])) ? 2 : 3;
     // Teamless people sort last rather than under an empty heading, so "Outside team"
     // sits at the end where it reads as the exception it is.
     const teamKey = (c) => (c.team ? '0' + c.team.toLowerCase() : '1');
