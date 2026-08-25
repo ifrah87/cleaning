@@ -4561,9 +4561,15 @@ function areaWorkCard(a, opts) {
   // office unable to allocate at all — fall back to the full roster.
   // Leaders only here too. An area is a leader's job and an assistant works it with
   // them, so offering the assistant is offering a way to get it wrong.
-  const leaders = cleaningStaff().filter(p => p.isLeader);
-  const present = leaders.filter(p => hikArrivals[p.id]);
-  const pool = (presentOnly && present.length) ? present : leaders;
+  // LEADERS, AND THE OUTSIDE TEAM. An area is normally a leader's job and an assistant
+  // works it with them, so offering assistants is offering a way to get it wrong. The
+  // outside team is the exception the building actually has: the bins go out with them,
+  // not with a leader's round, and until now they could not be given the job at all —
+  // they are not leaders, so they were not on the list.
+  const outside = (p) => /outside/i.test(String(p.crew || ''));
+  const pickable = cleaningStaff().filter((p) => p.isLeader || outside(p));
+  const present = pickable.filter(p => hikArrivals[p.id]);
+  const pool = (presentOnly && present.length) ? present : pickable;
   pool.forEach(p => {
     const o = el(`<option value="${esc(p.id)}">${esc(p.name)}</option>`);
     if (a.assignedTo === p.id) o.setAttribute('selected', '');
@@ -10042,11 +10048,14 @@ function tvColumns() {
       team: tvTeam(p), at: tvArrival(p), left: tvLeft(p), note: p.note || '',
     });
   });
-  // Somebody off the rota still holding work has to show, or that work vanishes.
+  // Somebody off the rota still holding work has to show, or that work vanishes — and
+  // that now includes the outside team. They are kept off the board when they are
+  // holding nothing, because an empty column on a wall full of work reads as somebody
+  // with nothing to do. Give one of them the bins and the job has to be visible.
   (state.staff || []).forEach((p) => {
-    // ...and "still holding work" means work of their own, not a name on somebody
-    // else's walk — otherwise being put on the corridors buys a column by the back door.
-    if (seen[p.id] || !tvOnTeam(p) || spare(p)) return;
+    // "Still holding work" means work of their own, not a name on somebody else's walk —
+    // otherwise being put on the corridors buys a column by the back door.
+    if (seen[p.id] || spare(p)) return;
     const st = state.attendance[p.id] || 'present';
     cols.push({
       key: p.id, name: tvName(p), jobs: grouped.buckets[p.id],
