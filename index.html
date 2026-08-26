@@ -6245,9 +6245,29 @@ function autoPlanDay(day) {
     const u = roomOf(k);
     return !!u && !u.usualTo && timeSlot(u) === 'any' && !withOwner(k);
   };
+  // A MORNING PREFERENCE SAYS WHEN, NOT WHO — the morning hand-out learned this and
+  // this pass never did. It would only ever move a room with no time on it, and with 17
+  // of 24 rooms marked early and one marked late, that left it almost nothing it was
+  // allowed to touch: Mahamed Nur held four rooms — one late, one pinned, two early —
+  // and not one could legally move, at any threshold, while two people sat on two rooms
+  // each. Moving a room to a different cleaner does not change its time. It is still the
+  // early round; it is simply carried by somebody who is not already holding four.
+  //
+  // Second in the order, so a room with no preference is always spent first.
+  const timedButMovable = (k) => {
+    const u = roomOf(k);
+    return !!u && !u.usualTo && timeSlot(u) !== 'any' && !withOwner(k);
+  };
   const movableFromFloor = (k) => {
     const u = roomOf(k);
-    return !!u && !u.usualTo && timeSlot(u) === 'any' && withOwner(k);
+    return !!u && !u.usualTo && withOwner(k);
+  };
+  // ...but never onto somebody already holding their round of asked-for rooms. That cap
+  // is the whole reason one person does not start the morning with five of them.
+  const canTake = (lo, k) => {
+    const u = roomOf(k); const sl = u ? timeSlot(u) : 'any';
+    if (sl === 'early') return (slotLoad.early[lo] || 0) < EARLY_CAP;
+    return true;
   };
   for (let guard = keys.length * 4; guard > 0; guard -= 1) {
     const ranked = order.slice().sort((a, b) => load[a] - load[b]);
@@ -6257,13 +6277,18 @@ function autoPlanDay(day) {
     let done = false;
     // Rooms with no claim on them first, everywhere they can help. A floor is only
     // opened up once somebody is holding one room while somebody else holds four.
-    const passes = gap >= LEVEL_OPEN_AT ? [movable, movableFromFloor] : [movable];
+    const passes = gap >= LEVEL_OPEN_AT
+      ? [movable, timedButMovable, movableFromFloor]
+      : [movable, timedButMovable];
     for (const pass of passes) {
       for (const lo of ranked) {
         if (load[hi] - load[lo] <= 1) break;
-        const cands = keys.filter((k) => plan[k].assignedTo === hi && pass(k) && canCleanUnit(staffById[lo], roomOf(k)));
+        const cands = keys.filter((k) => plan[k].assignedTo === hi && pass(k)
+          && canCleanUnit(staffById[lo], roomOf(k)) && canTake(lo, k));
         const move = cands.find((k) => !repeats(lo, roomOf(k))) || cands[0];
         if (!move) continue;
+        const ms = timeSlot(roomOf(move));
+        if (ms !== 'any') { slotLoad[ms][hi] -= 1; slotLoad[ms][lo] = (slotLoad[ms][lo] || 0) + 1; }
         plan[move].assignedTo = lo; load[hi] -= 1; load[lo] += 1;
         if (pass === movableFromFloor) offFloor += 1;
         done = true; break;
@@ -7802,13 +7827,20 @@ function viewCalendar() {
   // it would actually go somewhere.
   const onThisMonth = first.getFullYear() === new Date(today + 'T00:00:00').getFullYear()
     && first.getMonth() === new Date(today + 'T00:00:00').getMonth();
-  const nowBtn = el(`<button class="tb-btn" style="padding:8px 12px;font-size:12px;font-weight:800`
-    + `${onThisMonth && _calDay === today ? '' : ';border-color:#0284c7;color:#38bdf8'}">Today</button>`);
-  nowBtn.onclick = () => {
-    const t = new Date(today + 'T00:00:00');
-    _calMonth = new Date(t.getFullYear(), t.getMonth(), 1); _calDay = today; render();
+  const jump = (label, day) => {
+    const b = el(`<button class="tb-btn" style="padding:8px 12px;font-size:12px;font-weight:800`
+      + `${_calDay === day ? '' : ';border-color:#0284c7;color:#38bdf8'}">${label}</button>`);
+    b.onclick = () => {
+      const t = new Date(day + 'T00:00:00');
+      _calMonth = new Date(t.getFullYear(), t.getMonth(), 1); _calDay = day; render();
+    };
+    return b;
   };
-  head.appendChild(nowBtn);
+  head.appendChild(jump('Today', today));
+  // Tomorrow is the day the office actually looks at — the round it can still change
+  // before anybody works it — so it gets its own button rather than a hunt for the
+  // right square.
+  head.appendChild(jump('Tomorrow', shiftDay(today, 1)));
   wrap.appendChild(head);
 
   // --- weekday strip ---
