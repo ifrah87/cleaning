@@ -292,12 +292,15 @@ for (const [label,vp] of [['PHONE',{width:420,height:900}],['DESKTOP',{width:144
    strays.length===0, 'in: '+JSON.stringify(inNow)+' board: '+JSON.stringify(first));
  check('the rooms nobody planned go to the one person who is in',
    first['101']==='p3', JSON.stringify(first));
- // AIRBNB IS A ROOM LIKE ANY OTHER, DONE LATER IN THE DAY. It used to be kept off the
- // round entirely, which meant the flats were handed out by memory. The way to say
- // "after the offices" is to say it: they are afternoon work, dealt like an office room
- // and sorted below the morning round everywhere it is listed.
- check('an Airbnb flat is dealt out like any other room',
-   !!first['A1'], 'A1 -> ' + first['A1']);
+  // A GUEST FLAT IS HANDED OUT BY A PERSON, NEVER BY THE APP. It was dealt like an
+ // office room for a while, on the reasoning that keeping it off the round meant the
+ // flats went out by memory. In practice the office arrived every morning to flats
+ // already sitting on people who were not going to do them, and moved them by hand —
+ // and four of them were carrying names from three days earlier that nobody had set.
+ // They stay ON the board so they can be ticked and given out on the Airbnb tab; the
+ // only thing that changed is that nothing puts a name on one unless a person does.
+ check('an Airbnb flat is left for a person to hand out',
+   !first['A1'], 'A1 -> ' + first['A1']);
  check('...and is afternoon work, so it sorts below the morning round',
    await page.evaluate(()=>{
      const u=state.servicedUnits.find(x=>x.unit==='A1');
