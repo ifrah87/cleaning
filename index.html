@@ -7752,6 +7752,156 @@ function viewRooms() {
   return wrap;
 }
 
+// A MONTH YOU CAN TAP THROUGH.
+// "Plan a day" answers "what is on the 27th?" only if you already know to go looking
+// for the 27th. The question the office actually asks is the shape of the week — which
+// days are heavy, which are thin, what is coming — and that is a calendar, not a date
+// field. Every day the schedule knows about is on one screen with its size on it; tap
+// one and the round for that day opens underneath, named person by person.
+let _calMonth = null;              // first of the month being shown (device-local)
+let _calDay = null;                // the day whose round is open underneath
+const ymd = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0')
+  + '-' + String(d.getDate()).padStart(2, '0');
+
+// What a day holds, without laying anything out: the plan if there is one, otherwise
+// what the schedule says would be due. A month of empty squares answers nothing.
+function calDayInfo(day) {
+  const plan = (state.plans || {})[day];
+  if (plan && Object.keys(plan).length) {
+    const jobs = Object.values(plan);
+    return {
+      planned: true,
+      rooms: jobs.filter((j) => j.kind === 'unit').length,
+      areas: jobs.filter((j) => j.kind !== 'unit').length,
+      loose: jobs.filter((j) => !j.assignedTo).length,
+      jobs,
+    };
+  }
+  const due = (state.servicedUnits || []).filter((u) => u && !u.paused && onRollCall(u) && dueOnDay(u, day));
+  return { planned: false, rooms: due.length, areas: 0, loose: due.length, jobs: null, due };
+}
+
+function viewCalendar() {
+  const wrap = el('<div class="body"></div>');
+  const today = workToday();
+  if (!_calMonth) { const t = new Date(today + 'T00:00:00'); _calMonth = new Date(t.getFullYear(), t.getMonth(), 1); }
+  const first = _calMonth;
+  const monthName = first.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+
+  // --- month header, with a way back and forward ---
+  const head = el('<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px"></div>');
+  const step = (n, lbl) => {
+    const b = el(`<button class="tb-btn" style="padding:8px 14px">${lbl}</button>`);
+    b.onclick = () => { _calMonth = new Date(first.getFullYear(), first.getMonth() + n, 1); _calDay = null; render(); };
+    return b;
+  };
+  head.appendChild(step(-1, '‹'));
+  head.appendChild(el(`<div style="flex:1;text-align:center;font-size:17px;font-weight:800;color:#eaf1fb">${esc(monthName)}</div>`));
+  head.appendChild(step(1, '›'));
+  wrap.appendChild(head);
+
+  // --- weekday strip ---
+  const dowRow = el('<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:5px;margin-bottom:5px"></div>');
+  ['S', 'M', 'T', 'W', 'T', 'F', 'S'].forEach((d) => dowRow.appendChild(
+    el(`<div style="text-align:center;font-size:10px;font-weight:800;letter-spacing:.1em;color:#5f7189">${d}</div>`)));
+  wrap.appendChild(dowRow);
+
+  // --- the grid ---
+  const grid = el('<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:5px"></div>');
+  for (let i = 0; i < first.getDay(); i += 1) grid.appendChild(el('<div></div>'));
+  const daysInMonth = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
+  // The heaviest day in view sets the bar, so the shape of the month is readable at a
+  // glance rather than every day looking the same size.
+  let peak = 1;
+  for (let n = 1; n <= daysInMonth; n += 1) peak = Math.max(peak, calDayInfo(ymd(new Date(first.getFullYear(), first.getMonth(), n))).rooms);
+  for (let n = 1; n <= daysInMonth; n += 1) {
+    const day = ymd(new Date(first.getFullYear(), first.getMonth(), n));
+    const info = calDayInfo(day);
+    const isToday = day === today, past = day < today, open = day === _calDay;
+    const cell = el(`<button style="display:flex;flex-direction:column;gap:4px;align-items:stretch;
+      padding:8px 6px 7px;border-radius:9px;cursor:pointer;text-align:left;
+      background:${open ? '#16344f' : past ? '#0e1725' : '#16233a'};
+      border:1px solid ${open ? '#0284c7' : isToday ? '#38bdf8' : '#1e2f4d'};
+      opacity:${past && !open ? '.55' : '1'}"></button>`);
+    cell.appendChild(el(`<div style="font-size:13px;font-weight:800;color:${isToday ? '#38bdf8' : '#eaf1fb'}">${n}</div>`));
+    if (info.rooms) {
+      const bar = el('<div style="height:5px;background:#0b1220;border-radius:3px;overflow:hidden"></div>');
+      bar.appendChild(el(`<div style="height:100%;width:${Math.round((info.rooms / peak) * 100)}%;
+        background:${info.planned ? '#0284c7' : '#3d557f'}"></div>`));
+      cell.appendChild(bar);
+      cell.appendChild(el(`<div style="font-size:10px;font-weight:800;color:${info.loose ? '#fbbf24' : '#5f7189'}">`
+        + `${info.rooms}${info.loose ? ' · ' + info.loose + ' free' : ''}</div>`));
+    } else {
+      cell.appendChild(el('<div style="font-size:10px;color:#3d557f">—</div>'));
+    }
+    cell.onclick = () => { _calDay = (_calDay === day) ? null : day; render(); };
+    grid.appendChild(cell);
+  }
+  wrap.appendChild(grid);
+  wrap.appendChild(el('<div style="font-size:11px;color:#5f7189;margin:10px 0 0">'
+    + 'Blue is laid out and handed round · grey is what the schedule says is due · amber is work nobody has yet.</div>'));
+
+  // --- the day itself, underneath ---
+  if (_calDay) wrap.appendChild(calDayPanel(_calDay));
+  return wrap;
+}
+
+// One day, named person by person — the same answer the board gives, for any date.
+function calDayPanel(day) {
+  const box = el('<div style="margin-top:18px"></div>');
+  const d = new Date(day + 'T00:00:00');
+  const info = calDayInfo(day);
+  box.appendChild(el(`<div class="section-label">${esc(d.toLocaleDateString('en-US',
+    { weekday: 'long', month: 'long', day: 'numeric' }))}</div>`));
+
+  if (!info.planned) {
+    box.appendChild(el(`<div style="font-size:13px;color:#7f9abf;margin-bottom:10px">`
+      + `Not laid out yet — ${info.rooms} room${info.rooms === 1 ? '' : 's'} due by the schedule.</div>`));
+    if (info.due && info.due.length) {
+      const chips = el('<div style="display:flex;flex-wrap:wrap;gap:6px"></div>');
+      info.due.slice().sort((a, b) => String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }))
+        .forEach((u) => chips.appendChild(el(`<span class="freqmini" style="padding:6px 10px">${esc(u.unit)}</span>`)));
+      box.appendChild(chips);
+    }
+    const go = el(`<button class="freqmini" style="width:100%;padding:10px;margin-top:12px;border-color:#0284c7;color:#0284c7">Lay this day out →</button>`);
+    go.onclick = () => { planDay = day; setTab('plan'); };
+    box.appendChild(go);
+    return box;
+  }
+
+  const byId = {}; (state.staff || []).forEach((p) => { byId[p.id] = p; });
+  const buckets = {}; const order = [];
+  info.jobs.forEach((j) => {
+    const k = j.assignedTo || '__none__';
+    if (!buckets[k]) { buckets[k] = []; order.push(k); }
+    buckets[k].push(j);
+  });
+  order.sort((a, b) => (a === '__none__' ? 1 : 0) - (b === '__none__' ? 1 : 0)
+    || buckets[b].length - buckets[a].length);
+  order.forEach((k) => {
+    const who = byId[k];
+    const card = el('<div class="su-card" style="padding:11px 13px;margin-bottom:7px"></div>');
+    const hd = el('<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:7px"></div>');
+    hd.appendChild(el(`<div style="font-size:14px;font-weight:800;color:${who ? '#0f1a27' : '#b45309'}">`
+      + `${esc(who ? who.name : 'NOBODY YET')}</div>`));
+    if (who && (who.floors || []).length) hd.appendChild(el(`<div style="font-size:11px;font-weight:700;color:#5f7189">`
+      + `Floor${who.floors.length > 1 ? 's' : ''} ${who.floors.join(', ')}</div>`));
+    hd.appendChild(el(`<div style="margin-left:auto;font-size:13px;font-weight:800;color:#5f7189">${buckets[k].length}</div>`));
+    card.appendChild(hd);
+    const chips = el('<div style="display:flex;flex-wrap:wrap;gap:6px"></div>');
+    buckets[k].slice().sort((a, b) => (a.kind === 'unit' ? 0 : 1) - (b.kind === 'unit' ? 0 : 1)
+      || String(a.label).localeCompare(String(b.label), undefined, { numeric: true }))
+      .forEach((j) => chips.appendChild(el(`<span class="freqmini" style="padding:6px 10px;`
+        + `${j.kind !== 'unit' ? 'border-style:dashed;' : ''}">${esc(j.label)}</span>`)));
+    card.appendChild(chips);
+    box.appendChild(card);
+  });
+  const go = el(`<button class="freqmini" style="width:100%;padding:10px;margin-top:6px;border-color:#0284c7;color:#0284c7">Open this day to change it →</button>`);
+  go.onclick = () => { planDay = day; setTab('plan'); };
+  box.appendChild(go);
+  return box;
+}
+
 // TICKING OFF IS ITS OWN SCREEN.
 // The roll call is where the morning is decided: who is in, who gets what, what the
 // schedule is doing, what is not due. All of it is worth reading once a day. None of it
@@ -7800,6 +7950,7 @@ function menuSheet() {
   };
   group('THE MORNING', [
     ['rollcall', 'Morning set-up', 'Attendance, hand-out, what is not due, one-off jobs, tomorrow'],
+    ['calendar', 'Calendar', 'Tap through the month and see any day\u2019s round'],
     ['plan', 'Plan a day', 'Lay tomorrow out and hand it round'],
   ]);
   group('THE ESTATE', [
@@ -10831,6 +10982,38 @@ function countJobs(cols) {
   return { all: seen.size, done: doneIds.size };
 }
 
+// THE DAYS AHEAD, ON THE WALL. The board answers "what is today?" and the office also
+// stands in front of it asking "what is tomorrow?" — and had to go to a phone for it.
+// Up and Down on the remote step a day; the columns are then read from that day's PLAN
+// instead of the live board, which is the honest thing to show: a future day has been
+// laid out, not worked, so nothing on it is ticked.
+let tvDayOffset = 0;              // 0 = today's live board
+let tvDayTouched = 0;             // when somebody last pressed a key
+function tvColumnsForDay(day) {
+  const plan = (state.plans || {})[day] || {};
+  const byId = {}; (state.staff || []).forEach((p) => { byId[p.id] = p; });
+  const uById = {}; (state.servicedUnits || []).forEach((u) => { uById[u.id] = u; });
+  const buckets = {}, order = [];
+  Object.values(plan).forEach((j) => {
+    const k = j.assignedTo || '__none__';
+    if (!buckets[k]) { buckets[k] = []; order.push(k); }
+    const u = j.kind === 'unit' ? uById[j.refId] : null;
+    buckets[k].push({
+      id: j.refId, label: j.label, done: false,
+      air: !!(u && unitType(u) === 'airbnb'),
+      area: j.kind !== 'unit', kind: j.kind === 'unit' ? unitType(u) : 'area',
+      late: !!(u && timeSlot(u) === 'late'), early: !!(u && timeSlot(u) === 'early'),
+    });
+  });
+  return order.sort((a, b) => (a === '__none__' ? -1 : 0) - (b === '__none__' ? -1 : 0)
+      || buckets[b].length - buckets[a].length)
+    .map((k) => {
+      const p = byId[k];
+      return { key: k, name: p ? tvName(p) : 'NOBODY YET', jobs: buckets[k],
+        none: !p, out: false, status: null, with: '',
+        team: p ? tvTeam(p) : '', at: '', left: '', note: '' };
+    });
+}
 function tvColumns() {
   const grouped = tvJobsByPerson();
   // "Spare" = holding nothing of their own today. Computed once from the same buckets
@@ -11129,7 +11312,11 @@ function renderTV() {
   const now = new Date();
   const wrap = el(`<div class="tv-wrap"></div>`);
 
-  const cols = tvColumns();
+  // Today comes from the live board; a day ahead comes from its plan. Same columns,
+  // same cards — the difference is that nothing on a future day is ticked, because
+  // nobody has worked it yet.
+  if (tvDayOffset && tvDayTouched && Date.now() - tvDayTouched > 2 * 60 * 1000) tvDayOffset = 0;
+  const cols = tvDayOffset ? tvColumnsForDay(shiftDay(workToday(), tvDayOffset)) : tvColumns();
   // The guest flats are in the columns now, so the page that used to carry them would
   // simply show the same rooms a second time. Kept as an empty list rather than torn
   // out, so the board falls back to it the day somebody wants it again.
@@ -11156,11 +11343,18 @@ function renderTV() {
   // it printed the calendar date, so from midnight to 3am the wall read "Tuesday" over
   // Monday's round, with everything on it ticked. The board contradicted itself for
   // three hours every night, and the office quite reasonably read it as the wrong jobs.
-  const boardDay = new Date(workToday() + 'T00:00:00');
+  // A WALL LEFT ON TOMORROW IS A WALL SHOWING THE WRONG DAY. Somebody looks ahead,
+  // walks off, and the crew reads next Tuesday's round as this morning's. It comes home
+  // by itself two minutes after the last key.
+  if (tvDayOffset && tvDayTouched && Date.now() - tvDayTouched > 2 * 60 * 1000) tvDayOffset = 0;
+  const shownDay = tvDayOffset ? shiftDay(workToday(), tvDayOffset) : workToday();
+  const boardDay = new Date(shownDay + 'T00:00:00');
   const stillLastNight = workToday() !== todayKey();
   left.appendChild(el(`<div class="tv-date">`
     + `${esc(boardDay.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }))}`
     + (stillLastNight ? ` <span style="opacity:0.75">· tonight's round, until 3am</span>` : '')
+    + (tvDayOffset ? ` <span style="color:#fbbf24">· PLANNED, not today`
+        + `${tvDayOffset === 1 ? ' (tomorrow)' : ' (' + tvDayOffset + ' days ahead)'}</span>` : '')
     + `</div>`));
   top.appendChild(left);
 
@@ -11425,9 +11619,14 @@ function startTVLoop() {
   document.addEventListener('keydown', (e) => {
     const n = pages();
     if (n < 2) return;
-    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') tvPage = (tvPage + 1) % n;
-    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') tvPage = (tvPage - 1 + n) % n;
-    else return;
+    // Left and right still walk the columns. Up and down walk the DAYS — a week ahead
+    // and no further back than today, because the wall is not a filing cabinet.
+    if (e.key === 'ArrowRight') tvPage = (tvPage + 1) % n;
+    else if (e.key === 'ArrowLeft') tvPage = (tvPage - 1 + n) % n;
+    else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      tvDayOffset = Math.max(0, Math.min(7, tvDayOffset + (e.key === 'ArrowDown' ? 1 : -1)));
+      tvPage = 0; tvDayTouched = Date.now();
+    } else return;
     e.preventDefault();
     renderTV();
   });
@@ -11485,7 +11684,7 @@ function render() {
   const ROOMS_TITLE = { all: 'All Rooms', airbnb: 'Airbnb Rooms', office: 'Office Cleaning', building: 'Building Cleaning' };
   const titles = { board:'', setup:'Setup', more:'Setup', today:'', rollcall:'Morning set-up', tick:'',
     building:'Floors & Common Areas', exterior:'Exterior', history:'Cleaning History', team:'Team',
-    settings:'Settings', plan:'Plan a Day', rooms: ROOMS_TITLE[roomsFilter()], tonight:'Tonight’s Round' };
+    settings:'Settings', plan:'Plan a Day', calendar:'Calendar', rooms: ROOMS_TITLE[roomsFilter()], tonight:'Tonight’s Round' };
   // A tab with no view renders an empty screen, so never trust it blindly.
   if (titles[state.tab] === undefined) state.tab = 'board';
   const onBoard = state.tab === 'board';
@@ -11565,6 +11764,7 @@ function render() {
   if (state.tab==='more' || state.tab==='setup') app.appendChild(viewMore());
   else if (state.tab==='board' || state.tab==='today' || state.tab==='tick') app.appendChild(viewTick());
   else if (state.tab==='rollcall') app.appendChild(viewRollCall());
+  else if (state.tab==='calendar') app.appendChild(viewCalendar());
   else if (state.tab==='plan') app.appendChild(viewPlan());
   else if (state.tab==='tonight') app.appendChild(viewTonight());
   else if (state.tab==='rooms') app.appendChild(viewRoomsHub());
