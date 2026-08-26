@@ -1791,9 +1791,27 @@ window.addEventListener('online', () => { if (isDirty()) { _retryDelay = 0; push
 
 async function remotePull() {
   if (!db) return;
+  // A BOARD CANNOT DELIVER, SO IT MUST NOT WAIT TO. This asked "am I holding anything
+  // unsent?" and, if so, tried to send it and gave up on the pull when that failed —
+  // and on a television pushNow() returns false at the door, because the board is a
+  // display and never writes. So the dirty flag was never cleared, the guard was never
+  // satisfied, and the wall stopped pulling ENTIRELY: frozen on whatever it happened to
+  // be holding, for the rest of the day, while the corner still read "up to date"
+  // because that stamp only means the last attempt did not throw.
+  //
+  // The flag lives in localStorage against the origin, so it did not even need a bug to
+  // get there: one visit to the plain URL on that TV — no ?tv=1, so not TV mode — and a
+  // single tap is enough to strand the board for good.
+  //
+  // A television reads regardless. It is NOT cleared — clearing would throw away
+  // whatever the flag stands for, and a board that once ran as an ordinary page may
+  // genuinely be holding the only copy of something. It is simply not allowed to stop
+  // the read: applyRemote merges rather than replaces, so anything only this device has
+  // survives the pull anyway. The flag stays set and harmless.
+  //
   // An unsent local change outranks whatever the server holds — deliver it first,
   // otherwise adopting the server copy below would wipe it.
-  if (isDirty()) { await pushNow(); if (isDirty()) return; }
+  if (!TV_MODE && isDirty()) { await pushNow(); if (isDirty()) return; }
   try {
     const { data, error } = await db.from('app_state').select('data').eq('building', BUILDING).maybeSingle();
     if (error) throw error;
@@ -1858,6 +1876,24 @@ function applyRemote(saved) {
   Object.keys(localPlans).forEach((d) => {
     if (mergedPlans[d] || !Object.keys(localPlans[d] || {}).length) return;
     mergedPlans[d] = localPlans[d]; rescued += 1;
+  });
+  // A JOB ONLY THIS DEVICE HAS SEEN SURVIVES TOO, not just a whole day. The rescue
+  // above saves a day the incoming copy has never heard of and stops there — so a room
+  // ADDED BY HAND to a day the server already knows about was simply dropped on the
+  // next pull. Adding a room to today is the commonest hand edit there is, and it
+  // lasted until whichever device pulled next. Rooms have been rescued job-by-job for
+  // a long while; the plan was still being rescued a day at a time.
+  //
+  // A job the office deliberately took OFF a day stays off: that is what planDropped
+  // is for, and it has to bite in both directions or the delete travels back.
+  Object.keys(localPlans).forEach((d) => {
+    const mine = localPlans[d] || {}, theirs = mergedPlans[d];
+    if (!theirs) return;                                  // whole day already rescued above
+    const dropped = (state.planDropped || {})[d] || {};
+    Object.keys(mine).forEach((k) => {
+      if (theirs[k] || dropped[k]) return;
+      theirs[k] = mine[k]; rescued += 1;
+    });
   });
   // A DAY ARRANGED BY HAND HERE, MORE RECENTLY THAN THERE, STAYS. Same rule the rooms
   // have. Without it a balanced morning could be undone a minute after it was made by
@@ -4657,6 +4693,12 @@ function toggleRoomOnToday(id) {
     delete u.holdUntil;                 // asked for today outranks a hold-back
     if (!onRollCall(u)) u.rollCallOn = day;
   }
+  // STAMPED, OR THE ROOM IS GONE BY THE NEXT PULL. Putting a room on today writes
+  // alsoCleanOn and rollCallOn and nothing else — no edit stamp — so the merge had no
+  // reason to prefer this copy and took the server's, which has neither field. The room
+  // dropped off today's list the moment any device pulled. It only ever looked like it
+  // held because the wall had stopped pulling at all.
+  stampUnitEdit(u);
   save(); render();
 }
 const addedToToday = (u) => !!u && String(u.alsoCleanOn || '') === workToday();
@@ -11145,6 +11187,10 @@ function renderTV() {
   right.appendChild(el(`<div class="tv-clock">${esc(now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }))}</div>`));
   // A board nobody can tell is stale is worse than no board. Say when it last
   // heard anything, and go amber once that stops being reassuring.
+  // Dated off the last time the board actually TOOK new numbers, not the last time a
+  // request came back without throwing. Those are different questions, and answering
+  // the second one in the words of the first is how a frozen wall said "up to date"
+  // for a whole morning.
   const mins = tvLastData ? Math.round((Date.now() - tvLastData) / 60000) : null;
   const stampTxt = (mins === null) ? 'waiting for data'
     : mins < 2 ? 'up to date' : mins + ' min since last update';
@@ -11383,6 +11429,12 @@ function startTVLoop() {
       remotePull(),
       Promise.resolve().then(() => loadHikArrivals()).catch(() => {}),
     ]).then(([pulled]) => { if (pulled) tvLastData = Date.now(); renderTV(); }).catch(() => {});
+    // A WALL THAT HAS HEARD NOTHING FOR HALF AN HOUR IS BROKEN, NOT PATIENT. Whatever
+    // wedged it — an expired session, a flag it cannot clear, a socket nobody noticed
+    // die — the board cannot diagnose itself, and nobody is going to walk over and
+    // reload a screen that claims to be fine. A reload costs the wall two seconds and
+    // fixes every one of those causes.
+    if (tvLastData && Date.now() - tvLastData > 30 * 60 * 1000) location.reload();
   }, TV_PULL_MS);
   // A TV that sleeps at 10am is a blank wall. Wake Lock is refused by most TV
   // browsers, so this is a try-and-shrug, not a guarantee — turn the screensaver
