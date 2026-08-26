@@ -240,6 +240,11 @@
              cursor: grab; color: #7f9abf; font-size: 13px; background: rgba(255,255,255,0.06);
              border: 0; border-left: 1px solid rgba(255,255,255,0.08); touch-action: none; }
   .bd-grip:active { cursor: grabbing; background: rgba(56,189,248,0.28); color: #eaf1fb; }
+  /* A FINGER IS NOT A MOUSE POINTER. 26px is a comfortable target to click and a mean
+     one to hit with a thumb on a moving bus, and missing it scrolls the board instead
+     of picking the room up — which reads as the room refusing to move. Wider wherever
+     the pointer is coarse, which is every phone and both televisions. */
+  @media (pointer: coarse) { .bd-grip { width: 44px; font-size: 15px; } }
   .bd-job.held .bd-grip { background: #38bdf8; color: #04263a; }
   .bd-more { margin-top: auto; }
   .bd-job.early { background: #4a1414; color: #ffd9d9; border-left-color: #ef4444; }
@@ -3295,8 +3300,12 @@ function undoAutoAssign() {
   hikSyncMsg = { text: 'Put the assignments back as they were.' };
   save(); render();
 }
-const lastBoardChangeLabel = () => (state.lastAutoAssign && state.lastAutoAssign.kind === 'unassign')
-  ? '↩ Undo putting them back' : '↩ Undo auto-assign';
+const lastBoardChangeLabel = () => {
+  const l = state.lastAutoAssign || {};
+  if (l.kind === 'move') return '↩ Undo moving ' + (l.label || 'that room');
+  if (l.kind === 'unassign') return '↩ Undo putting them back';
+  return '↩ Undo auto-assign';
+};
 // Hand the rooms out on their own once the crew starts badging in, so the morning
 // works without anyone remembering to press anything. Deliberately conservative:
 // it runs once a day, only when NOTHING has been handed out yet, so it can never
@@ -7455,10 +7464,44 @@ function moveGhost(x, y) {
   // which is the difference between the chip following your hand and lagging behind it.
   if (_ghost) _ghost.style.transform = `translate3d(${x + 12}px, ${y - 16}px, 0)`;
 }
-function clearGhost() { if (_ghost) { _ghost.remove(); _ghost = null; } }
+function clearGhost() { if (_ghost) { _ghost.remove(); _ghost = null; } lightDrop(null); }
+// WHERE THIS ROOM WILL LAND IF I LET GO. The stylesheet has carried a highlight for a
+// drop target since the drag went in (.bd-col.drop, .drop-live) and nothing ever put
+// the class on anything, so a drag showed you a chip floating over a board that never
+// reacted to it. Letting go over the right card and letting go over the gap next to it
+// looked identical, and a move that missed read as a move that was refused.
+let _litDrop = null;
+function lightDrop(node) {
+  if (_litDrop === node) return;
+  if (_litDrop) _litDrop.classList.remove('drop', 'drop-live');
+  _litDrop = node || null;
+  if (_litDrop) _litDrop.classList.add(_litDrop.classList.contains('bd-col') ? 'drop' : 'drop-live');
+}
+// The card under the pointer that can take a job, if there is one.
+function dropUnder(x, y) {
+  const t = document.elementFromPoint(x, y);
+  return (t && t.closest && t.closest('[data-drop]')) || null;
+}
 window.addEventListener('pointerup', () => { setTimeout(clearGhost, 0); });
 window.addEventListener('pointercancel', clearGhost);
+// MOVING A ROOM IS UNDOABLE, LIKE DEALING THEM ALL IS. Auto-assign has been reversible
+// from the day it went in, on the reasoning that it "sits one mis-tap away from the room
+// list". Moving one room by hand is the tap people actually make, dozens of times a
+// morning, and it was the one thing on the board that could not be taken back: the only
+// way to put a room right was to remember who had it and move it again.
+// Same snapshot, same button, so there is nothing new to learn.
 function assignPicked(kind, id, pid) {
+  const u = (kind === 'area') ? (state.areas || []).find((x) => x.id === id)
+                              : (state.servicedUnits || []).find((x) => x.id === id);
+  if (u) {
+    state.lastAutoAssign = {
+      at: new Date().toISOString(),
+      kind: 'move',
+      label: (kind === 'area') ? (u.label || 'the job') : ('Room ' + u.unit),
+      who: { [id]: u.assignedTo || null },
+      confirmed: (state.assignConfirmed || {})[id] ? { [id]: state.assignConfirmed[id] } : {},
+    };
+  }
   if (kind === 'area') setAreaAssign(id, pid);
   else setUnitAssignee(id, pid);
   _picked = null;
@@ -7477,6 +7520,7 @@ function dragToAssign(node, kind, id, label) {
     moved = true;
     dragGhost(String(label));
     moveGhost(e.clientX, e.clientY);
+    lightDrop(dropUnder(e.clientX, e.clientY));
     e.preventDefault();
   });
   node.addEventListener('pointerup', (e) => {
@@ -7689,6 +7733,7 @@ function viewTick() {
           moved = true;
           dragGhost(String(j.label));
           moveGhost(e.clientX, e.clientY);
+          lightDrop(dropUnder(e.clientX, e.clientY));
           e.preventDefault();
         });
         grip.addEventListener('pointerup', (e) => {
@@ -7732,6 +7777,7 @@ function viewTick() {
           cMoved = true;
           dragGhost(String(j.label));
           moveGhost(e.clientX, e.clientY);
+          lightDrop(dropUnder(e.clientX, e.clientY));
           e.preventDefault();
         });
         chip.addEventListener('pointerup', (e) => {
