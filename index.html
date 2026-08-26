@@ -7522,9 +7522,12 @@ function assignPicked(kind, id, pid) {
       confirmed: (state.assignConfirmed || {})[id] ? { [id]: state.assignConfirmed[id] } : {},
     };
   }
+  // Put the room down BEFORE handing it over. setUnitAssignee renders, and the hand was
+  // being emptied after that render — so the board painted one frame still showing the
+  // room held, and anything that re-rendered in between put it back in your hand.
+  _picked = null;
   if (kind === 'area') setAreaAssign(id, pid);
   else setUnitAssignee(id, pid);
-  _picked = null;
 }
 function dragToAssign(node, kind, id, label) {
   let from = null, moved = false;
@@ -7552,6 +7555,7 @@ function dragToAssign(node, kind, id, label) {
       if (drop) assignPicked(kind, id, drop.getAttribute('data-drop'));
     } else {
       // A tap: pick it up, or put down the one already in hand.
+      e.stopPropagation();   // a tap on a chip is about that chip, never a drop
       _picked = (_picked && _picked.id === id) ? null : { kind, id, label };
       render();
     }
@@ -7679,8 +7683,14 @@ function viewTick() {
     const giving = _giveTo === c.key;
     if (!c.jobs.length && !giving) return;      // nothing to tick is nothing to show here
     const col = el(`<div class="bd-col${c.none ? ' none' : ''}${c.out ? ' out' : ''}`
-      + `${c.none && c.jobs.length > 8 ? ' wide3' : c.none && c.jobs.length > 3 ? ' wide2' : ''}${_picked && !c.none ? ' drop' : ''}"></div>`);
-    if (!c.none) makeDropTarget(col, c.key);
+      + `${c.none && c.jobs.length > 8 ? ' wide3' : c.none && c.jobs.length > 3 ? ' wide2' : ''}${_picked ? ' drop' : ''}"></div>`);
+    // NOBODY YET TAKES A DROP TOO. Dragging only ever went one way: a room could be put
+    // ON somebody and never taken back off, so correcting a hand-out meant finding the
+    // room in a list somewhere and using a different control entirely. The box the
+    // unhanded work sits in is the obvious place to drop work you are taking back, and
+    // it was the one column on the board that refused. An empty target means "no
+    // cleaner", which is what setUnitAssignee already does with a blank id.
+    makeDropTarget(col, c.none ? '' : c.key);
 
     const hd = el('<div class="bd-hd"></div>');
     const whoEl = el(`<div class="bd-who" style="${c.none ? '' : 'cursor:pointer'}">${esc(c.none ? 'NOBODY YET' : c.name)}</div>`);
@@ -7764,6 +7774,7 @@ function viewTick() {
             if (drop) assignPicked(kind, j.id, drop.getAttribute('data-drop'));
           } else {
             // A tap on the grip: pick it up, or put down the one already in hand.
+            e.stopPropagation();   // a tap on a chip is about that chip, never a drop
             _picked = (_picked && _picked.id === j.id) ? null : { kind, id: j.id, label: j.label };
             render();
           }

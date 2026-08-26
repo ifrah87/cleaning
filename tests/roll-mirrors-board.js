@@ -293,7 +293,9 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
   check('tapping the grip picks the room up', inHand.picked === '301', JSON.stringify(inHand));
   check('and does not tick it off by mistake', inHand.done === beforeMove.done, JSON.stringify(inHand));
   // Then tap somebody: it lands on whoever that column belongs to.
-  const target = page.locator('.bd-col[data-drop]').first();
+  // Not just any drop target: NOBODY YET is one too now (dropping there takes a room
+  // back off somebody), and it renders first. This step is about tapping a PERSON.
+  const target = page.locator('.bd-col[data-drop]:not(.none)').first();
   const targetId = await target.getAttribute('data-drop');
   await target.click();
   await page.waitForTimeout(700);
