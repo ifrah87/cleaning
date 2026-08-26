@@ -7798,6 +7798,17 @@ function viewCalendar() {
   head.appendChild(step(-1, '‹'));
   head.appendChild(el(`<div style="flex:1;text-align:center;font-size:17px;font-weight:800;color:#eaf1fb">${esc(monthName)}</div>`));
   head.appendChild(step(1, '›'));
+  // A way back to today from three months out, without counting arrows. Lit only when
+  // it would actually go somewhere.
+  const onThisMonth = first.getFullYear() === new Date(today + 'T00:00:00').getFullYear()
+    && first.getMonth() === new Date(today + 'T00:00:00').getMonth();
+  const nowBtn = el(`<button class="tb-btn" style="padding:8px 12px;font-size:12px;font-weight:800`
+    + `${onThisMonth && _calDay === today ? '' : ';border-color:#0284c7;color:#38bdf8'}">Today</button>`);
+  nowBtn.onclick = () => {
+    const t = new Date(today + 'T00:00:00');
+    _calMonth = new Date(t.getFullYear(), t.getMonth(), 1); _calDay = today; render();
+  };
+  head.appendChild(nowBtn);
   wrap.appendChild(head);
 
   // --- weekday strip ---
@@ -7882,7 +7893,9 @@ function calDayPanel(day) {
     const who = byId[k];
     const card = el('<div class="su-card" style="padding:11px 13px;margin-bottom:7px"></div>');
     const hd = el('<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:7px"></div>');
-    hd.appendChild(el(`<div style="font-size:14px;font-weight:800;color:${who ? '#0f1a27' : '#b45309'}">`
+    // #0f1a27 is the ink of a LIGHT card. On this screen it was near-black text on a
+    // near-black panel — the names were there and unreadable.
+    hd.appendChild(el(`<div style="font-size:14px;font-weight:800;color:${who ? '#eaf1fb' : '#fbbf24'}">`
       + `${esc(who ? who.name : 'NOBODY YET')}</div>`));
     if (who && (who.floors || []).length) hd.appendChild(el(`<div style="font-size:11px;font-weight:700;color:#5f7189">`
       + `Floor${who.floors.length > 1 ? 's' : ''} ${who.floors.join(', ')}</div>`));
@@ -7892,7 +7905,7 @@ function calDayPanel(day) {
     buckets[k].slice().sort((a, b) => (a.kind === 'unit' ? 0 : 1) - (b.kind === 'unit' ? 0 : 1)
       || String(a.label).localeCompare(String(b.label), undefined, { numeric: true }))
       .forEach((j) => chips.appendChild(el(`<span class="freqmini" style="padding:6px 10px;`
-        + `${j.kind !== 'unit' ? 'border-style:dashed;' : ''}">${esc(j.label)}</span>`)));
+        + `${j.kind !== 'unit' ? 'border-style:dashed;' : ''}">${esc(String(j.label).replace(/^Unit /, ''))}</span>`)));
     card.appendChild(chips);
     box.appendChild(card);
   });
