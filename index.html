@@ -1811,7 +1811,17 @@ async function remotePull() {
   //
   // An unsent local change outranks whatever the server holds — deliver it first,
   // otherwise adopting the server copy below would wipe it.
-  if (!TV_MODE && isDirty()) { await pushNow(); if (isDirty()) return; }
+  // ...AND NEITHER MAY A PHONE, FOR EVER. The same shape stranded ordinary devices too:
+  // if pushNow keeps failing — no signal, a lapsed session — isDirty stays true and this
+  // returns early every time, so the device stops READING the board as well as writing
+  // to it. applyRemote solved exactly this two minutes in ("after two minutes stuck, an
+  // incoming copy is taken") and this half never got the same treatment. Same limit,
+  // same reasoning: what is owed is still owed and still retried, but a device that
+  // cannot deliver must not also go blind. The merge protects the unsent change.
+  if (!TV_MODE && isDirty() && dirtyForMs() < DEAF_LIMIT_MS) {
+    await pushNow();
+    if (isDirty()) return;
+  }
   try {
     const { data, error } = await db.from('app_state').select('data').eq('building', BUILDING).maybeSingle();
     if (error) throw error;
