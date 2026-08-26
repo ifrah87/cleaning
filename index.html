@@ -11348,6 +11348,30 @@ function evenOutEarlyRooms() {
   return { moved: moves.length };
 }
 
+// A NAME ON A ROOM NOBODY IS DOING TODAY IS YESTERDAY'S NAME.
+// Nothing in the app has ever cleared a room's cleaner at the end of a day. It did not
+// show, because the hand-out clears every room it deals before it deals it — and the
+// rooms it deals are today's roll call. A room OFF the roll call is never in that list,
+// so its cleaner was set once and stayed set for ever.
+//
+// The Airbnb flats are exactly that: off the roll call by design, allocated by hand on
+// the day depending on who is free. Four of them were still carrying a name from days
+// earlier, which reads as the app having allocated them this morning — it had not, it
+// had simply never let go of the last person who was on them.
+//
+// Only a name that is not from today goes. A room handed to somebody today is stamped
+// with today (setUnitAssignee), and a room already cleaned keeps whoever did it.
+function clearStaleOffRollCall() {
+  const today = todayKey();
+  const onToday = new Set(todaysRoomList().map((u) => u.id));
+  (state.servicedUnits || []).forEach((u) => {
+    if (!u || !u.assignedTo || onToday.has(u.id)) return;
+    if ((state.assignConfirmed || {})[u.id] === today) return;   // given out today, by a person
+    if (cleanedToday(u)) return;                                 // done today — the name is the record
+    u.assignedTo = null;
+    delete state.assignConfirmed[u.id];
+  });
+}
 function planningPass() {
   // THE BOARD PLANS NOTHING. maybeAutoAssign() has always known this — "a hand-out it
   // worked out would exist only on the TV, until the next pull wipes them" — but the
@@ -11362,6 +11386,7 @@ function planningPass() {
   // Hassan Elmi → nobody. Nobody reassigned those rooms. The screen was arguing with
   // the server, once a minute, in front of the crew.
   if (TV_MODE) return;
+  clearStaleOffRollCall();   // yesterday's name comes off a room that is not on today
   // Level first — it decides which rooms fall on which day, and planning ahead of it
   // would lay out days it is about to move.
   autoLevelIfLopsided();
