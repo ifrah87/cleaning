@@ -4001,7 +4001,12 @@ async function syncFromHik() {
         s.hikPersonId = p.personId; s.hikCode = p.personCode; if (p.name) s.name = p.name;
         matched++;
       } else {
-        state.staff.push({ id: 'p' + p.personId, name: p.name, crew: defaultCrew, color: teamColor(defaultCrew), floors: [], hikPersonId: p.personId, hikCode: p.personCode });
+        // STAMPED, OR THIS DEVICE LOSES THEM AGAIN ON THE NEXT PULL. Somebody the door
+        // reader turns up is a real addition to the roster, made here and not yet on the
+        // server — exactly what the rescue in applyRemote exists for, and the rescue goes
+        // by the stamp. Without one they were dropped on arrival, and their scan with
+        // them, so the board showed a person with no badge-in time.
+        state.staff.push({ id: 'p' + p.personId, name: p.name, crew: defaultCrew, color: teamColor(defaultCrew), floors: [], hikPersonId: p.personId, hikCode: p.personCode, editedAt: new Date().toISOString() });
         added++;
       }
     }
