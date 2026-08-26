@@ -9286,10 +9286,18 @@ function viewRollCall(opts) {
       chips.appendChild(c);
     });
     other.appendChild(chips);
-    fold('badged', 'Also badged in — not cleaners', String(hikOther.length), other, false);
+    // OPEN. Who the door reader saw is the question this screen exists to answer, and
+    // it was folded away behind a chevron — so the five people who badged in but are
+    // not tagged as cleaners were invisible unless somebody thought to go looking.
+    // One of them was on a cleaning team.
+    fold('badged', 'Also badged in — not cleaners', String(hikOther.length), other, true);
   }
 
-  fold('whoin', '✓ Cleaners clocked in today', String(arrIds.length), whoIn, false);
+  // OPEN TOO, AND FOR THE SAME REASON. "Cleaners clocked in today" IS the clock-in
+  // times — the office wants them on the screen, not one tap away behind a heading
+  // that does not say a time is under it. Anybody who prefers it shut can shut it, and
+  // that choice is remembered on their own device (rcFold is device-local now).
+  fold('whoin', '✓ Cleaners clocked in today', String(arrIds.length), whoIn, true);
 
   // TOMORROW, ON THE ROLL CALL. The roll call is the screen the office actually
   // lives on; tomorrow was a tab away, so "is tomorrow sorted?" meant going to look.
