@@ -2069,14 +2069,40 @@ function applyRemote(saved) {
   route();
 }
 
+// A SOCKET THAT DIES STAYS DEAD, AND NOBODY IS TOLD. This subscribed once at boot and
+// never looked again — and the polling fallback beside it exists precisely because
+// "smart TV browsers drop websockets silently". So the first time a TV's socket went,
+// the wall quietly dropped to the 60-second poll and stayed there until somebody
+// reloaded it: a room ticked on a phone took up to a minute to reach the board, every
+// time, for the rest of the day. That is the lag the office has been living with.
+//
+// Supabase reports the channel's state, so the state is now watched: a channel that
+// closes, errors or times out is torn down and re-subscribed, backing off 2s → 4s → …
+// to 30s so a genuinely offline TV is not hammering the network.
+let _rtChannel = null, _rtRetry = 0, _rtTimer = null;
 function subscribeRealtime() {
   if (!db) return;
-  db.channel('app_state_' + BUILDING)
+  clearTimeout(_rtTimer);
+  if (_rtChannel) { try { db.removeChannel(_rtChannel); } catch (e) {} _rtChannel = null; }
+  _rtChannel = db.channel('app_state_' + BUILDING + '_' + Date.now())
     .on('postgres_changes',
         { event: '*', schema: 'public', table: 'app_state', filter: 'building=eq.' + BUILDING },
         (payload) => { if (payload.new && payload.new.data) applyRemote(payload.new.data); })
-    .subscribe();
+    .subscribe((status) => {
+      if (status === 'SUBSCRIBED') { _rtRetry = 0; return; }
+      if (status === 'CLOSED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+        _rtRetry = Math.min(_rtRetry ? _rtRetry * 2 : 2000, 30000);
+        clearTimeout(_rtTimer);
+        _rtTimer = setTimeout(subscribeRealtime, _rtRetry);
+      }
+    });
 }
+// Coming back from sleep is the other way a socket is lost — a TV that blanks overnight
+// wakes with a channel the server let go hours ago. Re-check on the way back in.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  if (!_rtChannel || _rtChannel.state !== 'joined') subscribeRealtime();
+});
 
 // The "save failed" banner (styled but previously never shown).
 function showStorageWarn(msg) {
@@ -10510,7 +10536,11 @@ const TV_PAGE_MS = 15000;        // long enough to read a column before it moves
 const TV_AIR_PAGE_MS = 6000;
 const TV_HOLD_MS = 45000;
 const TV_TICK_MS = 20000;        // redraw: clock, and anything realtime already dropped into state
-const TV_PULL_MS = 60000;        // belt and braces — smart TV browsers drop websockets silently
+// Belt and braces behind the socket. Fifteen seconds rather than sixty: this is the
+// worst case the wall can be behind by, and a minute is long enough for the crew to
+// tick a room, look up, and see it still sitting there unticked. The board only reads,
+// so four times the reads costs nothing anybody can feel.
+const TV_PULL_MS = 15000;
 let tvPage = 0;
 let tvLastData = 0;              // when the board last saw fresh numbers
 
