@@ -188,6 +188,35 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
   check('so a copy that still has them cannot bring them back',
     !(gone.back || []).includes('p1'), JSON.stringify(gone.back));
 
+  // --- SCREEN STATE STAYS ON THE DEVICE, SETTINGS SURVIVE A STALE COPY -------------
+  const split = await page.evaluate((stale) => {
+    state.tab = 'team'; state.tickFilter = 'airbnb';        // this phone's screen
+    state.rollCallTypes = ['office'];                       // a decision, made here
+    state.earlyCap = 5;
+    save();                                                 // stamps the settings
+    const stamped = Object.keys(state.settingsEditedAt || {}).sort();
+    const sent = JSON.parse(JSON.stringify(sharedState()));
+    const old = JSON.parse(JSON.stringify(stale));          // a copy that never saw any of it
+    old.rollCallTypes = ['office', 'building', 'airbnb'];   // ...and disagrees
+    old.earlyCap = 2;
+    old.tab = 'board'; old.tickFilter = 'all';
+    old._fromAnotherDevice = 11;
+    applyRemote(old);
+    return { stamped, sentHasTab: 'tab' in sent, sentHasFilter: 'tickFilter' in sent,
+             tab: state.tab, tickFilter: state.tickFilter,
+             types: state.rollCallTypes, cap: state.earlyCap };
+  }, APP_STATE).catch((e) => ({ error: String(e) }));
+  check('a setting changed here is stamped with the moment it changed',
+    (split.stamped || []).includes('rollCallTypes') && (split.stamped || []).includes('earlyCap'),
+    JSON.stringify(split.stamped));
+  check('screen state is never sent to the server',
+    split.sentHasTab === false && split.sentHasFilter === false, JSON.stringify(split));
+  check('and an incoming copy cannot change which screen this device is on',
+    split.tickFilter === 'airbnb', JSON.stringify(split));
+  check('a copy that predates the setting cannot put the guest flats back on the roll call',
+    JSON.stringify(split.types) === JSON.stringify(['office']), JSON.stringify(split.types));
+  check('nor undo the early cap', split.cap === 5, JSON.stringify(split));
+
   check('no console errors', errs.length === 0, errs.join('\n       '));
 
   await browser.close(); s.close();

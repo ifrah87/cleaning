@@ -1547,8 +1547,55 @@ function load() {
 // Save = write the local cache instantly, then push to the shared server.
 // The device is marked dirty until the server confirms the write, so a change
 // can never be left stranded on one phone (see DIRTY FLAG below).
+// ============================================================
+// THREE KINDS OF STATE, NOT ONE
+// ============================================================
+// The whole app travels as a single blob and the last writer wins, so every field in it
+// is a race. Rooms, plans, areas, ticks and the roster are defended in applyRemote by
+// the moment they were touched. Everything else was not, and it split cleanly in two
+// when it was actually listed out.
+//
+// SCREEN STATE has no business being shared at all. Which tab you are on, which room
+// group you have open, which cleaner's card you are editing — twenty-odd fields that
+// describe one person's phone and nothing about the building. They were being pushed to
+// the server and pulled down onto the wall, so a tap on a phone re-rendered the TV, and
+// every one of them was another reason for a stale copy to be sent. They stay local now:
+// stripped on the way out, ignored on the way in.
+//
+// SETTINGS are shared and they are decisions — is the hand-out on, which kinds of room
+// are on the roll call, how many early rooms each. A stale phone could put any of them
+// back: this is how the guest flats returned to the morning board. They now carry the
+// moment they were changed, exactly as a room does, and the newest change wins rather
+// than the newest push.
+const DEVICE_KEYS = ['tab', 'tickFilter', 'roomsFilter', 'expandedFloors', 'expandedRota',
+  'editingEmp', 'editingUnit', 'editingArea', 'rcFold', 'rcSetupOpen', 'checkExpanded',
+  'shutGroups'];
+const SETTING_KEYS = ['autoAssign', 'autoConfirm', 'autoBalance', 'autoDays', 'earlyCap',
+  'lockOnDeal', 'floors', 'rollCallTypes', 'teams'];
+let _settingsSeen = null;
+// Stamped from one place rather than from every switch in Settings: there are a dozen
+// setters and a stamp missing from any one of them is a setting that can still be
+// undone by an old phone. save() is the choke point they all go through.
+function stampChangedSettings() {
+  if (!state.settingsEditedAt || typeof state.settingsEditedAt !== 'object') state.settingsEditedAt = {};
+  const now = new Date().toISOString();
+  const seen = _settingsSeen || {};
+  SETTING_KEYS.forEach((k) => {
+    const cur = JSON.stringify(state[k] === undefined ? null : state[k]);
+    if (_settingsSeen && seen[k] !== cur) state.settingsEditedAt[k] = now;
+    seen[k] = cur;
+  });
+  _settingsSeen = seen;
+}
+// What actually goes to the server: everything except this device's screen.
+function sharedState() {
+  const out = {};
+  Object.keys(state).forEach((k) => { if (DEVICE_KEYS.indexOf(k) < 0) out[k] = state[k]; });
+  return out;
+}
 function save() {
   dedupeServicedUnits();   // never persist a duplicate room, no matter how it got created
+  stampChangedSettings();  // ...and record any setting that just changed, before it is sent
   try { localStorage.setItem(STORE, JSON.stringify(state)); } catch (e) {}
   // THE BOARD NEVER WRITES BACK. A display that sits open for days holds the
   // stalest copy in the building, and the whole state travels as one blob, so a
@@ -1661,7 +1708,7 @@ async function pushNow() {
   clearTimeout(_pushTimer);    // a pending debounce is now redundant
   clearTimeout(_retryTimer);
   _pushing = true;
-  const snapshot = JSON.stringify(state);
+  const snapshot = JSON.stringify(sharedState());   // this device's screen stays on it
   try {
     const { error } = await db.from('app_state')
       .upsert({ building: BUILDING, data: JSON.parse(snapshot), updated_at: new Date().toISOString() });
@@ -1950,7 +1997,28 @@ function applyRemote(saved) {
   const mergedSeeded = { ...(saved.planSeeded || {}) };
   Object.keys(localSeeded).forEach((d) => { if (mergedPlans[d]) mergedSeeded[d] = mergedSeeded[d] || localSeeded[d]; });
 
-  state = { ...state, ...saved, tab: keepTab, pendingCover: null, editingUnit: null, editingArea: null, editingEmp: null };
+  // WHAT THIS DEVICE KEEPS, WHATEVER ARRIVES.
+  // Screen state is not shared — an incoming copy has no opinion about which tab this
+  // phone is on — and a setting changed here more recently than there is not undone by
+  // a copy that predates the change. Same rule the rooms and the roster get.
+  const mineDevice = {};
+  DEVICE_KEYS.forEach((k) => { mineDevice[k] = state[k]; });
+  const stampsMine = state.settingsEditedAt || {};
+  const stampsTheirs = (saved && saved.settingsEditedAt) || {};
+  const mineSettings = {};
+  SETTING_KEYS.forEach((k) => {
+    const a = stampsMine[k], b = stampsTheirs[k];
+    if (a && (!b || String(a) > String(b))) mineSettings[k] = state[k];   // ours is newer
+  });
+  const mergedStamps = { ...stampsTheirs };
+  Object.keys(stampsMine).forEach((k) => {
+    if (!mergedStamps[k] || String(stampsMine[k]) > String(mergedStamps[k])) mergedStamps[k] = stampsMine[k];
+  });
+  state = { ...state, ...saved, ...mineDevice, ...mineSettings,
+    settingsEditedAt: mergedStamps,
+    tab: keepTab, pendingCover: null, editingUnit: null, editingArea: null, editingEmp: null };
+  // A setting this device won on is a change the server has not got. Deliver it.
+  if (Object.keys(mineSettings).length && !TV_MODE) markDirty();
   if (mergedAreas) state.areas = mergedAreas;
   state.removedAreas = goneAreas;
   // TURN THE MORNING HAND-OUT BACK ON, ONCE. It was switched off at some point and the
@@ -5926,7 +5994,21 @@ function autoPlanDay(day) {
   const plan = getPlan(day);
   // Marked sick or off is a statement about today, so it only overrides the rota
   // for today — a rota says who is expected next Thursday, not who is ill now.
-  const crew = cleaningStaff().filter((p) => takesRooms(p) && worksOnDay(p, day) && !(day === todayKey() && isAway(p.id)))
+  // ROOMS GO TO LEADERS. NOTHING TO THE ASSISTANTS. The morning hand-out has refused
+  // them for a while — an assistant works the leader's round WITH them, so a room dealt
+  // to an assistant means two people answering for the same flat — and the carry onto
+  // the board refuses them too. This, the pass that lays the day out in the first place,
+  // did not know: it dealt to every cleaner rostered on, and five of tomorrow's
+  // seventeen rooms went to assistants who would then be refused at the carry. Those
+  // rooms did not go to somebody else — they silently fell out of the plan and nobody
+  // was told, on a building where the automatic hand-out is switched off and nothing
+  // was coming to pick them up.
+  //
+  // NO FALLBACK HERE, deliberately, unlike the morning. Naming an assistant on a plan
+  // produces work that cannot be carried, which is worse than naming nobody: a room
+  // left unassigned at least sits in NOBODY YET where it can be seen and given out.
+  const crew = cleaningStaff().filter((p) => takesRooms(p) && p.isLeader
+      && worksOnDay(p, day) && !(day === todayKey() && isAway(p.id)))
     .slice().sort((a, b) => String(a.name).localeCompare(String(b.name)));
   if (!crew.length) return { assigned: 0, crew: 0, reason: 'nobody is rostered on' };
   const unitById = {};
@@ -6006,6 +6088,29 @@ function autoPlanDay(day) {
       if (slot) slotLoad[slot][pick] += 1;
     });
   };
+  // THE FLOOR COMES BEFORE THE COUNT. This laid the day out on load alone — pins, then
+  // whoever was carrying least — and never once asked whose floor a room was on. The
+  // morning hand-out has had a floor pass for a long time, but it is switched off on
+  // this building, so the floor map decided nothing at all: across a whole week of
+  // plans, six rooms out of a hundred and eight landed with the person who owns their
+  // floor. Restoring the map changed nothing, because the stage that decides the day
+  // was not reading it.
+  //
+  // A room goes to the owner of its floor if they are rostered on and under their round.
+  // Everything the load pass does happens after, on what is left.
+  let onFloor = 0, offFloor = 0;
+  keys.forEach((k) => {
+    if (plan[k].assignedTo) return;
+    const u = roomOf(k);
+    if (!u) return;
+    const owner = ownerOfFloor(floorOfUnit(u.unit));
+    if (!owner || !staffById[owner.id]) return;                 // not rostered on today
+    if (!canCleanUnit(owner, u) || !underCap(owner.id)) return;
+    const sl = timeSlot(u);
+    if (sl === 'early' && slotLoad.early[owner.id] >= EARLY_CAP) return;
+    plan[k].assignedTo = owner.id; load[owner.id] += 1; onFloor += 1;
+    if (sl !== 'any') slotLoad[sl][owner.id] += 1;
+  });
   deal('early'); deal('late'); deal(null);
   // COMMUNAL AREAS STAY IN THE NOBODY BOX. They were dealt out here for a while,
   // because leaving them for the morning had meant nobody was named on them and they
@@ -6024,23 +6129,62 @@ function autoPlanDay(day) {
 
   // Even it out, exactly as the morning does. A room the customer asked a time for
   // stays where it is; that was their decision, not a balancing one.
-  const movable = (k) => timeSlot(roomOf(k)) === 'any';
+  //
+  // AND A PERMANENT CLEANER IS ABSOLUTE HERE TOO. The morning's levelling has excluded
+  // pinned rooms for a long time — "rooms are pinned deliberately, so the same person
+  // has the same rooms and knows them" — and this one tested the time slot and nothing
+  // else, so it levelled straight through a pin. 705 is tied to Mahamed Nur Hassan and
+  // tomorrow's plan handed it to Mohamed Salaal. A pin that only holds on the morning
+  // board and not on the plan is not a pin.
+  // A FLOOR HOLDS UNTIL SOMEBODY HAS ONE ROOM AND SOMEBODY ELSE HAS FOUR. Same rule and
+  // the same numbers as the morning: a room sitting with its own floor's owner is left
+  // alone, and only opens up once the round is three or more apart — then it closes
+  // again at two. Without this the levelling flattened the day perfectly and undid every
+  // floor to do it, which is how a plan reached 6% on-floor while looking even.
+  //
+  // The clumping this exists for is real: Hassan's floors 1-2 are due four rooms on a
+  // Monday and one on a Tuesday, because three of the four are every-other-day and fall
+  // together. A day like that SHOULD move a room. A day two apart should not.
+  const withOwner = (k) => {
+    const u = roomOf(k);
+    if (!u) return false;
+    const owner = ownerOfFloor(floorOfUnit(u.unit));
+    return !!owner && plan[k].assignedTo === owner.id;
+  };
+  const movable = (k) => {
+    const u = roomOf(k);
+    return !!u && !u.usualTo && timeSlot(u) === 'any' && !withOwner(k);
+  };
+  const movableFromFloor = (k) => {
+    const u = roomOf(k);
+    return !!u && !u.usualTo && timeSlot(u) === 'any' && withOwner(k);
+  };
   for (let guard = keys.length * 4; guard > 0; guard -= 1) {
     const ranked = order.slice().sort((a, b) => load[a] - load[b]);
     const hi = ranked[ranked.length - 1];
-    if (load[hi] - load[ranked[0]] <= 1) break;
+    const gap = load[hi] - load[ranked[0]];
+    if (gap <= 1) break;
     let done = false;
-    for (const lo of ranked) {
-      if (load[hi] - load[lo] <= 1) break;
-      const cands = keys.filter((k) => plan[k].assignedTo === hi && movable(k) && canCleanUnit(staffById[lo], roomOf(k)));
-      const move = cands.find((k) => !repeats(lo, roomOf(k))) || cands[0];
-      if (!move) continue;
-      plan[move].assignedTo = lo; load[hi] -= 1; load[lo] += 1; done = true; break;
+    // Rooms with no claim on them first, everywhere they can help. A floor is only
+    // opened up once somebody is holding one room while somebody else holds four.
+    const passes = gap >= LEVEL_OPEN_AT ? [movable, movableFromFloor] : [movable];
+    for (const pass of passes) {
+      for (const lo of ranked) {
+        if (load[hi] - load[lo] <= 1) break;
+        const cands = keys.filter((k) => plan[k].assignedTo === hi && pass(k) && canCleanUnit(staffById[lo], roomOf(k)));
+        const move = cands.find((k) => !repeats(lo, roomOf(k))) || cands[0];
+        if (!move) continue;
+        plan[move].assignedTo = lo; load[hi] -= 1; load[lo] += 1;
+        if (pass === movableFromFloor) offFloor += 1;
+        done = true; break;
+      }
+      if (done) break;
     }
     if (!done) break;
   }
   save();
-  return { assigned: keys.filter((k) => plan[k].assignedTo).length, crew: crew.length };
+  return { assigned: keys.filter((k) => plan[k].assignedTo).length, crew: crew.length,
+    onFloor, offFloor };
 }
 
 // Seed a day once, the first time it's looked at. Recorded per day so that
