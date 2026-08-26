@@ -3343,8 +3343,16 @@ function applyPlannedAssignments() {
   const planDay = workToday();
   const stampDay = todayKey();
   const plan = (state.plans || {})[planDay];
-  const out = { carried: 0, absent: 0, waiting: 0, load: {}, slotLoad: { early: {}, late: {} } };
+  const out = { carried: 0, absent: 0, waiting: 0, overCap: [], load: {}, slotLoad: { early: {}, late: {} } };
   if (!plan) return out;
+  // THE CAP HAS TO BE CHECKED WHERE THE BOARD IS ACTUALLY FILLED. runAutoAssign caps a
+  // leader at four rooms and autoPlanDay caps them again when it lays a day out — and
+  // this, the stage between them that puts the plan on the morning board, checked
+  // nothing at all. A plan holding six rooms against one name put six rooms against
+  // that name and the cap never saw it happen. Rooms above the cap are left unhanded,
+  // in NOBODY YET, where the morning deal can pick them up for somebody who has room.
+  const CARRY_CAP = 4;
+  const carried = {};
   const unitById = {};
   (state.servicedUnits || []).forEach((u) => { unitById[u.id] = u; });
   const staffById = {};
@@ -3389,6 +3397,16 @@ function applyPlannedAssignments() {
     // to a leader. A room the office assigned by hand is a different thing and is not
     // touched here: that is somebody deciding, not the app guessing.
     if (!(staffById[j.assignedTo] || {}).isLeader) return;
+    // Over their round: carry up to the cap and leave the rest for the deal. Named out
+    // loud below rather than dropped quietly — a silent cap is how a lopsided morning
+    // reaches the wall without anybody being told.
+    if ((carried[j.assignedTo] || 0) >= CARRY_CAP) {
+      const nm = (staffById[j.assignedTo] || {}).name || '—';
+      const row = out.overCap.find((x) => x.name === nm);
+      if (row) row.n += 1; else out.overCap.push({ name: nm, n: 1 });
+      return;
+    }
+    carried[j.assignedTo] = (carried[j.assignedTo] || 0) + 1;
     // A PIN OUTLASTS A PLAN. Tying a room to one cleaner is a standing instruction —
     // "only they clean this" — while a plan is one night's arrangement, and a plan
     // drawn up before the pin existed still carries the old name. Carrying it would
@@ -3416,7 +3434,103 @@ function applyPlannedAssignments() {
     const slot = timeSlot(u);
     if (slot !== 'any') out.slotLoad[slot][j.assignedTo] = (out.slotLoad[slot][j.assignedTo] || 0) + 1;
   });
+  // Recorded for the board to show. Cleared when a day carries cleanly, so yesterday's
+  // breach cannot sit on the wall looking like today's.
+  if (out.overCap.length) state.lastCapBreach = { day: stampDay, over: out.overCap, cap: CARRY_CAP };
+  else if (state.lastCapBreach && state.lastCapBreach.day !== stampDay) state.lastCapBreach = null;
   return out;
+}
+
+// ============================================================
+// REBALANCING A ROUND THAT IS ALREADY DEALT
+// ============================================================
+// "Allocated is allocated" was put in for a real reason — a room was moving off somebody
+// who had already cleaned it, and a cleaner cannot work a board that is rewritten under
+// them. But it was written absolute, so the only rooms the morning could level were the
+// ones nobody held, and a plan that handed one leader six rooms and another one was the
+// day: nothing downstream was allowed to take work OFF anybody.
+//
+// So it stays absolute until the round is plainly wrong, and then it opens — the same
+// hysteresis the floors use, for the same reason. Open at three or more apart, closed
+// again at two, so a board hovering on the boundary does not shuffle itself every time
+// somebody badges in.
+const LEVEL_OPEN_AT = 3;    // gap at which a named room stops being untouchable
+const LEVEL_CLOSE_AT = 2;   // ...and the gap it stops moving at
+const leaderOf = (id) => (state.staff || []).find((p) => p.id === id);
+const isLeaderId = (id) => !!(leaderOf(id) || {}).isLeader;
+// What a person is carrying, for the purpose of deciding whether the round is fair.
+// ROOMS ONLY: a communal walk is not dealt automatically any more and does not belong
+// in an automatic count — see neverAutoDealt and the areas note in autoPlanDay.
+function leaderLoads(due) {
+  const load = {};
+  (due || []).forEach((u) => {
+    if (!u.assignedTo || !isLeaderId(u.assignedTo)) return;
+    if (neverAutoDealt(u)) return;
+    load[u.assignedTo] = (load[u.assignedTo] || 0) + 1;
+  });
+  return load;
+}
+// Is the round wide enough to justify moving somebody's work? Hysteresis is held per
+// day so the answer does not flap between one badge-in and the next.
+function rebalanceIsOpen(gap) {
+  const day = todayKey();
+  const wasOpen = state.rebalanceOn === day && !!state.rebalanceOpen;
+  const open = wasOpen ? (gap > LEVEL_CLOSE_AT) : (gap >= LEVEL_OPEN_AT);
+  state.rebalanceOn = day; state.rebalanceOpen = open;
+  return open;
+}
+// A room the app may take off the person holding it. Everything here is somebody's
+// decision or somebody's work, and none of it moves:
+//   · already cleaned — the reason the absolute rule existed in the first place;
+//   · put there by a person today (autoDealtOn is absent — see place());
+//   · sitting with the owner of its own floor, which is the whole point of a floor;
+//   · tied to that cleaner permanently, which is a standing instruction;
+//   · a guest flat, which is never dealt automatically at all.
+// There is no "started" or "in progress" state in this app — a room is done or it is
+// not — so `cleanedToday` is the whole of that guard.
+function mayBeTakenFrom(u) {
+  if (!u || !u.assignedTo) return false;
+  if (cleanedToday(u)) return false;
+  if (u.autoDealtOn !== todayKey()) return false;
+  if (u.usualTo) return false;
+  if (neverAutoDealt(u)) return false;
+  const owner = ownerOfFloor(floorOfUnit(u.unit));
+  if (owner && owner.id === u.assignedTo) return false;
+  return true;
+}
+// Move the FEWEST rooms that bring the round back to LEVEL_CLOSE_AT, heaviest first,
+// lightest first. Returns what it moved so the board can say so out loud.
+function rebalanceNamedRooms(due, inIds) {
+  const load = leaderLoads(due);
+  const here = Object.keys(load).filter((id) => !inIds || inIds.has(id));
+  if (here.length < 2) return { moved: [] };
+  const gap0 = Math.max(...here.map((id) => load[id])) - Math.min(...here.map((id) => load[id]));
+  if (!rebalanceIsOpen(gap0)) return { moved: [] };
+  const staffById = {};
+  (state.staff || []).forEach((p) => { staffById[p.id] = p; });
+  const CAP = 4;                                  // the same leader round as everywhere else
+  const moved = [];
+  for (let guard = (due || []).length * 2; guard > 0; guard -= 1) {
+    const ranked = here.slice().sort((a, b) => load[a] - load[b]);
+    const lo = ranked[0], hi = ranked[ranked.length - 1];
+    if (load[hi] - load[lo] <= LEVEL_CLOSE_AT) break;
+    if (load[lo] >= CAP) break;                   // nobody light enough to take another
+    const cands = (due || []).filter((u) => u.assignedTo === hi && mayBeTakenFrom(u)
+      && canCleanUnit(staffById[lo], u));
+    if (!cands.length) break;                     // everything they hold is somebody's decision
+    const u = cands[0];
+    u.assignedTo = lo;
+    u.autoDealtOn = todayKey();
+    if (state.lockOnDeal !== false) state.assignConfirmed[u.id] = todayKey();
+    load[hi] -= 1; load[lo] += 1;
+    moved.push({ unit: u.unit,
+      from: (staffById[hi] || {}).name || '—', to: (staffById[lo] || {}).name || '—' });
+  }
+  if (moved.length) {
+    state.lastRebalance = { day: todayKey(), gapBefore: gap0, moves: moved };
+    save();
+  }
+  return { moved };
 }
 
 function maybeAutoAssign() {
@@ -3515,6 +3629,8 @@ function setUnitAssignee(id, pid, pin) {
   // Choosing a cleaner by hand IS the sign-off; taking the room off someone
   // leaves nothing to sign off on.
   if (pid) state.assignConfirmed[id] = todayKey(); else delete state.assignConfirmed[id];
+  // A person moved it, so it is no longer the app's to move back — see place().
+  if (u) { if (pid) u.autoDealtOn = null; else delete u.autoDealtOn; }
   _assignPick = null;
   save(); render();
 }
@@ -3738,6 +3854,12 @@ function runAutoAssign(rooms, people, inIds, load, slotSeed, silent) {
       if (!state.assignConfirmed) state.assignConfirmed = {};
       state.assignConfirmed[u.id] = todayKey();
     }
+    // WHO PUT IT THERE, AS WELL AS WHEN. lockOnDeal stamps assignConfirmed on every room
+    // the app deals, and a hand move stamps the very same field — so nothing could tell
+    // "the office decided this" from "the app guessed this", and a rebalance had no way
+    // to leave the office's decisions alone. Recorded here, cleared by setUnitAssignee
+    // when a person moves the room. Nothing about the locking changes.
+    u.autoDealtOn = todayKey();
   };
   const ableFor = (u) => {
     const all = order.filter((id) => canCleanUnit(staffById[id], u) && !overEarly(u, id));
@@ -6266,12 +6388,33 @@ function assignNewPlanJobs(day, keys, skip) {
   // has the least rather than on top of the person who is already fullest. Counted
   // per time slot as well as overall: an even total is no use if one person is
   // holding every room the customer asked for first thing.
+  //
+  // THE BOARD IS THE TRUTH, NOT THE PLAN. This counted plan[k].assignedTo, and moving a
+  // room by hand writes u.assignedTo on the BOARD without touching the plan — so every
+  // correction the office made was invisible here, and the next top-up piled work onto
+  // somebody who only looked light. The board wins wherever it has an opinion; the plan
+  // fills in for rooms that have not reached the board yet.
+  //
+  // Communal areas are not counted at all: they are not dealt automatically any more
+  // (they wait in NOBODY YET for a person), so counting them would weigh a person down
+  // for work the app never gave them. See the areas note in autoPlanDay.
+  const counted = new Set();
+  (state.servicedUnits || []).forEach((u) => {
+    if (!u || !u.assignedTo || load[u.assignedTo] === undefined) return;
+    if (neverAutoDealt(u)) return;
+    counted.add(u.id);
+    load[u.assignedTo] += 1;
+    const slot = timeSlot(u);
+    if (slot !== 'any') slotLoad[slot][u.assignedTo] += 1;
+  });
   Object.keys(plan).forEach((k) => {
     const who = plan[k].assignedTo;
     if (!who || load[who] === undefined) return;
+    if (plan[k].kind !== 'unit') return;                 // a communal walk is not on this count
+    const u = unitById[plan[k].refId];
+    if (!u || counted.has(u.id) || neverAutoDealt(u)) return;   // the board already spoke for it
     load[who] += 1;
-    const u = plan[k].kind === 'unit' ? unitById[plan[k].refId] : null;
-    const slot = u ? timeSlot(u) : 'any';
+    const slot = timeSlot(u);
     if (slot !== 'any') slotLoad[slot][who] += 1;
   });
 
@@ -6297,13 +6440,11 @@ function assignNewPlanJobs(day, keys, skip) {
   let n = 0;
   const inSlot = (s) => roomKeys.filter((k) => unitById[plan[k].refId] && timeSlot(unitById[plan[k].refId]) === s);
   [...inSlot('early'), ...inSlot('late'), ...inSlot('any')].forEach((k) => { if (give(k)) n += 1; });
-  // Communal areas as well — see autoPlanDay. Balanced on the same count, so a walk
-  // of the building counts against the person doing it.
-  keys.filter((k) => plan[k] && plan[k].kind !== 'unit' && !plan[k].assignedTo).forEach((k) => {
-    const pick = order.slice().sort((a, b) => (load[a] - load[b]) || (order.indexOf(a) - order.indexOf(b)))[0];
-    if (!pick) return;
-    plan[k].assignedTo = pick; load[pick] += 1; n += 1;
-  });
+  // COMMUNAL AREAS ARE NOT DEALT HERE EITHER. autoPlanDay stopped handing them out —
+  // an area is a walk of the building and who walks it depends on who is actually in —
+  // and this pass carried on doing it, which is why communal jobs kept reappearing on
+  // people who had not been given them. They stay in NOBODY YET for a person to hand
+  // out on the day, and they are not on anybody's automatic count.
   return n;
 }
 
@@ -7663,6 +7804,30 @@ function viewTick() {
       top.appendChild(allBtn);
       if (loose) top.appendChild(el(`<div class="lbl" style="color:#fbbf24">`
         + `${loose} more nobody has been given.</div>`));
+    }
+  }
+  // A CAP THAT IS BREACHED IN SILENCE IS NOT A CAP. The overnight plan can name more
+  // rooms against somebody than a leader's round allows; the carry stops at the round
+  // and leaves the rest unhanded, and this is where it says so. Without it the morning
+  // simply looks short of a few rooms and nobody knows why.
+  {
+    const cb = state.lastCapBreach;
+    if (cb && cb.day === todayKey() && (cb.over || []).length) {
+      const who = cb.over.map((x) => x.name.split(' ')[0] + ' +' + x.n).join(', ');
+      const n = cb.over.reduce((t, x) => t + x.n, 0);
+      top.appendChild(el(`<div class="lbl" style="color:#fbbf24;font-weight:700">`
+        + `⚠ Last night's plan went over the ${cb.cap}-room round: ${esc(who)}. `
+        + `${n} room${n === 1 ? '' : 's'} left unhanded for whoever has space.</div>`));
+    }
+  }
+  // ...and when the morning has taken work off somebody to even the round up, it says
+  // that too. A board that rearranges itself in silence is one nobody trusts.
+  {
+    const rb = state.lastRebalance;
+    if (rb && rb.day === todayKey() && (rb.moves || []).length) {
+      const m = rb.moves.map((x) => x.unit + ' → ' + String(x.to).split(' ')[0]).join(', ');
+      top.appendChild(el(`<div class="lbl" style="color:#7ea6dc;font-weight:700">`
+        + `⚖ Round was ${rb.gapBefore} apart — moved ${esc(m)}.</div>`));
     }
   }
   grid.insertBefore(top, cols_);
@@ -11471,6 +11636,25 @@ function planningPass() {
   topUpTodayPlan();      // and anything the schedule says is due today but the frozen plan missed
   carryPlanToBoardOnOpen();   // and last night's plan for today is on the board already
   evenOutEarlyRooms();   // ...and nobody starts the day holding four asked-for rooms
+  // AND THE ROUND IS PUT RIGHT IF IT IS PLAINLY WRONG. This belongs here rather than in
+  // maybeAutoAssign for the same reason evenOutEarlyRooms does: the automatic hand-out
+  // is switched OFF on this building (state.autoAssign === false), so anything hung off
+  // it never runs at all. The plan still deals the day, so the day can still come out
+  // lopsided — and the pass that exists to fix that was sitting behind a switch the
+  // office had turned off for a different reason entirely.
+  // It does nothing unless the round is three or more apart, and it only ever moves
+  // rooms the app itself dealt — never a person's decision, never a finished room.
+  rebalanceRoundIfLopsided();
+}
+// Only the crew who are actually here: somebody who has not badged in reads as the
+// lightest person on the board and would be fed rooms they are not there to clean.
+function rebalanceRoundIfLopsided() {
+  if (TV_MODE) return { moved: [] };
+  const here = new Set(Object.keys(hikArrivals).filter((id) => !isAway(id)));
+  if (here.size < 2) return { moved: [] };
+  const due = todaysRoomList().filter((u) => !cleanedToday(u));
+  if (!due.length) return { moved: [] };
+  return rebalanceNamedRooms(due, here);
 }
 
 let _plannedForDay = null;
