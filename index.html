@@ -1138,6 +1138,11 @@ function buildDayRota(dow, perWeek, offset, order) {
 // A team is the unit the work is actually done in, so it is the unit the rest day
 // should be shared in. Everybody on a team works the Fridays their team works.
 //
+// AND IT ALTERNATES. The leaders work every other Friday with their assistants, so this
+// is a cycle of TWO — one group of teams in, the other group off, swapping each week —
+// not a cycle as long as the list of teams. Choose the group that is in on the Friday
+// coming up; everything not chosen is the other group and is in on the one after.
+//
 // Only teams that run a round are in the draw. Outside team and Security/Mosque have no
 // leader and are not on the office round — putting them in would hand them a rest day
 // from a rota they were never on.
@@ -1151,39 +1156,26 @@ function rotaTeams() {
   });
   return names.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 }
-function buildTeamDayRota(dow, perWeek, offset, order) {
+function buildTeamAltRota(dow, picked, day) {
   const all = rotaTeams();
-  const teams = (Array.isArray(order) && order.length)
-    ? order.filter((t) => all.indexOf(t) >= 0).concat(all.filter((t) => order.indexOf(t) < 0))
-    : all;
-  const n = teams.length;
-  const per = Math.max(1, Math.min(perWeek || 2, n));
-  if (!n) return { cycle: 0, perWeek: per, weeks: [], byPerson: {}, byTeam: {}, teams: [], crew: [] };
-  const cycle = n;                                  // one full turn of the window
-  const weeks = [], byTeam = {};
-  teams.forEach((t) => { byTeam[t] = []; });
-  for (let w = 0; w < cycle; w += 1) {
-    const inWeek = [];
-    for (let k = 0; k < per; k += 1) {
-      const t = teams[(w * per + k) % n];
-      if (inWeek.indexOf(t) >= 0) continue;          // a short list can wrap onto itself
-      inWeek.push(t);
-      byTeam[t].push(((w + (offset || 0)) % cycle + cycle) % cycle);
-    }
-    weeks.push(inWeek);
-  }
-  // Expanded to people only at the end: the rota is decided in teams, but it is STORED
-  // per person, because that is what worksOnDay reads and what a hand-edit changes.
+  const inNow = (picked || []).filter((t) => all.indexOf(t) >= 0);
+  const other = all.filter((t) => inNow.indexOf(t) < 0);
+  const cycle = 2;                                  // ALTERNATE. Not a cycle of teams.
+  // Which parity the Friday in question falls on, so the group that was chosen is in
+  // on THAT Friday rather than on some abstract week one.
+  const slot = weekIndex(day, cycle);
   const byPerson = {}, crew = [];
-  teams.forEach((t) => {
+  const put = (names, wk) => names.forEach((t) => {
     teamMembers(t).filter((p) => p.isCleaner).forEach((p) => {
-      byPerson[p.id] = { name: p.name, weeks: byTeam[t].slice(), team: t };
+      byPerson[p.id] = { name: p.name, weeks: [wk], team: t };
       crew.push(p);
     });
   });
-  return { cycle, perWeek: per, weeks, byTeam, byPerson, teams, crew };
+  put(inNow, slot);
+  put(other, (slot + 1) % cycle);
+  return { cycle, perWeek: inNow.length, weeks: [inNow, other], byPerson, crew,
+    teams: all, inNow, other, slot };
 }
-
 function applyDayRota(dow, rota) {
   Object.keys(rota.byPerson).forEach((pid) => {
     const p = (state.staff || []).find((x) => x.id === pid);
@@ -2355,7 +2347,6 @@ let teamFridayPer = 3;
 let teamFridayShift = 0;   // rotates which group lands on the coming Friday           // how many are in on each Friday, chosen in Team
 let teamFridayOrder = null;   // a drawn order, or null for alphabetical — see buildDayRota
 let teamFridayBy = 'team';    // 'team' shares the rest day in teams, 'person' one by one
-let teamFridayTeamsPer = 2;   // how many TEAMS are in on each Friday
 let teamFridayStart = [];     // which teams are in on the Friday coming up
 const dayKeyLocal = (ts) => { const d = new Date(ts); return isNaN(d) ? '' : d.toLocaleDateString('en-CA'); }; // local YYYY-MM-DD
 
@@ -10788,28 +10779,23 @@ function viewTeam() {
 
     box.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin:-2px 0 8px">`
       + (byTeam
-        ? `Pick how many teams are in each Friday, then who starts. Every team then does the same number of Fridays.`
+        ? `The leaders work alternate Fridays with their assistants. Tap the teams that are in this coming Friday — everything else is in the one after.`
         : `Pick how many are in each Friday. Everyone then does the same number of them, `
           + `and the week is easier for having had the hands.`)
       + `</div>`));
 
-    const pickRow = el('<div style="display:flex;gap:6px;margin-bottom:8px"></div>');
-    if (byTeam) {
-      [1, 2, 3].forEach((n) => {
-        if (n > allTeams.length) return;
-        const b = el(`<button class="freqmini ${teamFridayTeamsPer === n ? 'on' : ''}" style="flex:1">${n} team${n === 1 ? '' : 's'} in</button>`);
-        b.onclick = () => { teamFridayTeamsPer = n; teamFridayStart = []; render(); };
-        pickRow.appendChild(b);
-      });
-    } else {
+    // No "how many in" in team mode: it alternates, so the split IS the choice. Whatever
+    // is tapped is in this Friday and everything else is in the next one.
+    if (!byTeam) {
+      const pickRow = el('<div style="display:flex;gap:6px;margin-bottom:8px"></div>');
       [2, 3, 4].forEach((n) => {
         if (n > crew.length) return;
         const b = el(`<button class="freqmini ${teamFridayPer === n ? 'on' : ''}" style="flex:1">${n} in</button>`);
         b.onclick = () => { teamFridayPer = n; render(); };
         pickRow.appendChild(b);
       });
+      box.appendChild(pickRow);
     }
-    box.appendChild(pickRow);
 
     // WHO STARTS, CHOSEN RATHER THAN SHUFFLED INTO PLACE. "Put the other group on first"
     // rotates the whole line one notch at a time, which is fine for two groups and
@@ -10828,11 +10814,7 @@ function viewTeam() {
         b.onclick = () => {
           const cur = (teamFridayStart || []).slice();
           const at = cur.indexOf(t);
-          if (at >= 0) cur.splice(at, 1);
-          else {
-            cur.push(t);
-            while (cur.length > teamFridayTeamsPer) cur.shift();   // last N tapped win
-          }
+          if (at >= 0) cur.splice(at, 1); else cur.push(t);
           teamFridayStart = cur;
           render();
         };
@@ -10841,16 +10823,9 @@ function viewTeam() {
       box.appendChild(chips);
     }
 
-    const mkRota = () => {
-      if (!byTeam) return buildDayRota(fri, teamFridayPer, teamFridayShift, teamFridayOrder);
-      const picked = (teamFridayStart || []).filter((t) => allTeams.indexOf(t) >= 0);
-      const order = picked.concat(allTeams.filter((t) => picked.indexOf(t) < 0));
-      // The chosen teams are built into week 0, then the whole cycle slides so week 0
-      // IS the Friday coming up. Without the slide they would be first in an abstract
-      // cycle and in on some Friday nobody asked about.
-      const off = picked.length ? weekIndex(nextFri, allTeams.length || 1) : teamFridayShift;
-      return buildTeamDayRota(fri, teamFridayTeamsPer, off, order);
-    };
+    const mkRota = () => byTeam
+      ? buildTeamAltRota(fri, teamFridayStart, nextFri)
+      : buildDayRota(fri, teamFridayPer, teamFridayShift, teamFridayOrder);
     const label = (wk) => (byTeam ? wk.map((t) => String(t)) : wk.map((x) => x.name.split(' ')[0])).join(', ');
 
     const btn = el(`<button class="add-btn" style="background:#7c3aed;color:#ffffff">`
@@ -10870,18 +10845,26 @@ function viewTeam() {
             .filter((pid) => rota.byPerson[pid].weeks.indexOf(slot) >= 0)
             .map((pid) => rota.byPerson[pid].name.split(' ')[0]);
       const onNextTxt = onNext.join(', ') || 'nobody';
-      const preview = rota.weeks.slice(0, 4)
-        .map((wk, i) => 'Friday ' + (i + 1) + ': ' + label(wk)).join('\n');
+      const preview = byTeam
+        ? (fmtDay(nextFri) + ': ' + label(rota.inNow)
+           + '\n' + fmtDay(shiftDay(nextFri, 7)) + ': ' + label(rota.other)
+           + '\n… and so on, every other Friday')
+        : rota.weeks.slice(0, 4).map((wk, i) => 'Friday ' + (i + 1) + ': ' + label(wk)).join('\n');
       showConfirm(
-        rota.perWeek + (byTeam ? ' team' + (rota.perWeek === 1 ? '' : 's') : '') + ' in every Friday?',
+        byTeam ? 'Alternate Fridays, by team?'
+          : rota.perWeek + ' in every Friday?',
         'This coming Friday (' + fmtDay(nextFri) + '): ' + (onNextTxt || 'nobody')
           + (byTeam ? '' : '\n\nIf that is the same lot who were in last Friday, close this and tap '
               + '"↻ Put the other group on first", then set it.')
-          + '\n\n' + preview + (rota.cycle > 4 ? '\n… and so on' : '')
-          + '\n\nIt comes round every ' + rota.cycle + ' weeks, so each '
-          + (byTeam ? 'team' : 'one of the ' + (rota.crew || []).length)
-          + ' works ' + (each ? each.weeks.length : 0) + ' Fridays out of ' + rota.cycle
-          + ' — the same for everybody. You can still change any one person by hand afterwards.',
+          + '\n\n' + preview + (!byTeam && rota.cycle > 4 ? '\n… and so on' : '')
+          + (byTeam
+            ? '\n\nEvery team works one Friday in two, and a leader is in with their own '
+              + 'assistants. ' + (rota.crew || []).length + ' people covered. You can still '
+              + 'change any one person by hand afterwards.'
+            : '\n\nIt comes round every ' + rota.cycle + ' weeks, so each one of the '
+              + (rota.crew || []).length + ' works ' + (each ? each.weeks.length : 0)
+              + ' Fridays out of ' + rota.cycle
+              + ' — the same for everybody. You can still change any one person by hand afterwards.'),
         () => applyDayRota(fri, rota),
         'Set the rota',
         'safe'
@@ -10915,12 +10898,15 @@ function viewTeam() {
         const b2 = el(`<div style="font-size:11px;font-weight:700;color:#b7c8de;background:#101c30;`
           + `border-radius:8px;padding:8px 10px;margin-top:8px;line-height:1.55"></div>`);
         b2.appendChild(el(`<div style="color:#38bdf8">Set out below — not saved yet</div>`));
-        r.weeks.slice(0, 4).forEach((wk, i) => {
-          const isNext = i === 0 && byTeam;
-          b2.appendChild(el(`<div style="color:${isNext ? '#fcd34d' : '#7f9abf'}">`
-            + `${isNext ? esc(fmtDay(nextFri)) : 'Friday ' + (i + 1)}: ${esc(label(wk))}</div>`));
-        });
-        if (r.cycle > 4) b2.appendChild(el(`<div style="color:#5f7189">… and so on, every ${r.cycle} weeks</div>`));
+        if (byTeam) {
+          b2.appendChild(el(`<div style="color:#fcd34d">${esc(fmtDay(nextFri))}: ${esc(label(r.inNow) || 'nobody')}</div>`));
+          b2.appendChild(el(`<div style="color:#7f9abf">${esc(fmtDay(shiftDay(nextFri, 7)))}: ${esc(label(r.other) || 'nobody')}</div>`));
+          b2.appendChild(el(`<div style="color:#5f7189">… and so on, every other Friday</div>`));
+        } else {
+          r.weeks.slice(0, 4).forEach((wk, i) => b2.appendChild(
+            el(`<div style="color:#7f9abf">Friday ${i + 1}: ${esc(label(wk))}</div>`)));
+          if (r.cycle > 4) b2.appendChild(el(`<div style="color:#5f7189">… and so on, every ${r.cycle} weeks</div>`));
+        }
         box.appendChild(b2);
       }
     }
