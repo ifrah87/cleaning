@@ -8192,9 +8192,27 @@ function makeDropTarget(node, pid) {
   node.addEventListener('click', () => { if (_picked) assignPicked(_picked.kind, _picked.id, pid); });
 }
 
+// WHICH DAY THE BOARD IS SHOWING. 0 is today's live board — ticks, badge-ins, the lot.
+// 1 is tomorrow's plan, which is the day the office can still change before anybody
+// works it and until now meant leaving the board for the calendar to look at. Kept in a
+// variable and NOT in state on purpose: it is which day this screen is pointed at, not
+// something true of the building, and syncing it would swing every phone and both
+// televisions to tomorrow because somebody glanced ahead on one of them.
+let _boardDay = 0, _boardDayOn = null;
+function setBoardDay(n) { _boardDay = n; _giveTo = null; _picked = null; render(); }
 function viewTick() {
   const wrap = el('<div class="body"></div>');
-  const cols = tvColumns();
+  // A new work day is its own today. Left alone, a board parked on Tomorrow overnight
+  // would open on the day after, which is nobody's idea of what that button means.
+  if (_boardDayOn && _boardDayOn !== workToday()) _boardDay = 0;
+  _boardDayOn = workToday();
+  // Tomorrow is READ-ONLY. Every control on this board acts on TODAY — a tick goes to
+  // today's completions, a drag calls setUnitAssignee on the room itself — so leaving
+  // them live while showing another day would let somebody tick off a room tomorrow and
+  // silently clean it today. Tomorrow's round is edited on Plan a Day, which is built
+  // for it; here it is something to look at.
+  const readOnly = _boardDay !== 0;
+  const cols = readOnly ? tvColumnsForDay(shiftDay(workToday(), _boardDay)) : tvColumns();
 
   // ONE JOB AT A TIME, ON ITS OWN BUTTON. The offices and the guest flats are two
   // different rounds done by different people at different hours, and reading them as
@@ -8223,6 +8241,22 @@ function viewTick() {
   const grid = el('<div class="board"><div class="bd-cols"></div></div>');
   const cols_ = grid.firstChild;
   const top = el('<div style="display:flex;flex-direction:column;gap:10px"></div>');
+
+  {
+    // TODAY AND TOMORROW, ON THE BOARD ITSELF. Tomorrow was two taps and a screen away
+    // in the calendar, and it is the day the office actually acts on — the one round
+    // still worth changing. First in the stack, because which DAY you are looking at
+    // has to be read before what is on it.
+    const days = el('<div class="bd-bar"></div>');
+    [['Today', 0], ['Tomorrow', 1]].forEach(([lbl, n]) => {
+      const b = el(`<button class="bd-tab ${_boardDay === n ? 'on' : ''}">${lbl}</button>`);
+      b.onclick = () => setBoardDay(n);
+      days.appendChild(b);
+    });
+    top.appendChild(days);
+    if (readOnly) top.appendChild(el(`<div class="bd-tally" style="color:#94a3b8">`
+      + `Tomorrow's plan — nothing here can be ticked or moved. Edit it on Plan a Day.</div>`));
+  }
 
   {
     const kinds = [['all', 'All']];
@@ -8338,13 +8372,13 @@ function viewTick() {
     // unhanded work sits in is the obvious place to drop work you are taking back, and
     // it was the one column on the board that refused. An empty target means "no
     // cleaner", which is what setUnitAssignee already does with a blank id.
-    makeDropTarget(col, c.none ? '' : c.key);
+    if (!readOnly) makeDropTarget(col, c.none ? '' : c.key);
 
     const hd = el('<div class="bd-hd"></div>');
     const whoEl = el(`<div class="bd-who" style="${c.none ? '' : 'cursor:pointer'}">${esc(c.none ? 'NOBODY YET' : c.name)}</div>`);
     // TAP THE NAME TO GIVE THEM WORK. The button below says so in words for anybody who
     // has not found that out yet; the name is where the thumb goes first.
-    if (!c.none) whoEl.onclick = (e) => {
+    if (!c.none && !readOnly) whoEl.onclick = (e) => {
       if (_picked) return;                       // the column is already a place to drop
       e.stopPropagation();
       _giveTo = (_giveTo === c.key) ? null : c.key;
@@ -8365,7 +8399,7 @@ function viewTick() {
     // they are instead.
     else if (c.out) hd.appendChild(el(`<div class="bd-at none" style="width:100%">`
       + esc((STATUS[c.status] || {}).label || 'AWAY') + `</div>`));
-    else if (!c.none) hd.appendChild(el(`<div class="bd-at none" style="width:100%">NO SCAN YET</div>`));
+    else if (!c.none && !readOnly) hd.appendChild(el(`<div class="bd-at none" style="width:100%">NO SCAN YET</div>`));
     col.appendChild(hd);
 
     // Rooms, then the communal walks — the order the board has always used, and the
@@ -8394,6 +8428,7 @@ function viewTick() {
         // moved would tick itself off as done. Swallow exactly that one click.
         let swallowClick = false;
         lbl.onclick = () => {
+          if (readOnly) return;                     // another day's board is not today's work
           if (swallowClick) { swallowClick = false; return; }
           if (_picked && _picked.id === j.id) { _picked = null; render(); return; }
           if (j.area) toggleAreaDone(a.id); else toggleServicedDone(u.id);
@@ -8403,10 +8438,12 @@ function viewTick() {
         // THE GRIP IS THE MOVE. Drag it with a mouse, or tap it and then tap whoever
         // should have the room — a finger dragging down a screen is the page scrolling,
         // so touch gets the two-tap version of the same gesture.
-        const grip = el(`<button class="bd-grip" title="Drag to move, or tap then tap a person">⠿</button>`);
+        const grip = el(`<button class="bd-grip" title="Drag to move, or tap then tap a person"`
+          + `${readOnly ? ' style="visibility:hidden;pointer-events:none"' : ''}>⠿</button>`);
         let from = null, moved = false;
 
         grip.addEventListener('pointerdown', (e) => {
+          if (readOnly) return;
           from = { x: e.clientX, y: e.clientY, mouse: e.pointerType === 'mouse' };
           moved = false;
           if (grip.setPointerCapture) grip.setPointerCapture(e.pointerId);
@@ -8446,6 +8483,7 @@ function viewTick() {
         // touch is left exactly as it was.
         let cFrom = null, cMoved = false;
         chip.addEventListener('pointerdown', (e) => {
+          if (readOnly) return;
           if (e.pointerType !== 'mouse') return;
           if (e.target.closest && e.target.closest('.bd-grip')) return;   // the grip has its own
           cFrom = { x: e.clientX, y: e.clientY }; cMoved = false;
@@ -8485,7 +8523,7 @@ function viewTick() {
     put(rooms, 'ROOMS');
     put(areas, 'COMMUNAL');
 
-    if (!c.none) {
+    if (!c.none && !readOnly) {
       const more = el(`<button class="bd-more">`
         + (giving ? '✕ Done adding' : '＋ Give ' + esc(String(c.name).split(' ')[0]) + ' more work') + `</button>`);
       more.onclick = (e) => { e.stopPropagation(); _giveTo = giving ? null : c.key; render(); };
@@ -8513,6 +8551,13 @@ function viewTick() {
     }
     cols_.appendChild(col);
   });
+  // A DAY WITH NOTHING ON IT SAYS SO. Today's board is never empty in practice, but
+  // tomorrow's can be — the week is seeded ahead, and a day that has not been reached
+  // yet would otherwise render as a blank screen that reads like a bug.
+  if (!cols_.children.length && readOnly) {
+    cols_.appendChild(el(`<div class="bd-col none"><div class="bd-who">NOTHING PLANNED YET</div>`
+      + `<div class="bd-sub">Tomorrow has not been laid out. Open Plan a Day to build it.</div></div>`));
+  }
   wrap.appendChild(grid);
   wrap.appendChild(el(`<div class="note" style="font-size:11px;color:#6f8ab0;margin-top:12px">`
     + `Tap a chip to mark it clean. Drag it by the ⠿ grip — or tap the grip, then tap a `
