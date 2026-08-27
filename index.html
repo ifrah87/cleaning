@@ -764,11 +764,18 @@
   /* THE MONTH, SIZED FOR A WALL. Same numbers the calendar tab shows — bar against the
      heaviest day in view, blue for laid out, grey for merely due, amber where work has
      nobody — at a size that reads from across the room instead of from a thumb. */
-  .tv-cal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 0.5vw; flex: 1; min-height: 0; }
+  /* SIX ROWS HAVE TO FIT, NOT FIVE. A month whose 1st falls late in the week needs six
+     rows — August 2026 opens on a Saturday, so the 30th and 31st sit on a sixth — and
+     with auto-sized rows the grid simply grew past the screen and .tv-wrap clipped the
+     bottom of it. The end of the month is exactly the part somebody walks over to read.
+     Equal rows, sized against what is left after the header, however many there are. */
+  .tv-cal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr));
+    grid-auto-rows: minmax(0, 1fr); gap: 0.5vw; flex: 1; min-height: 0; }
   .tv-cal-dow { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 0.5vw; margin-bottom: 0.5vh; }
   .tv-cal-dow > div { text-align: center; font-size: 1vw; font-weight: 800; letter-spacing: 0.12em; color: var(--tv-muted); }
   .tv-cal-cell { background: var(--tv-card); border: 1px solid var(--tv-line); border-radius: 0.7vw;
-    padding: 0.8vh 0.6vw; display: flex; flex-direction: column; gap: 0.5vh; min-width: 0; overflow: hidden; }
+    padding: 0.7vh 0.6vw; display: flex; flex-direction: column; justify-content: flex-start;
+    gap: 0.4vh; min-width: 0; min-height: 0; overflow: hidden; }
   .tv-cal-cell.past { opacity: 0.42; }
   .tv-cal-cell.today { border-color: var(--tv-accent); border-width: 3px; }
   .tv-cal-cell.shown { background: var(--tv-chip); border-color: var(--tv-accent); border-width: 3px; }
@@ -11625,7 +11632,7 @@ function tvAirGrid(air) {
 // single meaning they already have — WHICH DAY — and walking far enough forward turns
 // the page to next month by itself. Nothing here is tappable; a wall is read, not used.
 function tvCalendarPage(day) {
-  const box = el(`<div class="tv-cols" style="display:flex;flex-direction:column"></div>`);
+  const box = el(`<div class="tv-cols" style="display:flex;flex-direction:column;min-height:0"></div>`);
   const d = new Date(day + 'T00:00:00');
   const first = new Date(d.getFullYear(), d.getMonth(), 1);
   const today = workToday();
