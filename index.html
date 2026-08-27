@@ -802,6 +802,15 @@
   .tv-group { font-size: calc(0.95vw * var(--tvs)); font-weight: 800; letter-spacing: 0.12em;
               color: var(--tv-muted); margin-top: calc(0.6vh * var(--tvs)); }
   .tv-empty { font-size: 1.4vw; font-weight: 700; color: var(--tv-empty); padding: 1vh 0; }
+  /* WHAT THE REMOTE DOES, ON THE SCREEN THAT THE REMOTE DRIVES. The keys have worked
+     since the day the pages went in and nothing ever said so, so the board read as a
+     fixed picture and the month page might as well not have existed. Two axes, named,
+     with the one you are on lit. */
+  .tv-nav { display: flex; gap: 2.5vw; justify-content: center; align-items: center; flex-wrap: wrap; }
+  .tv-navgrp { display: flex; gap: 0.7vw; align-items: center; }
+  .tv-navk { font-size: 1.05vw; font-weight: 800; color: var(--tv-dot); letter-spacing: 0.1em; }
+  .tv-navl { font-size: 1.05vw; font-weight: 800; letter-spacing: 0.1em; color: var(--tv-muted); }
+  .tv-navl.on { color: var(--tv-accent); }
   .tv-pager { display: flex; gap: 0.6vw; justify-content: center; }
   .tv-dot { width: 0.8vw; height: 0.8vw; border-radius: 50%; background: var(--tv-dot); }
   .tv-dot.on { background: var(--tv-accent); }
@@ -11814,7 +11823,7 @@ function tvCalendarPage(day) {
   }
   box.appendChild(grid);
   box.appendChild(el(`<div class="tv-cal-key">Blue is laid out and handed round · grey is what the schedule says is due`
-    + ` · amber is work nobody has yet · up and down on the remote walk the days</div>`));
+    + ` · amber is work nobody has yet</div>`));
   return box;
 }
 
@@ -12029,10 +12038,36 @@ function renderTV() {
   });
   wrap.appendChild(onCal ? tvCalendarPage(shownDay) : onAir ? tvAirGrid(air) : grid);
 
-  if (tvPages > 1) {
-    const pager = el(`<div class="tv-pager"></div>`);
-    for (let i = 0; i < tvPages; i++) pager.appendChild(el(`<div class="tv-dot${i === tvPage ? ' on' : ''}"></div>`));
-    wrap.appendChild(pager);
+  // THE REMOTE, SPELLED OUT. Left and right walk the pages, up and down walk the days —
+  // true since the pages went in, and said out loud only at the bottom of the month.
+  // On the board itself nothing hinted that either axis existed, so the wall read as a
+  // fixed picture and nobody reached for the remote at all. Named on every page, with
+  // whichever one you are on lit, so somebody standing in front of it can see there is
+  // more than what is showing.
+  {
+    const nav = el(`<div class="tv-nav"></div>`);
+
+    const days = el(`<div class="tv-navgrp"></div>`);
+    days.appendChild(el(`<div class="tv-navk">▲▼</div>`));
+    days.appendChild(el(`<div class="tv-navl${tvDayOffset === 0 ? ' on' : ''}">TODAY</div>`));
+    days.appendChild(el(`<div class="tv-navl${tvDayOffset ? ' on' : ''}">`
+      + (tvDayOffset > 1 ? esc(fmtDay(shownDay).toUpperCase()) : 'TOMORROW') + `</div>`));
+    nav.appendChild(days);
+
+    const pgs = el(`<div class="tv-navgrp"></div>`);
+    pgs.appendChild(el(`<div class="tv-navk">◀▶</div>`));
+    pgs.appendChild(el(`<div class="tv-navl${!onCal ? ' on' : ''}">BOARD</div>`));
+    if (boardPages > 1) {
+      const dots = el(`<div class="tv-pager"></div>`);
+      for (let i = 0; i < boardPages; i += 1) {
+        dots.appendChild(el(`<div class="tv-dot${!onCal && i === tvPage ? ' on' : ''}"></div>`));
+      }
+      pgs.appendChild(dots);
+    }
+    pgs.appendChild(el(`<div class="tv-navl${onCal ? ' on' : ''}">MONTH</div>`));
+    nav.appendChild(pgs);
+
+    wrap.appendChild(nav);
   }
 
   app.appendChild(wrap);
