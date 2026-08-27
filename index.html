@@ -6299,8 +6299,20 @@ function autoPlanDay(day) {
   // lose a day that had already been settled. The schedule has an opinion about which
   // rooms are due; it has none about who they belong to once a person has said.
   // Machine picks still clear and are dealt again, so a rebuild does what it says.
+  // …UNLESS THE ROTA SAYS THEY ARE NOT IN THAT DAY. A hand-made assignment is a
+  // decision about a PERSON doing a job on a DAY, and the rota can make it untrue after
+  // the fact: put 503 on Mahamed Nur while he is down for Fridays, then take his team
+  // off Fridays, and it stops being a decision — it is a room with a name on it that
+  // nobody is coming to clean, and no rebuild would shift it because a rebuild is
+  // exactly what protects it.
+  //
+  // The morning hand-out has always taken this view of somebody marked away — "a room
+  // held for somebody who has been marked AWAY is not a decision any more, it is a gap:
+  // nobody is coming to clean it" — and a rota saying they are not in is the same
+  // statement made in advance. staffById holds the crew rostered on THIS day, so this
+  // is the same question, asked of the same list the deal is about to use.
   keys.forEach((k) => {
-    if (plan[k].byHand && plan[k].assignedTo) return;
+    if (plan[k].byHand && plan[k].assignedTo && staffById[plan[k].assignedTo]) return;
     plan[k].assignedTo = null;
   });
   // Hand-held rooms are counted before anything is dealt, or the deal hands somebody a
@@ -6376,7 +6388,11 @@ function autoPlanDay(day) {
   const areaKeys = Object.keys(plan).filter((k) => plan[k].kind !== 'unit');
   // An area the office put on somebody by hand (byHand, set in setPlanAssignee) is a
   // decision and stays exactly where it was put. Only the machine's own picks clear.
-  areaKeys.forEach((k) => { if (!plan[k].byHand) plan[k].assignedTo = null; });
+  // Same for a communal walk put on somebody by hand: it is theirs until the rota says
+  // they are not in, and then it is nobody's and belongs back in the box.
+  areaKeys.forEach((k) => {
+    if (!plan[k].byHand || !staffById[plan[k].assignedTo]) plan[k].assignedTo = null;
+  });
 
   // Even it out, exactly as the morning does. A room the customer asked a time for
   // stays where it is; that was their decision, not a balancing one.
