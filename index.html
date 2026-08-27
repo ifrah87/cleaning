@@ -5657,7 +5657,18 @@ function addOneOffJob(label, pid) {
 }
 // Raised today, or raised earlier and still not done. A one-off that has been ticked
 // leaves the board the next day and stays in History, which is where it belongs.
-const oneOffLive = (a) => !a.oneOff || a.oneOff === workToday() || !a.doneOn;
+// ...AND NOT BEFORE ITS DAY. "It shows on that day, and after that only until somebody
+// says it is done" is the rule, and the code only implemented the second half: any
+// undone one-off was live for ever, in both directions. That was harmless while the
+// only way to raise one was for TODAY — addOneOffJob stamps workToday() and nothing
+// else — so a stamp in the future was a state that could not happen.
+//
+// It can now: a job raised on Thursday evening for Friday's board. Left as it was, it
+// appeared on Thursday's board the moment it was written, on a round that had finished
+// hours earlier. Before its day it is not work yet; on its day and after, it is.
+const oneOffLive = (a) => !a.oneOff
+  || String(a.oneOff) === workToday()
+  || (String(a.oneOff) < workToday() && !a.doneOn);
 function removeArea(id) {
   showConfirm('Remove this area?', 'This cleaning area will be permanently deleted.', () => {
     state.areas = state.areas.filter(a => a.id !== id);
