@@ -2599,9 +2599,16 @@ const OFF_ROLL_CALL_TYPES = [];
 //
 // They stay ON the board, in NOBODY YET, so they can be ticked and given out on the
 // Airbnb tab exactly as before. The only thing that changes is that nothing puts a name
-// on one unless a person does. A flat tied to somebody permanently (usualTo) is still a
-// decision and is still honoured.
-const neverAutoDealt = (u) => unitType(u) === 'airbnb' && !(u && u.usualTo);
+// on one unless a person does.
+//
+// NOT EVEN A PIN. A permanent cleaner was the one exception left, and it was the one way
+// the app still put a name on a flat by itself: 206 is tied to Mahad, so 206 arrived on
+// Mahad's column every morning whatever the day looked like — and because a flat is
+// never re-dealt, the name then sat there for days (see clearStaleHandouts). A pin says
+// who USUALLY takes a flat, which is worth knowing when the flats are given out. It is
+// not the office asking the app to give it out. The pin is untouched and still decides
+// the suggestion; what it no longer does is deal.
+const neverAutoDealt = (u) => unitType(u) === 'airbnb';
 // ONE ROOM, PUT ON TODAY'S BOARD BY HAND. The rule below is about a KIND of room —
 // Airbnb is its own job, cleaned after the offices by its own pair, and it never joins
 // the morning round. That stays exactly as it was. What it never had was an exception:
