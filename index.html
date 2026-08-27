@@ -6205,10 +6205,17 @@ function planningJobsFor(day) {
 // keeps its assignee, so seeding can never wipe a hand-made list.
 function applySuggestions(day, jobs) {
   const plan = getPlan(day);
+  // A ROOM TAKEN OFF A DAY STAYS OFF IT. togglePlanJob writes a headstone for exactly
+  // this reason — "taking a job off a day is a decision, and it has to outlast the next
+  // re-sync" — and resyncPlanDay honours it. This, the other half of the same idea,
+  // never asked: so trimming a light Friday down to the rooms you actually mean to
+  // clean, and then rebuilding the day, put every one of them straight back. Same
+  // intent, two implementations, one of them forgot.
+  const dropped = droppedFor(day);
   let added = 0;
   jobs.forEach(s => {
     const k = planKey(s.kind, s.id);
-    if (plan[k]) return;
+    if (plan[k] || (dropped && dropped[k])) return;
     // `auto` records that the schedule put this here, not a person. Only an
     // auto-placed job may be taken away again without asking.
     plan[k] = { kind: s.kind, refId: s.id, label: s.label, assignedTo: null, auto: true };
