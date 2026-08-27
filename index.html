@@ -206,11 +206,13 @@
   .bd-col.none .bd-chip, .bd-col.none .freqmini { padding: 8px 13px; }
   .bd-col.none { background: #2b2008; }
   .bd-col.out  { background: #241a06; }
+  .bd-col.off  { background: #151d2b; }
   .bd-hd { display: flex; align-items: baseline; gap: 8px; border-bottom: 1px solid #1e2f4d;
            padding-bottom: 8px; margin-bottom: 8px; flex-wrap: wrap; }
   .bd-who { font-size: 15px; font-weight: 800; color: #eaf1fb; }
   .bd-col.none .bd-who { color: #fbbf24; }
   .bd-col.out .bd-who { color: #fcd34d; }
+  .bd-col.off .bd-who { color: #94a3b8; }
   .bd-sub { font-size: 11px; font-weight: 700; color: #6f8ab0; width: 100%; }
   .bd-at { font-size: 11px; font-weight: 800; color: #86efac; }
   .bd-at.none { color: #fbbf24; }
@@ -622,6 +624,11 @@
     --tv-air-bg: #4c1d95;   --tv-air-fg: #f3e8ff;   --tv-air-ln: #c084fc;
     --tv-none-bg: #2b2008;  --tv-none-fg: #fbbf24;
     --tv-out-bg: #241a06;   --tv-out-fg: #fcd34d;
+    /* OFF IS NOT A GAP. Amber on this board means somebody should be doing this and
+       is not — unhanded work, a no-show, somebody sick. A cleaner who is off was
+       never coming, so their column is not a warning and must not wear the warning
+       colour: slate, which reads as "not part of today" at ten feet. */
+    --tv-off-bg: #151d2b;   --tv-off-fg: #94a3b8;
     background: var(--tv-bg); color: var(--tv-fg);
   }
   /* The app's own paper: same #f4f7fb ground, white cards, same urgency hues at
@@ -638,6 +645,7 @@
     --tv-air-bg: #ede9fe;   --tv-air-fg: #4c1d95;   --tv-air-ln: #7c3aed;
     --tv-none-bg: #fff7ed;  --tv-none-fg: #b45309;
     --tv-out-bg: #fffbeb;   --tv-out-fg: #b45309;
+    --tv-off-bg: #f1f5f9;   --tv-off-fg: #64748b;
   }
   body.tv.tvlight .tv-col { box-shadow: 0 0 0 1px var(--tv-line); }
   body.tv.tvlight .tv-chip { box-shadow: 0 0 0 1px var(--tv-line); }
@@ -750,6 +758,9 @@
   .tv-col.none .tv-who, .tv-col.none .tv-count { color: var(--tv-none-fg); }
   .tv-col.out { background: var(--tv-out-bg); }
   .tv-col.out .tv-who { color: var(--tv-out-fg); }
+  /* After .out on purpose: somebody off is away, so they carry both classes. */
+  .tv-col.off { background: var(--tv-off-bg); }
+  .tv-col.off .tv-who, .tv-col.off .tv-count { color: var(--tv-off-fg); }
 
   /* The separate job. Bigger cards than the board's chips because there are far
      fewer of them and each carries a deadline somebody has to act on. */
@@ -8319,6 +8330,7 @@ function viewTick() {
     const giving = _giveTo === c.key;
     if (!c.jobs.length && !giving) return;      // nothing to tick is nothing to show here
     const col = el(`<div class="bd-col${c.none ? ' none' : ''}${c.out ? ' out' : ''}`
+      + `${c.status === 'off' ? ' off' : ''}`
       + `${c.none && c.jobs.length > 8 ? ' wide3' : c.none && c.jobs.length > 3 ? ' wide2' : ''}${_picked ? ' drop' : ''}"></div>`);
     // NOBODY YET TAKES A DROP TOO. Dragging only ever went one way: a room could be put
     // ON somebody and never taken back off, so correcting a hand-out meant finding the
@@ -8347,6 +8359,12 @@ function viewTick() {
       + (c.at ? 'IN ' + esc(c.at) : '')
       + (c.at && c.left ? ' · ' : '')
       + (c.left ? 'OUT ' + esc(c.left) : '') + `</div>`));
+    // "NO SCAN YET" AT SOMEBODY WHO IS NOT COMING IS A LIE. It reads as "still on
+    // their way" and it was shown to every away person, off included — so a cleaner
+    // the office had already marked off looked merely late all morning. Say what
+    // they are instead.
+    else if (c.out) hd.appendChild(el(`<div class="bd-at none" style="width:100%">`
+      + esc((STATUS[c.status] || {}).label || 'AWAY') + `</div>`));
     else if (!c.none) hd.appendChild(el(`<div class="bd-at none" style="width:100%">NO SCAN YET</div>`));
     col.appendChild(hd);
 
@@ -11515,7 +11533,8 @@ function renderTV() {
     grid.appendChild(el(`<div class="tv-empty">Nothing on today's board yet</div>`));
   }
   shown.forEach((c) => {
-    const col = el(`<div class="tv-col${c.none ? ' none' : ''}${c.out ? ' out' : ''}"></div>`);
+    const col = el(`<div class="tv-col${c.none ? ' none' : ''}${c.out ? ' out' : ''}`
+      + `${c.status === 'off' ? ' off' : ''}"></div>`);
     const hd = el(`<div class="tv-col-hd"></div>`);
     const row = el(`<div class="tv-hd-row"></div>`);
     row.appendChild(el(`<div class="tv-who">${esc(c.name)}</div>`));
