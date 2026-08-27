@@ -12049,6 +12049,27 @@ function render() {
       + (_boardDay ? '‹ Today' : 'Tomorrow ›') + `</button>`);
     dayBtn.onclick = () => setBoardDay(_boardDay ? 0 : 1);
     bar.appendChild(dayBtn);
+    // ...AND ONWARD FROM TOMORROW. Tomorrow answers "what is the next round", and the
+    // question straight after it is "and then what" — which the board cannot answer,
+    // because it holds one day. Rather than grow a day stepper on a screen built for
+    // the round in front of you, the button that already means "further ahead" carries
+    // on into the month, which is the screen that exists for exactly that.
+    //
+    // Only from tomorrow. On today it would be a third control competing with the
+    // round; from tomorrow you are already looking forward and it is the next step.
+    if (_boardDay) {
+      const monthBtn = el(`<button class="tb-btn" style="border-color:#0284c7;color:#38bdf8">Month ›</button>`);
+      monthBtn.onclick = () => {
+        // Land on the day the board was showing, not on whatever month was last open —
+        // arriving somewhere other than where you were is how a jump loses your place.
+        const d = shiftDay(workToday(), _boardDay);
+        _calDay = d;
+        const t = new Date(d + 'T00:00:00');
+        _calMonth = new Date(t.getFullYear(), t.getMonth(), 1);
+        setTab('calendar');
+      };
+      bar.appendChild(monthBtn);
+    }
   }
   const searchBtn = el(`<button class="tb-btn">⌕</button>`);
   searchBtn.onclick = openSearch;
