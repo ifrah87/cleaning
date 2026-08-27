@@ -3407,6 +3407,27 @@ let _assignPick = null;   // {unitId} while the "who should take this?" picker i
 // that was alright is the manual step, and manual steps are where the mistakes were.
 const assignConfirmedToday = (u) => !!state.autoConfirm
   || (state.assignConfirmed || {})[u.id] === todayKey();
+// IS THE NAME ON THIS ROOM FROM THE ROUND THAT IS RUNNING NOW?
+// Every hand-out stamps the day it was made — by hand (assignConfirmed, setUnitAssignee),
+// from the plan (planCarried), or by the morning deal (autoDealtOn) — and nothing ever
+// asked. A room simply kept whoever it was last given to, and the ONLY thing that took a
+// name back off was the morning hand-out, which does not run until somebody badges in.
+//
+// So on a morning before the first scan the whole board was still wearing YESTERDAY's
+// names, and today's plan could not get in past keepBoard to correct it: 27 Aug was
+// planned for five leaders with Abdiwakiil correctly off, and the board underneath still
+// showed him holding 305, 403, 1103 and 704 from the day before.
+//
+// The stamps are calendar days by convention (see applyPlannedAssignments) and a round
+// belongs to a WORK day, so the test is "not older than the work day" — which is also
+// what stops a round still running at 1am reading as stale and being re-dealt underneath
+// the crew working it.
+const assignedThisRound = (u) => {
+  const d = workToday();
+  return String((state.assignConfirmed || {})[u.id] || '') >= d
+    || String((state.planCarried || {})[u.id] || '') >= d
+    || String(u.autoDealtOn || '') >= d;
+};
 // Taking the whole deal in one go. Checking a hand-out room by room is right when
 // you disagree with two of them and wrong as the default: twenty-three yes-taps is
 // not a review, it is a toll, and the point of dealing the rooms out automatically
@@ -6907,7 +6928,10 @@ function mirrorPlanToBoard(day, key, keepBoard) {
     if (j.kind === 'unit') {
       const u = (state.servicedUnits || []).find((x) => x.id === j.refId);
       if (!u) return;
-      if (keepBoard && u.assignedTo) return;   // the board was changed since; it wins
+      // ...but only a name put there THIS round. keepBoard exists to stop the plan
+      // overwriting what somebody has decided since it was drawn; yesterday's leftover
+      // is not a decision, it is the last round that nobody has cleared yet.
+      if (keepBoard && u.assignedTo && assignedThisRound(u)) return;
       // An assistant works the leader's round with them, so a plan naming one must not
       // put the room on the board against their name. The room stays free and the
       // morning hands it to a leader. Assigning it to them on the board by hand still
@@ -12129,12 +12153,21 @@ function evenOutEarlyRooms() {
 // Only a name that is not from today goes. A flat handed to somebody today is stamped
 // with today (setUnitAssignee), one already cleaned keeps whoever did it, and one tied
 // to a person permanently is a standing decision and is left alone.
+//
+// EVERY ROOM, NOT ONLY THE FLATS. Written for the guest flats because they are the ones
+// never re-dealt, and it turned out the ordinary rooms had the same hole for a different
+// reason: the morning hand-out clears a room before it deals it, but the hand-out does
+// not run until somebody badges in (see the `!inNow.length` guard in maybeAutoAssign).
+// On any morning before the first scan — which is every morning, for two hours — the
+// whole board still wore the last round's names. Today's plan was right and invisible.
+//
+// A name from THIS round stays, whoever put it there. A name from an earlier one goes,
+// and the room shows in NOBODY YET until the plan or the morning puts somebody on it.
 function clearStaleHandouts() {
-  const today = todayKey();
   (state.servicedUnits || []).forEach((u) => {
-    if (!u || !u.assignedTo || !neverAutoDealt(u)) return;
-    if ((state.assignConfirmed || {})[u.id] === today) return;   // given out today, by a person
-    if (cleanedToday(u)) return;                                 // done today — the name is the record
+    if (!u || !u.assignedTo) return;
+    if (assignedThisRound(u)) return;   // handed out this round, by a person or by the app
+    if (cleanedToday(u)) return;        // done today — the name is the record of who did it
     u.assignedTo = null;
     delete state.assignConfirmed[u.id];
   });
@@ -12153,7 +12186,7 @@ function planningPass() {
   // Hassan Elmi → nobody. Nobody reassigned those rooms. The screen was arguing with
   // the server, once a minute, in front of the crew.
   if (TV_MODE) return;
-  clearStaleHandouts();   // yesterday's name comes off a guest flat nobody has claimed today
+  clearStaleHandouts();   // the last round's names come off before this one is laid on
   // Level first — it decides which rooms fall on which day, and planning ahead of it
   // would lay out days it is about to move.
   autoLevelIfLopsided();
