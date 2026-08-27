@@ -9524,9 +9524,31 @@ function viewRollCall(opts) {
     // Named, though. Somebody who badged in and then appears nowhere on the screen
     // reads as the door reader having missed them, which is a different problem the
     // office would go looking for.
+    // WITH THE TIME THEY BADGED IN, AND THEIR WHOLE NAME.
+    //
+    // This line is the only place most of the crew appears on the roll call — leaders
+    // get cards, non-cleaners get chips, and everybody else is here — and it named them
+    // without the one fact the roll call exists to report. "What time did Abdirisaq get
+    // in?" could not be answered on this screen at all; you had to find whichever leader
+    // he was printed beside on the board. An assistant's badge-in is as real as a
+    // leader's and the door reader records it the same way.
+    //
+    // Full names, not first names. This roster has Mahad Hussein Hassan, Mahad Abdi
+    // Mohamed, Mahamed Nur Hassan, Mohamed Salaal, Mahamed Abdi Amin and Mahamed Deeq
+    // Aadan on it — six people whose first names differ by a vowel, and a list of them
+    // cut to the first word is not a list of who is in.
+    //
+    // Earliest first, the same order the cards above are in, so the two read as one
+    // list rather than two orderings of the same morning.
     if (assistants.length) whoIn.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin:-8px 0 12px">`
       + `Also in, working a leader's round: `
-      + `<b>${assistants.map((p) => esc(p.name.split(' ')[0]) + (holdsWork(p) ? ' (holding work)' : '')).join(', ')}</b>`
+      + `<b>${assistants.slice()
+          .sort((a, b) => String((hikArrivals[a.id] || {}).raw || '')
+            .localeCompare(String((hikArrivals[b.id] || {}).raw || '')))
+          .map((p) => esc(p.name)
+            + ((hikArrivals[p.id] || {}).time
+                ? ` <span style="color:#7ea6dc">${esc(hikArrivals[p.id].time)}</span>` : '')
+            + (holdsWork(p) ? ' (holding work)' : '')).join(', ')}</b>`
       + ` — rooms are dealt to leaders, so they are named on their leader rather than given a round of their own.</div>`));
     arrIds
       .map((id) => ({ s: staffById[id], t: hikArrivals[id].time, out: hikArrivals[id].out, raw: hikArrivals[id].raw }))
