@@ -761,6 +761,23 @@
   /* After .out on purpose: somebody off is away, so they carry both classes. */
   .tv-col.off { background: var(--tv-off-bg); }
   .tv-col.off .tv-who, .tv-col.off .tv-count { color: var(--tv-off-fg); }
+  /* THE MONTH, SIZED FOR A WALL. Same numbers the calendar tab shows — bar against the
+     heaviest day in view, blue for laid out, grey for merely due, amber where work has
+     nobody — at a size that reads from across the room instead of from a thumb. */
+  .tv-cal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 0.5vw; flex: 1; min-height: 0; }
+  .tv-cal-dow { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 0.5vw; margin-bottom: 0.5vh; }
+  .tv-cal-dow > div { text-align: center; font-size: 1vw; font-weight: 800; letter-spacing: 0.12em; color: var(--tv-muted); }
+  .tv-cal-cell { background: var(--tv-card); border: 1px solid var(--tv-line); border-radius: 0.7vw;
+    padding: 0.8vh 0.6vw; display: flex; flex-direction: column; gap: 0.5vh; min-width: 0; overflow: hidden; }
+  .tv-cal-cell.past { opacity: 0.42; }
+  .tv-cal-cell.today { border-color: var(--tv-accent); border-width: 3px; }
+  .tv-cal-cell.shown { background: var(--tv-chip); border-color: var(--tv-accent); border-width: 3px; }
+  .tv-cal-cell.blank { background: none; border: none; }
+  .tv-cal-n { font-size: 1.5vw; font-weight: 800; line-height: 1; }
+  .tv-cal-bar { height: 0.8vh; background: var(--tv-bar); border-radius: 0.4vh; overflow: hidden; }
+  .tv-cal-bar > div { height: 100%; }
+  .tv-cal-sub { font-size: 0.95vw; font-weight: 800; }
+  .tv-cal-key { font-size: 1vw; font-weight: 700; color: var(--tv-muted); margin-top: 0.8vh; }
 
   /* The separate job. Bigger cards than the board's chips because there are far
      fewer of them and each carries a deadline somebody has to act on. */
@@ -11521,6 +11538,58 @@ function tvAirGrid(air) {
   return grid;
 }
 
+// THE MONTH ON THE WALL. The board answers "what is happening now"; this answers the
+// other question the office asks in front of it — what is coming, which days are heavy,
+// where the thin ones are. It was a tab on a phone, and the phone is not what anybody is
+// standing in front of at seven in the morning.
+//
+// The month shown is the one holding the day the remote is on, so up and down keep the
+// single meaning they already have — WHICH DAY — and walking far enough forward turns
+// the page to next month by itself. Nothing here is tappable; a wall is read, not used.
+function tvCalendarPage(day) {
+  const box = el(`<div class="tv-cols" style="display:flex;flex-direction:column"></div>`);
+  const d = new Date(day + 'T00:00:00');
+  const first = new Date(d.getFullYear(), d.getMonth(), 1);
+  const today = workToday();
+  const dowRow = el(`<div class="tv-cal-dow"></div>`);
+  ['S', 'M', 'T', 'W', 'T', 'F', 'S'].forEach((x) => dowRow.appendChild(el(`<div>${x}</div>`)));
+  box.appendChild(dowRow);
+  const grid = el(`<div class="tv-cal"></div>`);
+  for (let i = 0; i < first.getDay(); i += 1) grid.appendChild(el(`<div class="tv-cal-cell blank"></div>`));
+  const daysInMonth = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
+  // The heaviest day in view sets the bar, so the shape of the month reads at a glance
+  // rather than every day looking the same size. Same rule as the calendar tab.
+  let peak = 1;
+  const infos = {};
+  for (let n = 1; n <= daysInMonth; n += 1) {
+    const k = ymd(new Date(first.getFullYear(), first.getMonth(), n));
+    infos[k] = calDayInfo(k);
+    peak = Math.max(peak, infos[k].rooms);
+  }
+  for (let n = 1; n <= daysInMonth; n += 1) {
+    const k = ymd(new Date(first.getFullYear(), first.getMonth(), n));
+    const info = infos[k];
+    const cls = (k < today ? ' past' : '') + (k === today ? ' today' : '') + (k === day && k !== today ? ' shown' : '');
+    const cell = el(`<div class="tv-cal-cell${cls}"></div>`);
+    cell.appendChild(el(`<div class="tv-cal-n" style="color:${k === today ? 'var(--tv-accent)' : 'var(--tv-fg)'}">${n}</div>`));
+    if (info.rooms) {
+      const bar = el(`<div class="tv-cal-bar"></div>`);
+      bar.appendChild(el(`<div style="width:${Math.round((info.rooms / peak) * 100)}%;`
+        + `background:${info.planned ? 'var(--tv-accent)' : 'var(--tv-job-ln)'}"></div>`));
+      cell.appendChild(bar);
+      cell.appendChild(el(`<div class="tv-cal-sub" style="color:${info.loose ? 'var(--tv-none-fg)' : 'var(--tv-muted)'}">`
+        + `${info.rooms}${info.loose ? ' · ' + info.loose + ' free' : ''}</div>`));
+    } else {
+      cell.appendChild(el(`<div class="tv-cal-sub" style="color:var(--tv-empty)">—</div>`));
+    }
+    grid.appendChild(cell);
+  }
+  box.appendChild(grid);
+  box.appendChild(el(`<div class="tv-cal-key">Blue is laid out and handed round · grey is what the schedule says is due`
+    + ` · amber is work nobody has yet · up and down on the remote walk the days</div>`));
+  return box;
+}
+
 function renderTV() {
   const app = document.getElementById('app');
   document.body.classList.add('tv');
@@ -11541,9 +11610,12 @@ function renderTV() {
   // out, so the board falls back to it the day somebody wants it again.
   const air = [];
   const boardPages = Math.max(1, Math.ceil(cols.length / TV_COLS_PER_PAGE));
-  const tvPages = boardPages + (air.length ? 1 : 0);
+  // The month is always the last page, so its position does not move about as the crew
+  // grows and the board gains or loses a page under it.
+  const tvPages = boardPages + (air.length ? 1 : 0) + 1;
   if (tvPage >= tvPages) tvPage = 0;
-  const onAir = air.length > 0 && tvPage === tvPages - 1 && tvPages > boardPages;
+  const onCal = tvPage === tvPages - 1;
+  const onAir = !onCal && air.length > 0 && tvPage === tvPages - 2;
 
   // Every number at the top counts the page you are actually looking at, or the
   // Airbnb page would sit under the offices' progress and read as its own.
@@ -11555,7 +11627,8 @@ function renderTV() {
   // --- top line ---
   const top = el(`<div class="tv-top"></div>`);
   const left = el(`<div></div>`);
-  left.appendChild(el(`<div class="tv-brand">${onAir ? esc(tvAirTitle(air)) : 'CLEANING BOARD'}</div>`));
+  left.appendChild(el(`<div class="tv-brand">${onCal ? 'THE MONTH AHEAD'
+    : onAir ? esc(tvAirTitle(air)) : 'CLEANING BOARD'}</div>`));
   // THE DAY THE BOARD IS ABOUT, NOT THE DAY THE CLOCK IS ON.
   // The work day rolls at 3am — a round that runs past midnight belongs to the morning
   // it started — and the jobs below have always followed that. The date line did not:
@@ -11638,7 +11711,7 @@ function renderTV() {
   // brim: six people is 3+3, not 5 then a lonely 1, and the column width stops
   // jumping about every time the board turns over.
   const perPage = Math.max(1, Math.ceil(cols.length / boardPages));
-  const shown = onAir ? [] : cols.slice(tvPage * perPage, tvPage * perPage + perPage);
+  const shown = (onAir || onCal) ? [] : cols.slice(tvPage * perPage, tvPage * perPage + perPage);
 
   const grid = el(`<div class="tv-cols"></div>`);
   const g = tvGrid(shown.length);
@@ -11726,7 +11799,7 @@ function renderTV() {
     group(areas, 'COMMUNAL');
     grid.appendChild(col);
   });
-  wrap.appendChild(onAir ? tvAirGrid(air) : grid);
+  wrap.appendChild(onCal ? tvCalendarPage(shownDay) : onAir ? tvAirGrid(air) : grid);
 
   if (tvPages > 1) {
     const pager = el(`<div class="tv-pager"></div>`);
@@ -11770,8 +11843,12 @@ function startBuildWatch() {
 }
 
 function startTVLoop() {
-  const pages = () => Math.max(1, Math.ceil(tvColumns().length / TV_COLS_PER_PAGE))
-    + (tvOffRollCall().length ? 1 : 0);
+  // ...+ 1 for the month, which is always the last page. Counted the same way renderTV
+  // counts it, or right-arrow walks into a page the board will not draw — which it
+  // already did: this added a page for the off-roll-call flats while renderTV has held
+  // that list empty since they moved into the columns, so on a board with guest rooms
+  // the remote had one more page to walk than there were pages to see.
+  const pages = () => Math.max(1, Math.ceil(tvColumns().length / TV_COLS_PER_PAGE)) + 1;
   // PICK UP NEW CODE WITHOUT ANYBODY WALKING TO THE TV. The board pulls fresh DATA
   // all day, but the JavaScript it is running is whatever it downloaded when the page
   // was opened — and this screen is opened once and left for weeks. Every fix shipped
