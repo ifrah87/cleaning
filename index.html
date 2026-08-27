@@ -839,10 +839,20 @@ const STATUS = {
   off:     { label: 'OFF', color: '#5b6a7f' },
 };
 const STATUS_ORDER = ['present', 'late', 'noshow', 'sick', 'off'];
-// Didn't turn up for a shift they were expected on. OFF is deliberately not here:
-// that is the roster's business, and folding it in changes who the cover logic
-// thinks is missing on days they were never due in.
-const AWAY = ['noshow', 'sick'];
+// Didn't turn up for a shift they were expected on.
+//
+// OFF IS AWAY. It was deliberately left out — "that is the roster's business, and
+// folding it in changes who the cover logic thinks is missing on days they were never
+// due in" — and that reasoning only holds if something SETS off from the roster. Nothing
+// does: `off` is reached one way, by a person tapping the status round to it, and it is
+// the office saying THIS PERSON IS NOT IN TODAY. Outside this list that statement did
+// nothing at all. Their rooms stayed on them, isAway said no, the board counted them as
+// here, and their floor was never handed to anybody — so a leader marked OFF stood on
+// the wall all morning holding five rooms nobody was going to clean.
+//
+// The rota (worksOn) still answers "is this a day they are due in"; this answers "are
+// they here today", and off belongs on that side of the line.
+const AWAY = ['noshow', 'sick', 'off'];
 const isAway = (pid) => AWAY.includes(state.attendance[pid] || 'present');
 
 // Areas live in state (editable). Helpers to read them:
@@ -2481,7 +2491,7 @@ function cycleStatus(pid) {
   const next = STATUS_ORDER[(STATUS_ORDER.indexOf(cur)+1) % STATUS_ORDER.length];
   state.attendance[pid] = next;
 
-  if (next === 'noshow' || next === 'sick') {
+  if (AWAY.includes(next)) {
     // Their rooms are nobody's now. Left on them they keep a name against them and are
     // quietly never done — the same reason taking a manual arrival back off releases
     // them. Anything they already finished stays theirs.
@@ -11850,7 +11860,10 @@ function render() {
       let chosen = pc.suggestId;
       modal.appendChild(el(`<div class="modal-label">Assign cover to:</div>`));
       const picker = el(`<div class="cover-picker"></div>`);
-      const present = STAFF.filter(p => p.id !== pc.absentId && state.attendance[p.id] !== 'noshow');
+      // Anybody who is away cannot cover — that used to read 'noshow' alone, so a
+      // cleaner off sick, or marked off for the day, was offered as cover for somebody
+      // else who was absent.
+      const present = STAFF.filter(p => p.id !== pc.absentId && !isAway(p.id));
       const loads = unitLoads();
       if (!present.length) {
         modal.appendChild(el(`<div class="modal-sub" style="color:#dc2626">No one else is present to cover.</div>`));
