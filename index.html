@@ -8275,6 +8275,64 @@ function viewTick() {
   }
   top.appendChild(tally);
 
+  // WHO THE DOOR SAW, AND WHO IT DID NOT — ON THE BOARD.
+  //
+  // The board named a badge-in only where somebody had a column: a leader's own time in
+  // their header, an assistant's beside their leader in the "with" line. Anybody who
+  // held no work that morning appeared nowhere at all, so the outside pair could badge
+  // in at 07:27 and 07:39 and the board would not admit either of them existed. And
+  // "who is NOT here" was never on this screen in any form — the one question you ask
+  // standing in front of it at seven in the morning.
+  //
+  // Both halves, one strip, above the round. IN is a fact and stays quiet. NOT IN is
+  // sorted by how much it should worry you: somebody rostered on with no scan is the
+  // only line here that might mean a room goes uncleaned, so it is amber and first;
+  // sick and no-show are known gaps; off and off-rota are nobody's problem and sit in
+  // slate, the same slate their column wears.
+  if (!readOnly) {
+    const staffById2 = {};
+    (state.staff || []).forEach((x) => { staffById2[x.id] = x; });
+    const inRows = Object.keys(hikArrivals)
+      .filter((id) => staffById2[id])
+      .map((id) => ({ name: staffById2[id].name, time: hikArrivals[id].time, raw: hikArrivals[id].raw }))
+      .concat((hikOther || []).map((o) => ({ name: o.name, time: o.time, raw: o.time })))
+      .concat((hikUnknown || []).map((o) => ({ name: o.name + ' (not on roster)', time: o.time, raw: o.time })))
+      .sort((a, b) => String(a.raw || '').localeCompare(String(b.raw || '')));
+
+    // Only the cleaning crew. A building full of office staff who did not badge in is
+    // not a hole in the morning, and listing them would bury the three names that are.
+    const RANK = { 'NO SCAN': 0, 'SICK': 1, 'NO-SHOW': 2, 'OFF': 3, 'OFF ROTA': 4 };
+    const COLOR = { 'NO SCAN': '#fbbf24', 'SICK': '#9333ea', 'NO-SHOW': '#dc2626', 'OFF': '#94a3b8', 'OFF ROTA': '#94a3b8' };
+    const outRows = cleaningStaff()
+      .filter((x) => !hikArrivals[x.id])
+      .map((x) => {
+        const st = state.attendance[x.id] || 'present';
+        const why = !worksToday(x) ? 'OFF ROTA'
+          : st === 'off' ? 'OFF' : st === 'sick' ? 'SICK' : st === 'noshow' ? 'NO-SHOW' : 'NO SCAN';
+        return { name: x.name, why };
+      })
+      .sort((a, b) => (RANK[a.why] - RANK[b.why]) || String(a.name).localeCompare(String(b.name)));
+
+    if (inRows.length || outRows.length) {
+      const box = el('<div class="bd-panel"></div>');
+      const chips = (label, colour, items, render) => {
+        if (!items.length) return;
+        const row = el(`<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:6px"></div>`);
+        row.appendChild(el(`<div style="font-size:11px;font-weight:800;letter-spacing:0.06em;color:${colour};`
+          + `flex:0 0 auto;min-width:74px">${label} ${items.length}</div>`));
+        items.forEach((it) => row.appendChild(el(render(it))));
+        box.appendChild(row);
+      };
+      chips('IN', '#22c55e', inRows, (r) => `<div style="font-size:11px;font-weight:700;color:#b7c8de;`
+        + `background:#101c30;border-radius:7px;padding:4px 8px">${esc(r.name)}`
+        + (r.time ? ` <span style="color:#7ea6dc">${esc(r.time)}</span>` : '') + `</div>`);
+      chips('NOT IN', '#fbbf24', outRows, (r) => `<div style="font-size:11px;font-weight:700;color:#b7c8de;`
+        + `background:#101c30;border-radius:7px;padding:4px 8px">${esc(r.name)}`
+        + ` <span style="color:${COLOR[r.why]}">${esc(r.why)}</span></div>`);
+      top.appendChild(box);
+    }
+  }
+
   // HOW OFTEN THIS KIND IS CLEANED, from the screen where you are looking at it. Offered
   // on a single kind only: "every room in the building is now weekly" is not a thing
   // anybody means to say.
