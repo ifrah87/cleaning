@@ -1088,8 +1088,22 @@ function cycleWorksOn(pid, dow) {
 // from a fixed epoch, so who lands on the NEXT Friday is decided by the date rather
 // than by who was in on the last one — set a rota without looking and the same half
 // can end up working two Fridays running. The offset is how you put that right.
-function buildDayRota(dow, perWeek, offset) {
-  const crew = cleaningStaff().slice().sort((a, b) => String(a.name).localeCompare(String(b.name)));
+// `order` is an optional list of staff ids setting the sequence people are dealt into
+// weeks in. Left out, it is alphabetical — which is stable and repeatable and also the
+// reason the same names keep landing together, because A always follows A. Passing a
+// shuffled list changes WHO IS PAIRED WITH WHOM and which week each lands in, without
+// touching the even split: every person still appears the same number of times across
+// the cycle, because the cycle is built by walking the list, not by picking from it.
+//
+// Anybody added to the roster after a draw was made is appended rather than dropped, so
+// a new starter cannot silently vanish from the rota between the draw and the apply.
+function buildDayRota(dow, perWeek, offset, order) {
+  const all = cleaningStaff();
+  const byId = {};
+  all.forEach((p) => { byId[p.id] = p; });
+  const crew = (Array.isArray(order) && order.length)
+    ? order.map((id) => byId[id]).filter(Boolean).concat(all.filter((p) => order.indexOf(p.id) < 0))
+    : all.slice().sort((a, b) => String(a.name).localeCompare(String(b.name)));
   const n = crew.length;
   const per = Math.max(1, Math.min(perWeek || 3, n));
   if (!n) return { cycle: 0, perWeek: per, weeks: [], byPerson: {} };
@@ -2278,6 +2292,7 @@ let historyDay = '';             // History view day filter ('' = all days)
 let teamShowAll = false;         // Team tab: false = cleaners only (default once any tagged)
 let teamFridayPer = 3;
 let teamFridayShift = 0;   // rotates which group lands on the coming Friday           // how many are in on each Friday, chosen in Team
+let teamFridayOrder = null;   // a drawn order, or null for alphabetical — see buildDayRota
 const dayKeyLocal = (ts) => { const d = new Date(ts); return isNaN(d) ? '' : d.toLocaleDateString('en-CA'); }; // local YYYY-MM-DD
 
 // dayKey lets a clean be recorded against the day it happened rather than the
@@ -10703,7 +10718,7 @@ function viewTeam() {
     box.appendChild(pickRow);
     const btn = el(`<button class="add-btn" style="background:#7c3aed;color:#ffffff">⚖ Share the Friday rota out evenly</button>`);
     btn.onclick = () => {
-      const rota = buildDayRota(fri, teamFridayPer, teamFridayShift);
+      const rota = buildDayRota(fri, teamFridayPer, teamFridayShift, teamFridayOrder);
       const each = rota.byPerson[Object.keys(rota.byPerson)[0]];
       // WHICH OF THESE IS TOMORROW. "Friday 1, Friday 2" is unanswerable on its own —
       // the whole question is who is in on the one coming up.
@@ -10733,6 +10748,45 @@ function viewTeam() {
       + `↻ Put the other group on first</button>`);
     shift.onclick = () => { teamFridayShift = (teamFridayShift + 1) % Math.max(2, cleaningStaff().length); render(); };
     box.appendChild(shift);
+    // DRAW IT INSTEAD OF SORTING IT. The rota is dealt by walking the crew list, and
+    // that list is alphabetical — so the same names land together every time it is set,
+    // and two people who would rather not spend every Friday with each other have no
+    // say in it. A draw changes who is paired with whom and which week they fall in. It
+    // does NOT change the split: the cycle is built by walking the list rather than
+    // picking from it, so everybody still works the same number of Fridays.
+    //
+    // Drawn on the screen, applied on the button below it. A draw that took effect on
+    // the tap would be a rota nobody had seen before it was the rota.
+    const draw = el(`<button class="freqmini" style="width:100%;padding:9px;margin-top:6px">`
+      + (teamFridayOrder ? '🎲 Draw again' : '🎲 Draw it at random') + `</button>`);
+    draw.onclick = () => {
+      const ids = cleaningStaff().map((p) => p.id);
+      for (let i = ids.length - 1; i > 0; i -= 1) {          // Fisher-Yates, so every
+        const j = Math.floor(Math.random() * (i + 1));       // order is equally likely
+        const t = ids[i]; ids[i] = ids[j]; ids[j] = t;
+      }
+      teamFridayOrder = ids;
+      render();
+    };
+    box.appendChild(draw);
+    if (teamFridayOrder) {
+      const drawn = buildDayRota(fri, teamFridayPer, teamFridayShift, teamFridayOrder);
+      const nextFri = nextDowKey(fri);
+      const slot = weekIndex(nextFri, drawn.cycle);
+      const onNext = Object.keys(drawn.byPerson)
+        .filter((pid) => drawn.byPerson[pid].weeks.indexOf(slot) >= 0)
+        .map((pid) => drawn.byPerson[pid].name.split(' ')[0]);
+      const box2 = el(`<div style="font-size:11px;font-weight:700;color:#b7c8de;background:#101c30;`
+        + `border-radius:8px;padding:8px 10px;margin-top:6px;line-height:1.5"></div>`);
+      box2.appendChild(el(`<div style="color:#38bdf8">Drawn — not set yet</div>`));
+      box2.appendChild(el(`<div>This coming Friday (${esc(fmtDay(nextFri))}): `
+        + `<b>${esc(onNext.join(', ') || 'nobody')}</b></div>`));
+      drawn.weeks.slice(0, 3).forEach((wk, i) => box2.appendChild(
+        el(`<div style="color:#7f9abf">Friday ${i + 1}: ${esc(wk.map((x) => x.name.split(' ')[0]).join(', '))}</div>`)));
+      box2.appendChild(el(`<div style="color:#5f7189">Draw again until it looks right, `
+        + `then "Share the Friday rota out evenly" above sets it.</div>`));
+      box.appendChild(box2);
+    }
     box.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin-top:6px">`
       + (onRota.length
         ? `${onRota.length} of ${crew.length} are on a Friday rota — <b>${crew.filter((p) => worksOnDay(p, nextDowKey(fri))).length}</b> in this coming Friday.`
