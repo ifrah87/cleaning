@@ -8242,21 +8242,11 @@ function viewTick() {
   const cols_ = grid.firstChild;
   const top = el('<div style="display:flex;flex-direction:column;gap:10px"></div>');
 
-  {
-    // TODAY AND TOMORROW, ON THE BOARD ITSELF. Tomorrow was two taps and a screen away
-    // in the calendar, and it is the day the office actually acts on — the one round
-    // still worth changing. First in the stack, because which DAY you are looking at
-    // has to be read before what is on it.
-    const days = el('<div class="bd-bar"></div>');
-    [['Today', 0], ['Tomorrow', 1]].forEach(([lbl, n]) => {
-      const b = el(`<button class="bd-tab ${_boardDay === n ? 'on' : ''}">${lbl}</button>`);
-      b.onclick = () => setBoardDay(n);
-      days.appendChild(b);
-    });
-    top.appendChild(days);
-    if (readOnly) top.appendChild(el(`<div class="bd-tally" style="color:#94a3b8">`
-      + `Tomorrow's plan — nothing here can be ticked or moved. Edit it on Plan a Day.</div>`));
-  }
+  // The day is switched from the corner of the header, next to the sync dot — a row of
+  // its own here would push the round down the screen to say something the header is
+  // already saying. All this needs to add is why nothing responds to a tap.
+  if (readOnly) top.appendChild(el(`<div class="bd-tally" style="color:#94a3b8">`
+    + `Tomorrow's plan — nothing here can be ticked or moved. Edit it on Plan a Day.</div>`));
 
   {
     const kinds = [['all', 'All']];
@@ -11842,13 +11832,23 @@ function render() {
   document.body.classList.toggle('boardmode', onBoard);
 
   if (onBoard) {
-    const cols = tvColumns();
+    // NAME THE DAY THE BOARD IS SHOWING. The plan screen learned this the hard way —
+    // it opened on tomorrow while the header printed today, so the office planned what
+    // it believed was today and the board came up empty. A header that can be wrong
+    // about the day is worse than no header.
+    const bDay = shiftDay(workToday(), _boardDay);
+    const cols = _boardDay ? tvColumnsForDay(bDay) : tvColumns();
     const c = countJobs(cols);
-    bar.appendChild(el(`<div style="min-width:0"><div style="font-size:15px;font-weight:800;color:#eaf1fb">`
-      + `${esc(dateStr)}</div>`
+    const bStr = _boardDay
+      ? new Date(bDay + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
+      : dateStr;
+    bar.appendChild(el(`<div style="min-width:0"><div style="font-size:15px;font-weight:800;`
+      + `color:${_boardDay ? '#fcd34d' : '#eaf1fb'}">${esc(bStr)}</div>`
       + `<div style="font-size:12px;font-weight:700;color:#7f9abf">`
-      + `<b style="color:${c.all - c.done ? '#fbbf24' : '#22c55e'}">${c.all - c.done} left</b>`
-      + ` · ${c.done} done</div></div>`));
+      + (_boardDay
+        ? `TOMORROW · ${c.all} planned`
+        : `<b style="color:${c.all - c.done ? '#fbbf24' : '#22c55e'}">${c.all - c.done} left</b> · ${c.done} done`)
+      + `</div></div>`));
   } else {
     bar.appendChild(el(`<div style="min-width:0"><div style="font-size:15px;font-weight:800;color:#eaf1fb">`
       + `${esc(titles[state.tab] || dateStr)}</div>`
@@ -11870,6 +11870,15 @@ function render() {
       + `style="display:flex;align-items:center;gap:5px;font-size:11px;font-weight:700;color:${dot[0]}">`
       + `<span style="width:7px;height:7px;border-radius:4px;background:${dot[0]};display:inline-block"></span>${dot[1]}</div>`);
     bar.appendChild(sync);
+  }
+  // ONE SMALL BUTTON, IN THE CORNER WITH THE OTHER TWO. It says where it takes you, not
+  // where you are: on today it reads Tomorrow, on tomorrow it reads Today. Ahead of the
+  // search and menu icons so those keep the corner position everybody's thumb knows.
+  if (onBoard) {
+    const dayBtn = el(`<button class="tb-btn"${_boardDay ? ' style="border-color:#b45309;color:#fcd34d"' : ''}>`
+      + (_boardDay ? '‹ Today' : 'Tomorrow ›') + `</button>`);
+    dayBtn.onclick = () => setBoardDay(_boardDay ? 0 : 1);
+    bar.appendChild(dayBtn);
   }
   const searchBtn = el(`<button class="tb-btn">⌕</button>`);
   searchBtn.onclick = openSearch;
