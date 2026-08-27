@@ -11973,6 +11973,19 @@ function render() {
   // the way to everything else.
   const header = el(`<div class="header" style="padding:10px 14px"></div>`);
   const bar = el('<div style="display:flex;align-items:center;gap:10px"></div>');
+  // EVERYTHING THAT IS NOT TODAY'S WORK, IN ONE PLACE. Rooms, schedules, the team, the
+  // history, the one-off jobs, the settings: all of it is used once a day at most, and
+  // all of it was on the main screen or a tab away from it, competing with the round.
+  //
+  // ON THE LEFT, AND FIRST. It sat on the right in a row with the search and the day
+  // switch, which put the way OUT of a screen in the same cluster as the controls FOR
+  // that screen — and on the widest screen the board runs on, the way back to
+  // everything else was the furthest thing from where a hand already is. It is now the
+  // first thing in the bar and it never moves: Back and the title follow it, so the
+  // menu is in one place whatever screen you are on and whether or not Back is there.
+  const menuBtn = el(`<button class="tb-btn" style="font-size:16px;padding:6px 12px">☰</button>`);
+  menuBtn.onclick = () => { _menuOpen = true; render(); };
+  bar.appendChild(menuBtn);
   if (_navStack.length && state.tab !== 'board') {
     const back = el(`<button class="tb-btn">‹ Back</button>`);
     back.onclick = goBack;
@@ -12040,12 +12053,6 @@ function render() {
   const searchBtn = el(`<button class="tb-btn">⌕</button>`);
   searchBtn.onclick = openSearch;
   bar.appendChild(searchBtn);
-  // EVERYTHING THAT IS NOT TODAY'S WORK, IN ONE PLACE. Rooms, schedules, the team, the
-  // history, the one-off jobs, the settings: all of it is used once a day at most, and
-  // all of it was on the main screen or a tab away from it, competing with the round.
-  const menuBtn = el(`<button class="tb-btn" style="font-size:16px;padding:6px 12px">☰</button>`);
-  menuBtn.onclick = () => { _menuOpen = true; render(); };
-  bar.appendChild(menuBtn);
   header.appendChild(bar);
   // ON THE PLAN SCREEN, SAY WHICH DAY IS BEING PLANNED. It opens on TOMORROW while the
   // header printed today's date, so the office planned what it believed was today, the
