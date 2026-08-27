@@ -2051,7 +2051,16 @@ function applyRemote(saved) {
   // A tick is now never removed because the other copy had not heard of it. Only a
   // deliberate un-tick removes one, and that leaves a headstone in `untick` which
   // travels the same way — so an un-tick is not undone by a stale copy either.
-  const untick = { ...(saved.untick || {}), ...(state.untick || {}) };
+  // ...BUT A DISPLAY HAS NO UN-TICKS OF ITS OWN. The board never writes, so every
+  // headstone it is holding came from the server once and can only be out of date now.
+  // Unioning it back in on every pull resurrects an un-tick the office has since undone:
+  // 301 was ticked, un-ticked, ticked again, and the wall went on showing it undone
+  // while every phone showed it green — for as long as the headstone lives, which is
+  // three weeks. The one screen that cannot correct itself was the one that could not
+  // be told. It takes the server's word instead.
+  const untick = TV_MODE
+    ? { ...(saved.untick || {}) }
+    : { ...(saved.untick || {}), ...(state.untick || {}) };
   const mergedDone = { ...(saved.completions || {}) };
   let ticksKept = 0;
   Object.keys(state.completions || {}).forEach((k) => {
