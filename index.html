@@ -11353,14 +11353,26 @@ function tvCrewStrip() {
   // The strip no longer clips, so it earns its space by shrinking instead: a big crew
   // gets smaller chips rather than a shorter list. Every name and every time is on the
   // wall, which is the whole job of this strip.
-  const onToday = cleaningStaff().filter((p) => worksToday(p) && tvOnTeam(p) && !isAssistant(p)).length;
+  // EVERY PAIR OF HANDS, NOT JUST THE ROUNDS. This strip was leaders-only on the
+  // grounds that an assistant is already named on their leader's column — true, and it
+  // meant the wall could not answer the plainest question asked in front of it: what
+  // time did everybody get in. Salaal badged in at 07:39 and appeared on no screen at
+  // all; the outside pair badged in and the board would not admit they existed.
+  //
+  // So: anybody rostered on today, and anybody the door saw, whichever team they are
+  // carried under and whether or not they run a round.
+  const onStrip = (p) => (worksToday(p) || !!tvArrival(p))
+    && (tvOnTeam(p) || tvOutside(p) || !!tvArrival(p));
+  const onToday = cleaningStaff().filter(onStrip).length + (hikOther || []).length;
   const wrap = el(`<div class="tv-crew${onToday > 10 ? ' lots' : onToday > 6 ? ' many' : ''}"></div>`);
   // THE ROLL CALL IS THE LEADERS. An assistant is there to assist the leader they are
   // tagged under, and they are already named on that leader's column — putting them on
   // the roll call as well made the strip a list of everybody, which is the one thing it
   // was not meant to be. Whoever a leader has with them is read off their column.
-  const crew = cleaningStaff().filter((p) => worksToday(p) && tvOnTeam(p) && !isAssistant(p));
-  if (!crew.length) { wrap.appendChild(el(`<div class="tv-empty">Nobody is rostered on today</div>`)); return wrap; }
+  const crew = cleaningStaff().filter(onStrip);
+  if (!crew.length && !(hikOther || []).length) {
+    wrap.appendChild(el(`<div class="tv-empty">Nobody is rostered on today</div>`)); return wrap;
+  }
 
   // WHO IS STILL IN THE BUILDING. Counted before the chips, because "how many are
   // still here" is a question people were answering by counting green outlines.
@@ -11375,7 +11387,7 @@ function tvCrewStrip() {
   // deliberately leaders-only, but "who has not punched in?" is a question about every
   // pair of hands expected today, and an assistant is exactly the person whose absence
   // is otherwise invisible - their name simply rides along on a leader's column.
-  const noScanCrew = cleaningStaff().filter((p) => worksToday(p) && tvOnTeam(p)
+  const noScanCrew = cleaningStaff().filter((p) => worksToday(p) && (tvOnTeam(p) || tvOutside(p))
     && !tvArrival(p) && !tvLeft(p)
     && AWAY.indexOf(state.attendance[p.id] || 'present') < 0);
   if (noScanCrew.length) head.appendChild(el(`<span class="noscan">${noScanCrew.length} NO SCAN</span>`));
@@ -11431,6 +11443,18 @@ function tvCrewStrip() {
     chip.style.color = noScan ? '#fbbf24' : (st === 'present') ? '' : meta.color;
     wrap.appendChild(chip);
   });
+  // AND THE ONES THE DOOR SAW WHO ARE NOT TAGGED AS CLEANERS. They are in the building
+  // and their badge-in is as real as anybody's; the tag decides who gets ROOMS, not who
+  // the wall is allowed to admit exists. Slate, because nothing is expected of them
+  // here — the same slate an off column wears.
+  (hikOther || []).slice().sort((a, b) => String(a.time || '').localeCompare(String(b.time || '')))
+    .forEach((o) => {
+      const chip = el(`<div class="tv-chip"><span>${esc(o.name)}</span>`
+        + `<span class="st">IN ${esc(o.time || '')}</span></div>`);
+      chip.style.borderColor = 'var(--tv-off-fg)';
+      chip.style.color = 'var(--tv-off-fg)';
+      wrap.appendChild(chip);
+    });
   return wrap;
 }
 
