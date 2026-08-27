@@ -8710,9 +8710,19 @@ function viewTick() {
       + `<div class="bd-sub">Tomorrow has not been laid out. Open Plan a Day to build it.</div></div>`));
   }
   wrap.appendChild(grid);
+  // THE INSTRUCTIONS HAVE TO BE TRUE OF THE SCREEN THEY ARE ON. This told you to tap a
+  // chip to mark it clean and drag it by the grip — on TOMORROW, where every one of
+  // those is deliberately inert, and directly contradicting the line at the top of the
+  // same screen saying nothing here can be ticked or moved. Somebody would tap, get
+  // nothing, and reasonably conclude the board was broken.
   wrap.appendChild(el(`<div class="note" style="font-size:11px;color:#6f8ab0;margin-top:12px">`
-    + `Tap a chip to mark it clean. Drag it by the ⠿ grip — or tap the grip, then tap a `
-    + `person — to move it. Tap a name to give them more. The TV follows within a minute.</div>`));
+    + (readOnly
+      ? `Tomorrow's round, as it has been laid out. Nothing here is ticked because nobody `
+        + `has worked it yet — open Plan a Day to change who has what, or ‹ Today to get back `
+        + `to the round in front of you.`
+      : `Tap a chip to mark it clean. Drag it by the ⠿ grip — or tap the grip, then tap a `
+        + `person — to move it. Tap a name to give them more. The TV follows within a minute.`)
+    + `</div>`));
   return wrap;
 }
 
