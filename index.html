@@ -1173,15 +1173,32 @@ function buildTeamAltRota(dow, picked, day) {
   // Which parity the Friday in question falls on, so the group that was chosen is in
   // on THAT Friday rather than on some abstract week one.
   const slot = weekIndex(day, cycle);
+  const crewOf = (p) => String((p && p.crew) || '').trim();
   const byPerson = {}, crew = [];
-  const put = (names, wk) => names.forEach((t) => {
-    teamMembers(t).filter((p) => p.isCleaner).forEach((p) => {
-      byPerson[p.id] = { name: p.name, weeks: [wk], team: t };
-      crew.push(p);
-    });
+  // WHO GETS WRITTEN IS NOT WHO YOU CHOOSE FROM. rotaTeams() lists teams that run a
+  // round, which is the right list to PICK from — you choose between teams that have a
+  // leader. It was also being used to decide who to WRITE, and that left a hole you
+  // could drive the whole feature through: anybody on a team it did not list was never
+  // in the chosen group NOR in the other one, so applyDayRota never touched their
+  // Friday at all. They kept whatever rota they already had, picking two teams did not
+  // put the rest off, and the leader you were trying to take off the board stayed on it.
+  //
+  // So every leader is written, whether or not their team qualified — a leader is what
+  // the board is made of, and one left out is the bug in its most visible form. Members
+  // of a listed team are written with them. Crews that are on no listed team and run no
+  // round — the outside pair, security — are left alone: they work every Friday, and
+  // handing them an alternating rest day would be inventing one they never had.
+  cleaningStaff().forEach((p) => {
+    const c = crewOf(p);
+    const onListedTeam = all.indexOf(c) >= 0;
+    if (!onListedTeam && !p.isLeader) return;
+    byPerson[p.id] = {
+      name: p.name,
+      weeks: [inNow.indexOf(c) >= 0 ? slot : (slot + 1) % cycle],
+      team: c,
+    };
+    crew.push(p);
   });
-  put(inNow, slot);
-  put(other, (slot + 1) % cycle);
   return { cycle, perWeek: inNow.length, weeks: [inNow, other], byPerson, crew,
     teams: all, inNow, other, slot };
 }
