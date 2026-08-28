@@ -1351,6 +1351,17 @@ const DOW_SHORT = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
 const DOW_PICK_ORDER = [6, 0, 1, 2, 3, 4, 5];   // the working week starts on Saturday here
 const dowOf = (day) => new Date(day + 'T00:00:00').getDay();
 const fixedDays = (u) => (u && Array.isArray(u.days) && u.days.length) ? u.days : null;
+// The most recent day this room was pinned to, on or before `day`. The mirror of
+// nextFixedDay, and what says whether a pinned day has come round unanswered.
+function lastPinnedDayOnOrBefore(u, day) {
+  const days = fixedDays(u);
+  if (!days) return null;
+  for (let i = 0; i <= 13; i += 1) {
+    const d = shiftDay(day, -i);
+    if (days.indexOf(dowOf(d)) >= 0) return d;
+  }
+  return null;
+}
 function nextFixedDay(u, base) {
   const days = fixedDays(u);
   if (!days) return null;
@@ -1360,14 +1371,42 @@ function nextFixedDay(u, base) {
   }
   return null;
 }
+// FRIDAY IS WORKED IN ADVANCE OF SATURDAY. The rooms that run every day are done on
+// the Friday FOR the Saturday — one round covering both mornings rather than the same
+// room twice in two days — so a Friday clean carries them to Sunday, and Saturday's
+// board holds only the rooms whose own cycle actually lands on it. Without this, 404
+// was cleaned on the Friday and put straight back up on the Saturday morning, which
+// is the app asking for a room that had just been done in advance of that very day.
+//
+// Every-other-day rooms are deliberately left out: they are on their own cycle and a
+// Friday clean already puts 204 on the Sunday by itself. Shifting those as well would
+// walk the whole every-other-day rota a day off its pattern.
+const FRIDAY = 5, SATURDAY = 6;
+// Runs every day, however the office said so: a daily frequency, or pinned to all seven.
+const everyDayRoom = (u) => {
+  const days = fixedDays(u);
+  return days ? days.length === 7 : (FREQ_DAYS[u.freq] || 1) === 1;
+};
+// Was this room cleaned on the Friday immediately before `day`, `day` being a Saturday?
+// Then the Saturday is already covered by that clean.
+const doneFridayForSaturday = (u, day, base) => !!base && everyDayRoom(u)
+  && dowOf(base) === FRIDAY && dowOf(day) === SATURDAY
+  && Math.round((new Date(day + 'T00:00:00') - new Date(base + 'T00:00:00')) / 864e5) === 1;
 // The next clean after `base`, whichever way this room is scheduled. One place, so
 // the projection and the roll call can't drift apart the way they did before.
 function nextDueFrom(u, base) {
   if (!base) return null;
-  if (fixedDays(u)) return nextFixedDay(u, base);
-  const dt = new Date(base + 'T00:00:00');
-  dt.setDate(dt.getDate() + cycleLen(u));
-  return dt.toLocaleDateString('en-CA');
+  let nd;
+  if (fixedDays(u)) nd = nextFixedDay(u, base);
+  else {
+    const dt = new Date(base + 'T00:00:00');
+    dt.setDate(dt.getDate() + cycleLen(u));
+    nd = dt.toLocaleDateString('en-CA');
+  }
+  // The card and the board have to say the same thing, so the Friday round moves the
+  // printed next-due on as well as the day the room is planned for.
+  if (nd && doneFridayForSaturday(u, nd, base)) return shiftDay(nd, 1);
+  return nd;
 }
 function nextDueDate(u) { return nextDueFrom(u, lastCleanDate(u)); }
 const FREQ_LABEL = { nightly: 'Nightly', daily: 'Daily', eod: 'Every other day', weekly: 'Weekly', monthly: 'Monthly' };
@@ -1390,14 +1429,38 @@ const onBeatFrom = (u, from, day) => {
 function dueOnDayFrom(u, day, base) {
   if (extraCleanDue(u, day)) return true;
   if (heldBack(u, day)) return false;
+  // Cleaned on the Friday for this Saturday. Above the two branches because it is true
+  // of a room running on its frequency and of one pinned to all seven days alike, and
+  // below extraCleanDue because an extra clean the office asked for on a named day is
+  // a decision, not a schedule, and outranks it.
+  if (doneFridayForSaturday(u, day, base)) return false;
   const days = fixedDays(u);
   if (days) {
-    // A pinned room IS its days and nothing else. If it wasn't ticked, the schedule
-    // assumes it happened and moves to the next one, rather than carrying it forward
-    // and showing it every day until somebody clears it. That keeps the board equal
-    // to the rota — set the days once and stop thinking about it — at the price of a
-    // genuinely skipped room not announcing itself. The gap audit is where that shows.
-    if (days.indexOf(dowOf(day)) < 0) return false;
+    // A pinned room comes up on its days. It used to come up on those and NOTHING else:
+    // a day that was not ticked was assumed to have happened and the room moved on to
+    // the next one, which kept the board exactly equal to the rota at the price of a
+    // genuinely skipped room never announcing itself. That price turned out to be too
+    // high, and the branch below is where it is paid back.
+    if (days.indexOf(dowOf(day)) < 0) {
+      // A PINNED DAY THAT CAME ROUND AND WAS NEVER TICKED IS STILL OUTSTANDING. The
+      // schedule used to assume it had happened and move to the next pinned day, which
+      // Ifrah asked for on 2026-08-16 ("once I do the schedule I don't want to think
+      // about it") and reversed on 2026-08-28: a room nobody cleaned must not be written
+      // off as cleaned. It carries on the board until it is done.
+      //
+      // Up to today only, exactly as the rolling cycle carries. Beyond today each day is
+      // walked as though its work got done, so carrying past today would put the room on
+      // every remaining morning of the week and the days ahead would stop meaning
+      // anything — the bug the every-other-day note below was written about.
+      if (day > workToday()) return false;
+      if (!base) return true;
+      const missed = lastPinnedDayOnOrBefore(u, day);
+      if (!missed || String(base) >= String(missed)) return false;
+      // Only a day the room could actually have been cleaned on counts as missed: one
+      // suppressed as too soon after a clean was never work in the first place.
+      const since = Math.round((new Date(missed + 'T00:00:00') - new Date(base + 'T00:00:00')) / 864e5);
+      return since >= Math.min(FREQ_DAYS[u.freq] || 1, 2);
+    }
     // …BUT NOT TWO DAYS RUNNING. Neither every-other-day set is a true every other
     // day — seven does not divide by two — so Sat/Mon/Wed/Fri runs Fri→Sat back to
     // back. Record 305 as cleaned on the Friday and it still came up on the Saturday,
@@ -1462,7 +1525,16 @@ function projectDueDays(nDays) {
       // rather than the real one. It used to be a second copy of the rule here,
       // which is how a fixed-weekday room would have been projected on a cycle.
       if (!dueOnDayFrom(u, day, proj[u.id])) return;
-      due.push(u); proj[u.id] = day;                 // cleaned that day → next one a cycle later
+      due.push(u);
+      // TODAY IS A RECORD, NOT A PREDICTION. Every day ahead is walked on the assumption
+      // that its work gets done — that is the whole point of the walk, or each day
+      // inherits today's backlog and the counts only climb. But today has already
+      // happened as far as it has happened, and the ticks say how far. Assuming it too
+      // wrote off rooms nobody had touched as cleaned, and tomorrow was then built from
+      // that fiction: on a Friday, where a clean covers the Saturday, every daily room
+      // dropped off Saturday's board whether or not anybody had actually cleaned it.
+      if (i === 0 && !cleanedToday(u)) return;
+      proj[u.id] = day;                              // cleaned that day → next one a cycle later
     });
     out.push({ day, due });
   }
@@ -5015,7 +5087,9 @@ function plannedRoomsToday() {
       if (j.kind === 'unit') {
         const u = byId[j.refId];
         if (!u || seen.has(u.id) || !onRollCall(u) || u.paused) return;
-        if (fixedDays(u)) return;                          // pinned rooms live on their own days
+        // Pinned rooms used to be skipped here — they "live on their own days", so a
+        // missed one waited for the next. Reversed 2026-08-28 with the same reasoning as
+        // dueOnDayFrom: planned, never done, still needs doing.
         if (String(lastCleanDate(u) || '') >= d) return;   // it did get done, on the day or since
         seen.add(u.id); rooms.push(u);
       } else {

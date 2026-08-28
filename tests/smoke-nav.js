@@ -238,19 +238,29 @@ for (const [label,vp] of [['PHONE',{width:420,height:900}],['DESKTOP',{width:144
  check('Plan a Day opens on today', /TODAY/.test(planHdr), planHdr);
  await page.evaluate(()=>setTab('board')); await page.waitForTimeout(500);
 
- // A DAILY ROOM COMES UP EVERY DAY, MARKED OR NOT.
+ // A DAILY ROOM COMES UP EVERY DAY, MARKED OR NOT — with the one exception the office
+ // works to: the daily rooms are cleaned on the Friday IN ADVANCE OF THE SATURDAY, so
+ // a Friday clean already covers the Saturday and the room comes back on the Sunday.
+ // Written against doneFridayForSaturday rather than a hard-coded XXXXXXX, because the
+ // run day decides whether that pair is inside the week being looked at at all — a
+ // hard-coded seven passes six days a week and fails on the seventh.
  const dailyBeat=await page.evaluate(()=>{
    const days=Array.from({length:7},(_,i)=>shiftDay(workToday(),i));
    const mk=(u)=>days.map(d=>dueOnDay(u,d)?'X':'.').join('');
-   return {
-     cleanedYesterday: mk({id:'d1',unit:'D1',type:'building',freq:'daily',lastCleaned:shiftDay(workToday(),-1)}),
-     notMarkedForAges: mk({id:'d2',unit:'D2',type:'building',freq:'daily',lastCleaned:shiftDay(workToday(),-9)}),
-     neverMarked:      mk({id:'d3',unit:'D3',type:'building',freq:'daily'}),
-     nightly:          mk({id:'d4',unit:'D4',type:'building',freq:'nightly',lastCleaned:shiftDay(workToday(),-4)}),
+   const want=(u)=>days.map(d=>doneFridayForSaturday(u,d,u.lastCleaned||null)?'.':'X').join('');
+   const U=(id,unit,freq,last)=>Object.assign({id,unit,type:'building',freq},last?{lastCleaned:last}:{});
+   const cases={
+     cleanedYesterday: U('d1','D1','daily',shiftDay(workToday(),-1)),
+     notMarkedForAges: U('d2','D2','daily',shiftDay(workToday(),-9)),
+     neverMarked:      U('d3','D3','daily'),
+     nightly:          U('d4','D4','nightly',shiftDay(workToday(),-4)),
    };
+   const out={};
+   Object.keys(cases).forEach(k=>{ out[k]={got:mk(cases[k]),want:want(cases[k])}; });
+   return out;
  });
- check('a daily room comes up every day, however long since it was marked',
-   Object.values(dailyBeat).every(v=>v==='XXXXXXX'), JSON.stringify(dailyBeat));
+ check('a daily room comes up every day, bar the Saturday a Friday clean already covered',
+   Object.values(dailyBeat).every(v=>v.got===v.want), JSON.stringify(dailyBeat));
 
  // SETTING THE FREQUENCY HAS TO STICK. A pinned room is its days and nothing else,
  // so tapping a frequency used to light the chip up and change nothing.
@@ -260,14 +270,21 @@ for (const [label,vp] of [['PHONE',{width:420,height:900}],['DESKTOP',{width:144
    setUnitFreq(u.id,'daily');
    const days=Array.from({length:7},(_,i)=>shiftDay(workToday(),i));
    return {id:u.id, pinnedBefore, freq:u.freq, daysAfter:u.days, last:u.lastCleaned||null,
+           // The one-off spreaders, in the failure message: a room held back or carrying
+           // a cycle shift does not come up every day, and the string alone never said why.
+           holdUntil:u.holdUntil||null, cycleShift:u.cycleShift||null,
+           cycleShiftFrom:u.cycleShiftFrom||null, alsoCleanOn:u.alsoCleanOn||null,
+           workToday:workToday(), base:lastCleanDate(u), nd:nextDueDate(u), cyc:cycleLen(u),
+           want:days.map(d=>doneFridayForSaturday(u,d,lastCleanDate(u))?'.':'X').join(''),
            onList:onTodaysList(u), due:days.map(d=>dueOnDay(u,d)?'X':'.').join('')};
  });
  check('the room was on fixed days to begin with', freqStick.pinnedBefore.length>0, JSON.stringify(freqStick));
  check('setting it to Daily takes it off its fixed days', !freqStick.daysAfter, JSON.stringify(freqStick));
  // It was cleaned today, so today it reads as done rather than due — but it is on
- // today's list, and every day after it is due again.
+ // today's list, and every day after it is due again — bar a Saturday that the Friday
+ // round already covered, which is the one day "every day" does not mean every day.
  check('and it then actually comes up every day',
-   freqStick.onList && freqStick.due.slice(1)==='XXXXXX', JSON.stringify(freqStick));
+   freqStick.onList && freqStick.due.slice(1)===freqStick.want.slice(1), JSON.stringify(freqStick));
 
  const pinnedDays=await page.evaluate(()=>(state.servicedUnits||[]).filter(u=>u.freq==='eod').map(u=>u.unit+':'+(u.days||[]).join('')));
  // Sat/Mon/Wed and Sun/Tue/Thu. Friday is the office's own day — they work out who is
