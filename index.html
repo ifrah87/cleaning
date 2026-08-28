@@ -3825,6 +3825,14 @@ function mayBeTakenFrom(u) {
 // lightest first. Returns what it moved so the board can say so out loud.
 function rebalanceNamedRooms(due, inIds) {
   const load = leaderLoads(due);
+  // A LEADER HOLDING NOTHING IS THE POINT OF THIS PASS, NOT SOMEBODY IT CANNOT SEE.
+  // leaderLoads counts rooms that are assigned, so anybody holding none was missing from
+  // the table altogether — and `here` is built from that table. Amina badged in at 07:15
+  // to a board where the 06:30 leader held all ten; the levelling looked at a crew of
+  // one, found nobody to give a room to, and went home. It kept doing that all morning.
+  // Seed everybody who is in at zero: the empty-handed are exactly who the round is
+  // lopsided against, and the only people it can be evened out towards.
+  if (inIds) inIds.forEach((id) => { if (isLeaderId(id) && load[id] === undefined) load[id] = 0; });
   const here = Object.keys(load).filter((id) => !inIds || inIds.has(id));
   if (here.length < 2) return { moved: [] };
   const gap0 = Math.max(...here.map((id) => load[id])) - Math.min(...here.map((id) => load[id]));
@@ -3838,8 +3846,32 @@ function rebalanceNamedRooms(due, inIds) {
     const lo = ranked[0], hi = ranked[ranked.length - 1];
     if (load[hi] - load[lo] <= LEVEL_CLOSE_AT) break;
     if (load[lo] >= CAP) break;                   // nobody light enough to take another
+    // WHICH ROOM MOVES, NOT ONLY HOW MANY. This took the first candidate it came across,
+    // which is whatever order the rooms happen to sit in — so it would lift an asked-for
+    // morning room off a leader who is owed two of them, and leave three rooms on a floor
+    // whose owner had just walked in, while handing her somebody else's. The count came
+    // out right and the board came out wrong. The hand-out already knows where work
+    // belongs; the levelling has to use the same two rules when it chooses.
+    const earlyHeldBy = (id) => (due || [])
+      .filter((u) => u.assignedTo === id && timeSlot(u) === 'early').length;
+    const stillOwedEarly = earlyHeldBy(hi) <= earlyCap();
+    const rank = (u) => {
+      const fl = floorOfUnit(u.unit);
+      const owner = ownerOfFloor(fl);
+      const t = teamOfFloor(fl);
+      // An asked-for room the holder is still owed is the last thing to move.
+      const keepEarly = (timeSlot(u) === 'early' && stillOwedEarly) ? 1 : 0;
+      const belongs = (owner && owner.id === lo) ? 0
+        : (t && teamMembers(t.name).some((p) => p.id === lo)) ? 1 : 2;
+      return [keepEarly, belongs];
+    };
     const cands = (due || []).filter((u) => u.assignedTo === hi && mayBeTakenFrom(u)
-      && canCleanUnit(staffById[lo], u));
+      && canCleanUnit(staffById[lo], u))
+      .sort((a, b) => {
+        const ra = rank(a), rb = rank(b);
+        return (ra[0] - rb[0]) || (ra[1] - rb[1])
+          || String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true });
+      });
     if (!cands.length) break;                     // everything they hold is somebody's decision
     const u = cands[0];
     u.assignedTo = lo;
@@ -3856,6 +3888,22 @@ function rebalanceNamedRooms(due, inIds) {
   return { moved };
 }
 
+// THE PASS THAT LEVELS A LOPSIDED ROUND HAS TO RUN WHEN THERE IS A ROUND TO LEVEL.
+// rebalanceRoundIfLopsided() asks who is in and gives up if it is fewer than two — and
+// it was only ever called from planningPass(), which runs at boot, BEFORE
+// loadHikArrivals() has resolved. So `here` was empty every single time, the pass
+// returned on its first line, and the escape valve for "allocated is allocated, unless
+// the morning went plainly wrong" has never once fired on a real day. Meanwhile the
+// leader in at 06:30 is the only person the deal can see, the soft cap bends because
+// nobody else is cleared for the rooms, and every one of them locks to her — which is
+// the exact morning the levelling exists to undo.
+//
+// It belongs where the crew changes, which is the hand-out: deal to whoever has turned
+// up, then level what that left. Every arrival-driven caller goes through here.
+function handOutAndLevel() {
+  maybeAutoAssign();
+  rebalanceRoundIfLopsided();
+}
 function maybeAutoAssign() {
   // The board cannot write, so a hand-out it worked out would exist only on the TV:
   // rooms with names against them that nobody else can see, until the next pull wipes
@@ -4674,7 +4722,7 @@ function startArrivalPolling() {
     if (_assignPick) return;
     const before = JSON.stringify(hikArrivals);
     await loadHikArrivals();
-    if (JSON.stringify(hikArrivals) !== before) { maybeAutoAssign(); render(); } else stampLastPull();
+    if (JSON.stringify(hikArrivals) !== before) { handOutAndLevel(); render(); } else stampLastPull();
   }, 60000);
 }
 // Refresh just the "last updated" text in place — a full render would be wasteful
@@ -4709,7 +4757,7 @@ function addManualArrival(staffId) {
   state.manualArrivals[day][staffId] = { time: fmtEventTime(day + ' ' + hh + ':' + mm), raw: day + ' ' + hh + ':' + mm };
   // Somebody arriving is somebody to give rooms to — the same thing a badge-in does,
   // so it deals again straight away rather than waiting up to a minute for the poll.
-  save(); loadHikArrivals().then(() => { maybeAutoAssign(); render(); });
+  save(); loadHikArrivals().then(() => { handOutAndLevel(); render(); });
 }
 function removeManualArrival(staffId) {
   const day = selectedDay || workToday();
@@ -4719,7 +4767,7 @@ function removeManualArrival(staffId) {
   (state.servicedUnits || []).forEach((u) => {
     if (u.assignedTo === staffId && !cleanedToday(u)) { u.assignedTo = null; delete state.assignConfirmed[u.id]; }
   });
-  save(); loadHikArrivals().then(() => { maybeAutoAssign(); render(); });
+  save(); loadHikArrivals().then(() => { handOutAndLevel(); render(); });
 }
 
 // Import a Hik export (Time Card or Access Record) → store check-ins → refresh Roll Call.
@@ -12758,6 +12806,15 @@ function evenOutEarlyRooms() {
   moves.forEach((m) => {
     m.u.assignedTo = m.to;
     state.assignConfirmed[m.u.id] = todayKey();               // a decision: never re-dealt
+    // AND THE PLAN MAY NOT CARRY IT BACK. applyPlannedAssignments honours a decision —
+    // unless the room was already carried today, which every room has been by the time
+    // this runs: carryPlanToBoardOnOpen goes first in the same pass. So the levelling
+    // moved four asked-for rooms off one person, said so on the morning screen, and the
+    // next carry put every one of them straight back on her. The exception exists to
+    // stop a hasty 06:40 deal overwriting a plan made the night before; this is not a
+    // deal, it is the round's own rule, and the room's carry is no longer the last thing
+    // that happened to it. Clearing the marker lets the decision guard do its job.
+    if (state.planCarried) delete state.planCarried[m.u.id];
   });
   // Said out loud on the morning screen, because a board that rearranges itself in
   // silence is one nobody trusts.
@@ -12860,7 +12917,7 @@ function startDayWatch() {
       autoPinDaysFromFreq();
       autoLevelEodDays();     // and undo any clump the pinning has settled into
       planningPass();
-      loadHikArrivals().then(() => { maybeAutoAssign(); render(); });
+      loadHikArrivals().then(() => { handOutAndLevel(); render(); });
       render();
       return;
     }
@@ -12887,7 +12944,7 @@ async function boot() {
   // ask for the set their last clean points at. This spreads them back out.
   autoLevelEodDays();
   planningPass();
-  loadHikArrivals().then(() => { maybeAutoAssign(); route(); });
+  loadHikArrivals().then(() => { handOutAndLevel(); route(); });
   startArrivalPolling();
   startDayWatch();
   if (!TV_MODE) startBuildWatch();   // the board has its own, and reloads itself

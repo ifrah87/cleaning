@@ -129,6 +129,13 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
   // --- drag it, the way a mouse would (the desktop gesture) --------------------
   const flat = page.locator('button.freqmini', { hasText: /^506/ }).first();
   const target = page.locator('[data-drop]').last();
+  // BOTH ENDS OF THE DRAG HAVE TO BE ON THE SCREEN. The drop is decided by
+  // elementFromPoint at the pointer, which is a VIEWPORT lookup — a column whose top is
+  // at 905 on a 900-tall phone answers null however correct the gesture is, and the
+  // failure reads as "the board would not take it". Scroll the target into view, then
+  // measure: boxes taken before the scroll describe where things used to be.
+  await target.scrollIntoViewIfNeeded();
+  await page.waitForTimeout(200);
   const a = await flat.boundingBox(), b = await target.boundingBox();
   await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
   await page.mouse.down();

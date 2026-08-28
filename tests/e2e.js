@@ -195,10 +195,32 @@ function serve() {
   page.on('pageerror', (e) => consoleErrors.push('pageerror: ' + e.message));
 
   await page.goto(`http://127.0.0.1:${port}/index.html`, { waitUntil: 'domcontentloaded' });
-  await page.waitForSelector('.nav', { timeout: 15000 }).catch(() => {});
+  await page.waitForSelector('.header', { timeout: 15000 }).catch(() => {});
 
   // Auto-assign asks before discarding assignments that already exist. Accept it
   // when it appears; a fresh morning with nothing handed out won't show one.
+  // ONE SCREEN, AND A MENU FOR EVERYTHING ELSE. The tab bar this test was written
+  // against is gone: the app opens on the board, and Rooms, the morning set-up, the
+  // team, the history and the settings all live behind the ☰ in the corner. Rooms
+  // carries its own All / Airbnb / Offices / Buildings segments, so a screen in there
+  // is named by both. smoke-nav owns the chrome itself — it asserts the tab bar is
+  // gone and walks the menu; this test only needs to get to a screen and stay honest
+  // about what happens on it.
+  const MENU = { rollcall: 'Morning set-up', calendar: 'Calendar', plan: 'Plan a day',
+    rooms: 'Rooms & schedules', building: 'Floors & common areas', exterior: 'Exterior',
+    team: 'Team', history: 'Cleaning history', tonight: 'Tonight\u2019s round',
+    settings: 'Settings' };
+  const SEG = { all: 0, airbnb: 1, office: 2, building: 3 };
+  const go = async (tab, seg) => {
+    await page.locator('.tb-btn', { hasText: '☰' }).first().click();
+    await page.waitForTimeout(350);
+    // The sheet is the only thing on z-index 900, and its labels repeat words that are
+    // on the board behind it — so pick inside the sheet, not anywhere on the page.
+    await page.locator('[style*="z-index:900"] button', { hasText: MENU[tab] }).first().click();
+    await page.waitForTimeout(900);
+    if (seg) { await page.locator('.segbtn').nth(SEG[seg]).click(); await page.waitForTimeout(900); }
+  };
+
   const autoAssign = async () => {
     await page.locator('button', { hasText: "Auto-assign today's rooms evenly" }).click();
     if (await page.locator('#confirmModal').count()) {
@@ -208,22 +230,29 @@ function serve() {
   };
 
   console.log('\n\x1b[1mBOOT\x1b[0m');
-  const loggedIn = await page.locator('.nav').count();
+  const loggedIn = await page.locator('.header').count();
   check('app boots past the login screen', loggedIn > 0, 'login screen still showing — session stub failed');
   if (!loggedIn) { await browser.close(); srv.close(); report(); return; }
 
   // Regression: a device with NO localStorage cache (incognito, cleared cache, new
-  // phone) used to land on the dead tab 'cleaning' and render a blank screen.
-  const title = await page.locator('.h-title').textContent();
-  eq('fresh device with no cache lands on a real tab', title, 'Morning Roll Call');
+  // phone) used to land on the dead tab 'cleaning' and render a blank screen. The tab
+  // it lands on is the board now — the app opens on the work rather than on a hub.
+  eq('fresh device with no cache lands on a real tab', await page.evaluate(() => state.tab), 'board');
   check('fresh device renders a body, not a blank screen', (await page.locator('.body').count()) > 0, 'no .body rendered');
+
+  // Roll Call is a screen you go to now, not the one you land on — the app opens on
+  // the board. Everything below is about the morning set-up, so go there first.
+  await go('rollcall');
+  // The badge-ins land asynchronously, so the cards they build are not there the instant
+  // the screen is. Wait for the crew rather than for a clock.
+  await page.waitForSelector('.person-name', { timeout: 10000 }).catch(() => {});
 
   // An empty roll call must be distinguishable from a stale one.
   await page.waitForSelector('#lastPull');
   contains('roll call reports when attendance was last read', await page.locator('#lastPull').textContent(), 'Attendance checked');
   check('there is a manual re-check button', (await page.locator('button', { hasText: 'Check now' }).count()) > 0, 'no "Check now" button');
 
-  // Roll Call is the landing tab; wait for arrivals to resolve.
+  // Wait for arrivals to resolve before reading the panel.
   await page.waitForSelector('text=/Rooms to clean today/', { timeout: 10000 }).catch(() => {});
 
   // ---------------------------------------------------------------- ROLL CALL
@@ -378,8 +407,7 @@ function serve() {
 
   // ---------------------------------------------------------------- ALL ROOMS
   console.log('\n\x1b[1mALL ROOMS — per-room + bulk frequency flip\x1b[0m');
-  await page.locator('.nav button', { hasText: 'More' }).click();
-  await page.locator('.su-unit', { hasText: 'All Rooms' }).click();
+  await go('rooms', 'all');
   await page.waitForSelector('text=/Set all:/');
 
   const bulkLine = await page.locator('text=/^Now: /').first().textContent();
@@ -417,7 +445,7 @@ function serve() {
   // room that is cleaned rarely falls out of it. If that log is the only record,
   // the room's last-cleaned line vanishes and it goes back to looking never-cleaned.
   console.log('\n\x1b[1mLAST CLEANED — stamped on the room, not just the log\x1b[0m');
-  await page.locator('.nav button', { hasText: 'Airbnb' }).click();
+  await go('rooms', 'airbnb');
   await page.waitForTimeout(1800);
   const room101 = page.locator('.su-card').filter({ has: page.locator('.su-unit', { hasText: '101' }) }).first();
   writes.length = 0;
@@ -443,8 +471,7 @@ function serve() {
   contains('a never-cleaned room says so instead of hiding the line', await room104.textContent(), 'no record yet');
 
   // Back to All Rooms for the bulk tests that follow.
-  await page.locator('.nav button', { hasText: 'More' }).click();
-  await page.locator('.su-unit', { hasText: 'All Rooms' }).click();
+  await go('rooms', 'all');
   await page.waitForSelector('text=/Set all:/');
 
   // Bulk "mark all cleaned today".
@@ -512,15 +539,14 @@ function serve() {
   // These rooms were also cleaned today. Recording an older night must not pull
   // their schedule back and make them look due again.
   check('an older night never drags the schedule backwards', airbnbAfter.length === 5 && airbnbAfter.every((u) => u.lastCleaned === TODAY), JSON.stringify(airbnbAfter.map((u) => [u.unit, u.lastCleaned])));
-  eq('recording a day lands you in History to see it', await page.locator('.h-title').textContent(), 'Cleaning History');
+  contains('recording a day lands you in History to see it', await page.locator('.header').first().textContent(), 'Cleaning History');
   check('the sheet closes once the night is saved', (await page.locator('.modal-overlay').count()) === 0, 'sheet still open');
 
   // Every-other-day rooms cleaned together pile onto one morning. Set the office
   // group up that way, then prove "Even out the days" splits them.
   writes.length = 0;
-  await page.locator('.nav button', { hasText: 'Roll Call' }).click();
-  await page.locator('.nav button', { hasText: 'More' }).click();
-  await page.locator('.su-unit', { hasText: 'All Rooms' }).click();
+  await go('rollcall');
+  await go('rooms', 'all');
   await page.waitForSelector('text=/Set all:/');
   const airbnbBulk = page.locator('text=/^Now: /').first().locator('..');
   await airbnbBulk.locator('button', { hasText: 'Every other day' }).click();
@@ -552,15 +578,14 @@ function serve() {
   await page.waitForTimeout(1800);
 
   // Flipping 103 to daily must put it on today's list.
-  await page.locator('.nav button', { hasText: 'Roll Call' }).click();
+  await go('rollcall');
   await page.waitForSelector('text=/Rooms to clean today/');
   const newHeading = await page.locator('.section-label', { hasText: 'Rooms to clean today' }).first().textContent();
   contains('newly-daily room joins today\'s list', newHeading, 'Rooms to clean today (5)');
 
   // ------------------------------------------------------- TEAM-OWNED ZONES
   console.log('\n\x1b[1mTEAMS — a team owns a zone, the leader answers for it\x1b[0m');
-  await page.locator('.nav button', { hasText: 'More' }).click();
-  await page.locator('.su-unit', { hasText: 'Settings' }).click();
+  await go('settings');
   await page.waitForSelector('#newTeam');
   const teamBox = page.locator('.addbox').filter({ hasText: 'Zone floors' }).first();
   contains('a team shows the zone it owns', await teamBox.innerText(), 'Zone floors');
@@ -574,13 +599,12 @@ function serve() {
   await page.waitForTimeout(1800);
 
   // Make the floor-2 room due so auto-assign has something to route.
-  await page.locator('.nav button', { hasText: 'More' }).click();
-  await page.locator('.su-unit', { hasText: 'All Rooms' }).click();
+  await go('rooms', 'all');
   await page.waitForSelector('text=/Set all:/');
   await page.locator('.su-card').filter({ hasText: '201' }).first().locator('button', { hasText: 'Daily' }).first().click();
   await page.waitForTimeout(1800);
 
-  await page.locator('.nav button', { hasText: 'Roll Call' }).click();
+  await go('rollcall');
   await page.waitForSelector('text=/Rooms to clean today/');
   writes.length = 0;
   await autoAssign();
@@ -590,8 +614,7 @@ function serve() {
 
   // -------------------------------------------------- TRAINEES / CLEARANCES
   console.log('\n\x1b[1mCLEARANCES — trainees kept off rooms they cannot take\x1b[0m');
-  await page.locator('.nav button', { hasText: 'More' }).click();
-  await page.locator('.su-unit', { hasText: 'Team' }).first().click();
+  await go('team');
   await page.waitForTimeout(300);
   // Amina is a trainee: clear her off offices.
   const aminaCard = page.locator('.person').filter({ hasText: 'Amina Yusuf' }).first();
@@ -603,7 +626,7 @@ function serve() {
   const wClear = writes[writes.length - 1].data.staff.find((p) => p.id === 'p1');
   check('clearing someone off a room type is saved', wClear && Array.isArray(wClear.canClean) && !wClear.canClean.includes('office'), 'canClean: ' + JSON.stringify(wClear && wClear.canClean));
 
-  await page.locator('.nav button', { hasText: 'Roll Call' }).click();
+  await go('rollcall');
   await page.waitForSelector('text=/Rooms to clean today/');
   writes.length = 0;
   await autoAssign();
@@ -612,13 +635,12 @@ function serve() {
 
   // ------------------------------------------------ ROLL CALL ROOM FILTERING
   console.log('\n\x1b[1mROLL CALL — only the kinds of room it is meant to cover\x1b[0m');
-  await page.locator('.nav button', { hasText: 'More' }).click();
-  await page.locator('.su-unit', { hasText: 'Settings' }).click();
+  await go('settings');
   await page.waitForSelector('text=/Roll Call covers/');
   const rcBox = page.locator('.addbox').filter({ hasText: 'Kinds of room' }).first();
   await rcBox.locator('button', { hasText: 'Airbnb' }).click();
   await page.waitForTimeout(1800);
-  await page.locator('.nav button', { hasText: 'Roll Call' }).click();
+  await go('rollcall');
   await page.waitForSelector('text=/Rooms to clean today/');
   const chipsNow = await page.locator('.section-label', { hasText: 'Rooms to clean today' }).first()
     .evaluate((e) => Array.from(e.nextElementSibling.nextElementSibling.children).map((c) => c.textContent.trim()));
@@ -672,8 +694,7 @@ function serve() {
   // The crew works into the night, so "what is still outstanding" needs its own
   // screen — and it must not list work already done, nor work not yet due.
   console.log('\n\x1b[1mTONIGHT — what is still outstanding on this round\x1b[0m');
-  await page.locator('.nav button', { hasText: 'More' }).click();
-  await page.locator('.su-unit', { hasText: 'Tonight' }).click();
+  await go('tonight');
   await page.waitForTimeout(1800);
   const tonightText = await page.locator('.body').first().textContent();
   contains('the round lists what is still outstanding', tonightText, 'to clean tonight');
@@ -686,7 +707,7 @@ function serve() {
   // The corridors and lobby are work somebody has to be given. They must reach the
   // morning allocation, and a cleaned one must leave a record like a room does.
   console.log('\n\x1b[1mCOMMUNAL AREAS — allocated in the morning, logged like a room\x1b[0m');
-  await page.locator('.nav button', { hasText: 'Roll Call' }).click();
+  await go('rollcall');
   await page.waitForSelector('text=/Communal areas/');
   const lobby = page.locator('.area-item').filter({ has: page.locator('.su-unit', { hasText: 'Main Lobby' }) }).first();
   check('Roll Call carries the communal areas', (await lobby.count()) > 0, 'no Main Lobby card on Roll Call');
@@ -719,7 +740,7 @@ function serve() {
   contains('a finished area is still visible, and undoable', await page.locator('.section-label', { hasText: 'Communal areas' }).first().locator('..').textContent(), 'Main Lobby · Amina ✓');
 
   // The Buildings tab is where building work is read; areas belong there too.
-  await page.locator('.nav button', { hasText: 'Buildings' }).click();
+  await go('rooms', 'building');
   await page.waitForTimeout(1800);
   check('the Buildings tab shows the communal areas', (await page.locator('.section-label', { hasText: 'Communal areas' }).count()) > 0, 'no areas section on Buildings');
 
@@ -738,7 +759,7 @@ function serve() {
   await liftCard.locator('button[title="Change or remove"]').click();
   await page.waitForTimeout(1800);
   check('an area added there can be renamed and removed there', (await page.locator('.area-item').filter({ has: page.locator('.su-unit', { hasText: 'Lift Lobby' }) }).first().locator('button', { hasText: 'Rename' }).count()) > 0, 'no rename control');
-  await page.locator('.nav button', { hasText: 'Roll Call' }).click();
+  await go('rollcall');
   await page.waitForTimeout(1800);
   check('a newly built area reaches the morning roll call', (await page.locator('.su-unit', { hasText: 'Lift Lobby' }).count()) > 0, 'not on Roll Call');
 
@@ -772,7 +793,7 @@ function serve() {
   }, [SUPA_HOST, SESSION]);
   const ap = await auto.newPage();
   await ap.goto(`http://127.0.0.1:${port}/index.html`, { waitUntil: 'domcontentloaded' });
-  await ap.waitForSelector('.nav');
+  await ap.waitForSelector('.header');
   await ap.waitForTimeout(1800);
   const autoState = autoWrites.length ? autoWrites[autoWrites.length - 1].data : null;
   const handed = autoState ? autoState.servicedUnits.filter((u) => u.assignedTo) : [];
@@ -786,7 +807,7 @@ function serve() {
   await ap.close(); await auto.close();
 
   console.log('\n\x1b[1mWORKS ON — not everyone is in every day\x1b[0m');
-  await page.locator('.nav button', { hasText: 'Roll Call' }).click();
+  await go('rollcall');
   await page.waitForTimeout(300);
   const rotaBase = await page.evaluate(() => {
     const p = cleaningStaff()[0];
@@ -1106,7 +1127,7 @@ function serve() {
   });
 
   console.log('\n\x1b[1mPUT THE BOARD BACK — unassign the whole morning at once\x1b[0m');
-  await page.locator('.nav button', { hasText: 'Roll Call' }).click();
+  await go('rollcall');
   await page.waitForTimeout(1800);
   await autoAssign();                                   // give the board something to clear
   const heldBefore = await page.evaluate(() => (state.servicedUnits || [])
@@ -1249,8 +1270,7 @@ function serve() {
     });
     save(); render();
   });
-  await page.locator('.nav button', { hasText: 'More' }).click();
-  await page.locator('.su-card', { hasText: 'Tonight' }).first().click();
+  await go('tonight');
   await page.waitForTimeout(1800);
   const offRollCall = await page.evaluate(() => tonightOutstanding().rooms
     .filter((u) => !onRollCall(u)).map((u) => u.unit));

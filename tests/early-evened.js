@@ -37,6 +37,8 @@ const APP_STATE = {
   areas: [], completions: {}, assignConfirmed: {}, manualArrivals: {}, floors: 11,
   autoAssign: false,                 // as on the live building: nothing deals or re-deals
 };
+let SERVER = APP_STATE;   // the fixture is where the server STARTS, not what it always says
+
 const EVENTS = [
   { person_name: 'Amina Yusuf', person_code: '1', event_time: WORK_TODAY + ' 06:30:00' },
   { person_name: 'Hodan Omar', person_code: '2', event_time: WORK_TODAY + ' 06:35:00' },
@@ -72,8 +74,18 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
     if (url.includes('/rest/v1/app_state')) {
       if (m === 'GET') {
         const single = String(req.headers()['accept'] || '').includes('pgrst.object');
-        return json(single ? { data: APP_STATE } : [{ data: APP_STATE }]);
+        return json(single ? { data: SERVER } : [{ data: SERVER }]);
       }
+      // A SERVER THAT KEEPS WHAT IT IS SENT. Answering every read with the same pristine
+      // fixture models a server that loses every write, and the app polls: anything the
+      // page decided was handed straight back to it a second later, undone. The levelling
+      // pass moved two early rooms, said so on screen, and the next poll put them back on
+      // the person it had just taken them off. Upsert what arrives, the way the real one does.
+      try {
+        const body = JSON.parse(req.postData() || '{}');
+        const row = Array.isArray(body) ? body[0] : body;
+        if (row && row.data) SERVER = row.data;
+      } catch (e) { /* a body we cannot read is a write we cannot keep */ }
       return json([{}], 201);
     }
     if (url.includes('/rest/v1/hik_events')) return json(m === 'GET' ? EVENTS : [{}]);
