@@ -4510,6 +4510,20 @@ function fmtEventTime(v) {
   const d = /^\d{10,}$/.test(s) ? new Date(Number(s)) : new Date(s);
   return isNaN(d.getTime()) ? s : d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 }
+// WHO CAN BE HANDED WORK. Every list that gives somebody a room, an area or a one-off
+// asks this, so a name the rota says is not in cannot be picked by mistake. It was not
+// asked anywhere, and on an alternating Friday that put half the crew — leaders who are
+// at home — in every dropdown on the screen.
+//
+// Badging in still wins over the rota, the same way it does on the roll call: somebody
+// who comes in on their off-Friday is here, and gets rooms like anyone else. Arrivals
+// only count for the day they were loaded for, so a future day is the rota alone.
+const onDutyForDay = (p, day) => !!p
+  && (worksOnDay(p, day) || (day === workToday() && !!hikArrivals[p.id]));
+const onDutyToday = (p) => onDutyForDay(p, workToday());
+// Why a name is missing from a hand-out list, in the words the roll call uses.
+const offDutyWhy = (p) => (!p || !worksToday(p)) ? 'off today' : 'not clocked in';
+
 // Load arrivals for the selected day (defaults to today), matched to staff by name.
 async function loadHikArrivals() {
   if (!db) return;
@@ -5201,7 +5215,10 @@ function areaWorkCard(a, opts) {
   // works it with them, so offering assistants is offering a way to get it wrong. The
   // outside team is the exception the building actually has: the bins go out with them.
   // Everything else on this list is still a leader's.
-  const pickable = cleaningStaff().filter((p) => p.isLeader || tvOutside(p));
+  // AND ONLY THE ONES THE ROTA HAS IN. An alternating Friday means half the leaders are
+  // at home, and offering them is offering a way to hand the morning to somebody who is
+  // not in the building.
+  const pickable = cleaningStaff().filter((p) => (p.isLeader || tvOutside(p)) && onDutyToday(p));
   const present = pickable.filter(p => hikArrivals[p.id]);
   const pool = (presentOnly && present.length) ? present : pickable;
   pool.forEach(p => {
@@ -5214,7 +5231,7 @@ function areaWorkCard(a, opts) {
   if (a.assignedTo && !pool.some(p => p.id === a.assignedTo)) {
     const p = (state.staff || []).find(x => x.id === a.assignedTo);
     if (p) {
-      const o = el(`<option value="${esc(p.id)}">${esc(p.name)} (not clocked in)</option>`);
+      const o = el(`<option value="${esc(p.id)}">${esc(p.name)} (${esc(offDutyWhy(p))})</option>`);
       o.setAttribute('selected', '');
       sel.appendChild(o);
     }
@@ -5719,7 +5736,7 @@ function setAreaEveryone(id) {
   if (!a) return;
   // The people who could actually be on it: leaders who are in. Nobody badged in yet —
   // early, or the reader is behind — falls back to the whole roster rather than nobody.
-  const leaders = cleaningStaff().filter((p) => p.isLeader);
+  const leaders = cleaningStaff().filter((p) => p.isLeader && onDutyToday(p));
   const inNow = leaders.filter((p) => hikArrivals[p.id]);
   const pool = inNow.length ? inNow : leaders;
   if (!pool.length) return;
@@ -6983,7 +7000,11 @@ function moveJobSheet(day) {
   modal.appendChild(el(`<div class="modal-title">Move ${esc(String(j.label).replace(/^Unit\s+/, ''))}</div>`));
   modal.appendChild(el(`<div class="modal-sub">Who should have it?</div>`));
   const picker = el('<div class="cover-picker"></div>');
-  cleaningStaff().slice()
+  // WHOEVER THE ROTA HAS IN ON THIS DAY. Moving a room onto somebody who is at home is
+  // the quietest way to lose it: it reads as handed out and nobody comes for it. The one
+  // holding it now stays offered whatever the rota says, so the sheet can always show
+  // where the room actually is.
+  cleaningStaff().filter((p) => onDutyForDay(p, day) || j.assignedTo === p.id).slice()
     .sort((a, b) => (isToday ? (arrived.has(b.id) ? 1 : 0) - (arrived.has(a.id) ? 1 : 0) : 0)
       || ((load[a.id] || 0) - (load[b.id] || 0))
       || String(a.name).localeCompare(String(b.name)))
@@ -7270,7 +7291,12 @@ function planBoard(day) {
   const cols = el('<div class="bd-cols"></div>');
   const byId = {};
   (state.servicedUnits || []).forEach((u) => { byId[u.id] = u; });
-  const people = cleaningStaff().filter((p) => p.isLeader);
+  // ONLY WHO THE ROTA HAS IN ON THAT DAY. An empty column for a leader who is at home is
+  // an invitation to drop a room on them. Anybody already holding a job on the day keeps
+  // their column whatever the rota says — a filter must not make work look unhanded.
+  const holders = new Set(jobs.map((j) => j.assignedTo).filter(Boolean));
+  const people = cleaningStaff().filter((p) => p.isLeader
+    && (onDutyForDay(p, day) || holders.has(p.id)));
   const buckets = { __none__: [] };
   people.forEach((p) => { buckets[p.id] = []; });
   jobs.forEach((j) => { (buckets[j.assignedTo && buckets[j.assignedTo] ? j.assignedTo : '__none__']).push(j); });
@@ -9012,11 +9038,24 @@ function servicedCard(u, isDue) {
   // list of twenty — and an assistant should never be the answer, because the room is
   // the leader's and the assistant is there to work it with them. Naming the assistant
   // here would quietly move the room off the leader it belongs to.
-  cleaningStaff().filter(p => canCleanUnit(p, u) && p.isLeader).forEach(p => {
+  // And only the ones the rota has in today — naming somebody who is at home is the
+  // same mistake as naming an assistant, made one step earlier.
+  const rmPick = cleaningStaff().filter(p => canCleanUnit(p, u) && p.isLeader && onDutyToday(p));
+  rmPick.forEach(p => {
     const o = el(`<option value="${esc(p.id)}">${esc(p.name)}</option>`);
     if (u.assignedTo === p.id) o.setAttribute('selected', '');
     asel.appendChild(o);
   });
+  // Whoever is holding it stays on the list, said out loud. Dropping them would show
+  // "Auto (by floor)" against a room that is on somebody's name.
+  if (u.assignedTo && !rmPick.some(p => p.id === u.assignedTo)) {
+    const p = (state.staff || []).find(x => x.id === u.assignedTo);
+    if (p) {
+      const o = el(`<option value="${esc(p.id)}">${esc(p.name)} (${esc(offDutyWhy(p))})</option>`);
+      o.setAttribute('selected', '');
+      asel.appendChild(o);
+    }
+  }
   asel.onchange = (e) => setUnitAssignee(u.id, e.target.value);
   assignRow.appendChild(asel);
   card.appendChild(assignRow);
@@ -9603,7 +9642,7 @@ function viewRollCall(opts) {
       jbox.appendChild(jIn);
       // Handed to whoever it is handed to, from the same list the areas use — leaders,
       // and only the ones actually in when there are any.
-      const leaders = cleaningStaff().filter((p) => p.isLeader);
+      const leaders = cleaningStaff().filter((p) => p.isLeader && onDutyToday(p));
       const inNow = leaders.filter((p) => hikArrivals[p.id]);
       const pool = inNow.length ? inNow : leaders;
       let jWho = '';
@@ -10344,11 +10383,21 @@ function areaCard(a) {
   sel.appendChild(el(`<option value="">Unassigned</option>`));
   // Leaders only, for the same reason the room picker is: naming an assistant here
   // quietly moves the job off the leader whose round it belongs to.
-  cleaningStaff().filter(p => p.isLeader).forEach(p => {
+  // The rota decides who is offered, here as everywhere work is handed out.
+  const arPick = cleaningStaff().filter(p => p.isLeader && onDutyToday(p));
+  arPick.forEach(p => {
     const o = el(`<option value="${p.id}">${esc(p.name)}</option>`);
     if (a.assignedTo===p.id) o.setAttribute('selected','');
     sel.appendChild(o);
   });
+  if (a.assignedTo && !arPick.some(p => p.id === a.assignedTo)) {
+    const p = (state.staff || []).find(x => x.id === a.assignedTo);
+    if (p) {
+      const o = el(`<option value="${esc(p.id)}">${esc(p.name)} (${esc(offDutyWhy(p))})</option>`);
+      o.setAttribute('selected','');
+      sel.appendChild(o);
+    }
+  }
   sel.onchange = (e) => setAreaAssign(a.id, e.target.value);
   assignRow.appendChild(sel);
   card.appendChild(assignRow);
@@ -11300,6 +11349,15 @@ function tvJobsByPerson() {
     if (!buckets[k]) { buckets[k] = []; order.push(k); }
     return buckets[k];
   };
+  // A NAME HOLDS ONLY WHILE THE ROTA HAS THEM IN. A room or a communal walk left on
+  // somebody who is at home is not handed out, it is lost: it reads as theirs, it buys
+  // them a column on a board they are not on, and nobody comes for it. The plan already
+  // takes this view of a name put on by hand — "yours until the rota says you are not
+  // in, then back in the box" — and the live board has to take it too, or the two
+  // disagree about the same morning. So it falls back into NOBODY YET, where it can be
+  // seen and given to somebody who is actually in.
+  const staffById = {}; (state.staff || []).forEach((p) => { staffById[p.id] = p; });
+  const heldBy = (id) => (id && onDutyToday(staffById[id])) ? id : null;
   todaysRoomList().forEach((u) => {
     // THE FLATS NOBODY HOLDS GO IN ONE BOX — and the ones somebody holds go to them.
     // Forcing every flat into NOBODY YET whatever its name said made the box a wall of
@@ -11307,8 +11365,9 @@ function tvJobsByPerson() {
     // put, because the display was pinning it there. The work moved and the board denied
     // it. Unhanded flats still sit together, which is what that box is for.
     const air = unitType(u) === 'airbnb';
-    const who = (state.staff || []).find((p) => p.id === u.assignedTo);
-    bucket(u.assignedTo).push({
+    const holder = heldBy(u.assignedTo);
+    const who = staffById[holder];
+    bucket(holder).push({
       id: u.id,
       air,                               // its own colour, wherever it is handed
       late: timeSlot(u) === 'late',      // ...and after the morning round in the column
@@ -11330,8 +11389,9 @@ function tvJobsByPerson() {
   // work exists whether or not it is dealt out. Empty while everything is switched on.
   tvOffRollCall().forEach((u) => {
     const air = unitType(u) === 'airbnb';
-    const who = (state.staff || []).find((p) => p.id === u.assignedTo);
-    bucket(u.assignedTo).push({                       // handed flats go to their cleaner
+    const holder = heldBy(u.assignedTo);
+    const who = staffById[holder];
+    bucket(holder).push({                             // handed flats go to their cleaner
       id: u.id, label: u.unit + (air && who ? ' · ' + who.name.split(' ')[0] : ''),
       done: cleanedToday(u), kind: unitType(u),
       early: timeSlot(u) === 'early', area: false, air,
@@ -11346,11 +11406,16 @@ function tvJobsByPerson() {
   // still ONE job: ticked once, done for all of them, and counted once in the totals
   // (see countJobs) — a job on two boards is not two jobs.
   areasInterior().forEach((a) => {
-    const on = [a.assignedTo].concat(areaHelpers(a).map((p) => p.id)).filter(Boolean);
+    // Whoever the rota has in, of the people named on it. If the one who answers for it
+    // is at home and somebody else on the walk is in, the walk is theirs for the day
+    // rather than a helper's job with nobody above them.
+    const on = [a.assignedTo].concat(areaHelpers(a).map((p) => p.id))
+      .filter(Boolean).filter((id) => heldBy(id));
+    const owner = on.indexOf(a.assignedTo) >= 0 ? a.assignedTo : (on[0] || null);
     const who = on.length ? on : [null];
     who.forEach((pid) => {
       const others = on.filter((x) => x !== pid)
-        .map((x) => (state.staff || []).find((p) => p.id === x))
+        .map((x) => staffById[x])
         .filter(Boolean).map((p) => p.name.split(' ')[0]);
       bucket(pid).push({
         id: a.id,
@@ -11360,7 +11425,7 @@ function tvJobsByPerson() {
         // an assistant put on the corridors with their leader stopped counting as spare
         // and was given a column — which is the exact thing naming them beside the
         // leader exists to avoid.
-        helper: pid !== a.assignedTo,
+        helper: pid !== owner,
       });
     });
   });
@@ -11488,7 +11553,8 @@ function tvColumnsForDay(day) {
   const uById = {}; (state.servicedUnits || []).forEach((u) => { uById[u.id] = u; });
   const buckets = {}, order = [];
   Object.values(plan).forEach((j) => {
-    const k = j.assignedTo || '__none__';
+    // Same rule as the live board: a name the rota has off that day is not holding it.
+    const k = (j.assignedTo && onDutyForDay(byId[j.assignedTo], day)) ? j.assignedTo : '__none__';
     if (!buckets[k]) { buckets[k] = []; order.push(k); }
     const u = j.kind === 'unit' ? uById[j.refId] : null;
     buckets[k].push({
