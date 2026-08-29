@@ -8881,8 +8881,18 @@ function viewTick() {
       more.onclick = (e) => { e.stopPropagation(); _giveTo = giving ? null : c.key; render(); };
       col.appendChild(more);
       if (giving) {
+        // WHAT THE BOARD SHOWS, THE BOARD HAS TO BE ABLE TO HAND OUT. This asked
+        // onRollCall, which answers "is this part of the morning round" — and the guest
+        // flats deliberately are not. But they ARE on the board, sitting in NOBODY YET by
+        // design, so the office looked at eleven flats waiting for somebody and had no
+        // way to give a single one of them to anybody: the one column that exists to be
+        // handed out was the one column this list refused to offer.
+        //
+        // Being dealt AUTOMATICALLY is what Airbnb is kept out of, and neverAutoDealt is
+        // what says so. By hand, off the board, is exactly how the office says it wants
+        // the flats done — two people, after the offices, whichever ones checked out.
         const spareRooms = (state.servicedUnits || []).filter((u) =>
-          !u.paused && !u.assignedTo && !cleanedToday(u) && onRollCall(u) && keep({ area: false, kind: unitType(u) }));
+          !u.paused && !u.assignedTo && !cleanedToday(u) && keep({ area: false, kind: unitType(u) }));
         const spareAreas = areasInterior().filter((a) => !a.assignedTo && !areaDone(a) && keep({ area: true, kind: 'area' }));
         const pick = el('<div class="givelist bd-jobs" style="margin-top:8px"></div>');
         if (!spareRooms.length && !spareAreas.length) {

@@ -22,7 +22,14 @@ const TODAY=key(new Date()), YESTERDAY=key(new Date(Date.now()-864e5));
 // yesterday" by the calendar reads as cleaned today and is never due. Badge-ins are
 // read by the work day too, so the events have to carry that date or nobody is in.
 const WORK_TODAY=(()=>{const d=new Date();if(d.getHours()<3)d.setDate(d.getDate()-1);return key(d)})();
-const DAY_BEFORE=(()=>{const d=new Date();d.setDate(d.getDate()-(d.getHours()<3?2:1));return key(d)})();
+// NOT A FRIDAY, EVER. "Cleaned the day before" is how nearly every fixture here makes a
+// room due today — and the daily rooms are cleaned on the Friday in advance of the
+// Saturday, so on a Saturday that clean covers today and the room is deliberately NOT
+// due. A fixture pinned to literal yesterday therefore passes six days a week and fails
+// on the seventh, taking the board, the hand-out and the levelling tests down with it
+// for reasons that have nothing to do with what they are testing. Step back past a
+// Friday so "recently cleaned, due today" means that whatever day the suite is run.
+const DAY_BEFORE=(()=>{const d=new Date();d.setDate(d.getDate()-(d.getHours()<3?2:1));while(d.getDay()===5)d.setDate(d.getDate()-1);return key(d)})();
 const SESSION={access_token:'t',token_type:'bearer',expires_in:3600,expires_at:Math.floor(Date.now()/1000)+3600,refresh_token:'r',user:{id:'u1',email:'a@b.c',aud:'authenticated',role:'authenticated'}};
 const STAFF=[
  // Both leaders: rooms are dealt to leaders only, so a cleaner who is meant to run
@@ -173,11 +180,17 @@ for (const [label,vp] of [['PHONE',{width:420,height:900}],['DESKTOP',{width:144
    const days=Array.from({length:7},(_,i)=>shiftDay(workToday(),i));
    const mk=(u)=>days.map(d=>dueOnDay(u,d)?'X':'.').join('');
    const y=shiftDay(workToday(),-1), old=shiftDay(workToday(),-3);
+   // The DAILY room needs a yesterday that is not a Friday. A Friday clean is worked in
+   // advance of the Saturday, so on a Saturday "cleaned yesterday" is the one case that
+   // is deliberately NOT due today, and the every-day check would read that as a bug.
+   // The every-other-day cases must keep literal yesterday: a one-day gap is the whole
+   // point of them, and stepping back a day would make them due today and prove nothing.
+   const yDaily=(()=>{let d=y;while(new Date(d+'T00:00:00').getDay()===5)d=shiftDay(d,-1);return d;})();
    return {
      cleanedYesterday: mk({id:'t1',unit:'T1',type:'building',freq:'eod',lastCleaned:y}),
      overdue:          mk({id:'t2',unit:'T2',type:'building',freq:'eod',lastCleaned:old}),
      neverRecorded:    mk({id:'t3',unit:'T3',type:'building',freq:'eod'}),
-     daily:            mk({id:'t4',unit:'T4',type:'building',freq:'daily',lastCleaned:y}),
+     daily:            mk({id:'t4',unit:'T4',type:'building',freq:'daily',lastCleaned:yDaily}),
    };
  });
  const alternates=(s)=>!/XX/.test(s.slice(1));   // no two due days in a row after today

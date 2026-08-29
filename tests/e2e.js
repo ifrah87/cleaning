@@ -21,6 +21,13 @@ const SUPA_HOST = 'issnrivggzkhrcjfhzit.supabase.co';
 const key = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 const TODAY = key(new Date());
 const YESTERDAY = key(new Date(Date.now() - 864e5));
+// The DAILY rooms need a yesterday that is not a Friday. A Friday clean is worked in
+// advance of the Saturday, so on a Saturday "cleaned yesterday" is the one case where a
+// daily room is deliberately NOT due, and the panel below would be a room short for a
+// reason that has nothing to do with what it is checking. The every-other-day room keeps
+// literal YESTERDAY: a one-day gap is exactly what makes it not due, which is its point.
+const YESTERDAY_DAILY = (() => { const d = new Date(Date.now() - 864e5);
+  while (d.getDay() === 5) d.setDate(d.getDate() - 1); return key(d); })();
 const TWO_DAYS_AGO = key(new Date(Date.now() - 2 * 864e5));   // a day nobody badged in for
 
 // --- fixtures ---------------------------------------------------------------
@@ -41,11 +48,11 @@ const STAFF = [
 //   105 daily,  cleaned yesterday, early   -> due, unassigned, sorts first
 //   201 weekly, cleaned yesterday (office) -> NOT due
 const UNITS = [
-  { id: 'u101', unit: '101', type: 'airbnb', freq: 'daily', lastCleaned: YESTERDAY, assignedTo: null, usualTo: null },
+  { id: 'u101', unit: '101', type: 'airbnb', freq: 'daily', lastCleaned: YESTERDAY_DAILY, assignedTo: null, usualTo: null },
   { id: 'u102', unit: '102', type: 'airbnb', freq: 'daily', lastCleaned: TODAY, assignedTo: null, usualTo: null },
   { id: 'u103', unit: '103', type: 'airbnb', freq: 'eod', lastCleaned: YESTERDAY, assignedTo: null, usualTo: null },
   { id: 'u104', unit: '104', type: 'airbnb', freq: 'daily', lastCleaned: null, assignedTo: 'p1', usualTo: null , priority: true },
-  { id: 'u105', unit: '105', type: 'airbnb', freq: 'daily', lastCleaned: YESTERDAY, assignedTo: null, usualTo: null, preferEarly: true },
+  { id: 'u105', unit: '105', type: 'airbnb', freq: 'daily', lastCleaned: YESTERDAY_DAILY, assignedTo: null, usualTo: null, preferEarly: true },
   { id: 'u201', unit: '201', type: 'office', freq: 'weekly', lastCleaned: YESTERDAY, assignedTo: null, usualTo: null },
 ];
 

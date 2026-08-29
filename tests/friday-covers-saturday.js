@@ -18,7 +18,14 @@ const SUPA_HOST = 'issnrivggzkhrcjfhzit.supabase.co';
 const key = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 // THE WORK DAY, NOT THE CALENDAR DAY — the app's day turns over at 3am.
 const WORK_TODAY = (() => { const d = new Date(); if (d.getHours() < 3) d.setDate(d.getDate() - 1); return key(d); })();
-const DAY_BEFORE = (() => { const d = new Date(); d.setDate(d.getDate() - (d.getHours() < 3 ? 2 : 1)); return key(d); })();
+// NOT A FRIDAY, EVER. "Cleaned the day before" is how nearly every fixture here makes a
+// room due today — and the daily rooms are cleaned on the Friday in advance of the
+// Saturday, so on a Saturday that clean covers today and the room is deliberately NOT
+// due. A fixture pinned to literal yesterday therefore passes six days a week and fails
+// on the seventh, taking the board, the hand-out and the levelling tests down with it
+// for reasons that have nothing to do with what they are testing. Step back past a
+// Friday so "recently cleaned, due today" means that whatever day the suite is run.
+const DAY_BEFORE = (() => { const d = new Date(); d.setDate(d.getDate() - (d.getHours() < 3 ? 2 : 1)); while (d.getDay() === 5) d.setDate(d.getDate() - 1); return key(d); })();
 
 // A Friday comfortably in the future, so every date the schedule is questioned about
 // is on the same side of "today" whatever day this test is run on. The carry-forward
@@ -88,18 +95,23 @@ const check = (n, ok, d) => { results.push([n, !!ok]); console.log((ok ? '  \x1b
   console.log('\n\x1b[1mReckoning from Friday ' + FRI + '  (Sat ' + SAT + ', Sun ' + SUN + ')\x1b[0m');
 
   const q = await page.evaluate(([FRI, THU, SAT, SUN, MON]) => {
-    const by = (n) => (state.servicedUnits || []).find((u) => u.unit === String(n));
-    const ask = (n, base) => {
-      const u = by(n);
+    // BUILT HERE, NOT READ OUT OF STATE. Asking state for "the every-other-day room with
+    // no pinned days" is asking a question the app answers for itself: the levelling pass
+    // runs on open and pins every eod room to a weekday set, so by the time this looked,
+    // 204 was pinned and the unpinned case went untested — silently, and only on the days
+    // the levelling chose to run. These are the rule's own inputs, spelled out.
+    const mk = (spec) => Object.assign({ id: 'q' + spec.unit, type: 'office', freq: 'daily' }, spec);
+    const ask = (spec, base) => {
+      const u = mk(spec);
       return { sat: dueOnDayFrom(u, SAT, base), sun: dueOnDayFrom(u, SUN, base),
                mon: dueOnDayFrom(u, MON, base), next: nextDueFrom(u, base) };
     };
     return {
-      dailyFri: ask(404, FRI),      // cleaned on the Friday, in advance of the Saturday
-      dailyThu: ask(404, THU),      // Friday missed — nothing was done in advance
-      eodFri: ask(204, FRI),        // every other day, on its own cycle
-      pinnedFri: ask(203, FRI),     // pinned Sat/Mon/Wed/Fri
-      allSevenFri: ask(207, FRI),   // pinned to all seven days = runs every day
+      dailyFri: ask({ unit: '404', freq: 'daily' }, FRI),   // cleaned Friday, in advance of the Saturday
+      dailyThu: ask({ unit: '404', freq: 'daily' }, THU),   // Friday missed — nothing done in advance
+      eodFri: ask({ unit: '204', freq: 'eod' }, FRI),       // every other day, on its own cycle
+      pinnedFri: ask({ unit: '203', freq: 'eod', days: [6, 1, 3, 5] }, FRI),   // pinned Sat/Mon/Wed/Fri
+      allSevenFri: ask({ unit: '207', freq: 'daily', days: [0, 1, 2, 3, 4, 5, 6] }, FRI),
       dowFri: new Date(FRI + 'T00:00:00').getDay(),
     };
   }, [FRI, THU, SAT, SUN, MON]);

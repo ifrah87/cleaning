@@ -19,7 +19,14 @@ const ROOT = path.join(__dirname, '..');
 const SUPA_HOST = 'issnrivggzkhrcjfhzit.supabase.co';
 const key = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 const WORK_TODAY = (() => { const d = new Date(); if (d.getHours() < 3) d.setDate(d.getDate() - 1); return key(d); })();
-const DAY_BEFORE = (() => { const d = new Date(); d.setDate(d.getDate() - (d.getHours() < 3 ? 2 : 1)); return key(d); })();
+// NOT A FRIDAY, EVER. "Cleaned the day before" is how nearly every fixture here makes a
+// room due today — and the daily rooms are cleaned on the Friday in advance of the
+// Saturday, so on a Saturday that clean covers today and the room is deliberately NOT
+// due. A fixture pinned to literal yesterday therefore passes six days a week and fails
+// on the seventh, taking the board, the hand-out and the levelling tests down with it
+// for reasons that have nothing to do with what they are testing. Step back past a
+// Friday so "recently cleaned, due today" means that whatever day the suite is run.
+const DAY_BEFORE = (() => { const d = new Date(); d.setDate(d.getDate() - (d.getHours() < 3 ? 2 : 1)); while (d.getDay() === 5) d.setDate(d.getDate() - 1); return key(d); })();
 
 const SESSION = { access_token: 't', token_type: 'bearer', expires_in: 3600, expires_at: Math.floor(Date.now() / 1000) + 3600, refresh_token: 'r', user: { id: 'u1', email: 'a@b.c', aud: 'authenticated', role: 'authenticated' } };
 const APP_STATE = {
