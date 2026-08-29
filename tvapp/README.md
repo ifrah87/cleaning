@@ -41,7 +41,23 @@ Once, on the TV:
 
 Then from this folder, with the laptop on the same wifi:
 
-    TV=192.168.1.42 ./build.sh install
+    TV=192.168.100.115 ./build.sh install     # board 1
+    TV=192.168.100.148 ./build.sh install     # board 2
+
+The two TVs in the building are **192.168.100.115** and **192.168.100.148**. They were
+on 192.168.1.x when this was written; the building moved subnet and the sets kept their
+last octet. If neither answers, find them again with a sweep for port 5555:
+
+    for i in $(seq 1 254); do (nc -z -G 1 192.168.100.$i 5555 2>/dev/null && echo 192.168.100.$i) & done; wait
+
+Once a set has accepted this laptop's key, `adb` reaches it without anyone standing
+there — which is how you restart a wedged board:
+
+    adb connect 192.168.100.115:5555
+    adb -s 192.168.100.115:5555 shell am force-stop so.orfanerealestate.cleaningtv
+    adb -s 192.168.100.115:5555 shell monkey -p so.orfanerealestate.cleaningtv -c android.intent.category.LAUNCHER 1
+
+adb lives at `/opt/homebrew/share/android-commandlinetools/platform-tools/adb`.
 
 The TV shows a *"Allow debugging from this computer?"* dialog the first time — accept
 it with the remote, and tick *always allow* so it does not ask on every update.

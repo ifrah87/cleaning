@@ -286,6 +286,37 @@ const head = (t) => console.log('\n\x1b[1m' + t + '\x1b[0m');
   });
   check('a crew with no leader in still gets the rooms handed out', noLead > 0, 'rooms handed out: ' + noLead);
 
+  // "ROOMS BY HAND ONLY" IS NOT A PREFERENCE, AND THE FALLBACK MUST NOT UNDO IT. noAuto
+  // is filtered out of the leaders and was then handed straight back by the rule above —
+  // "a crew with no leader in still gets the rooms" — so on a morning where the only
+  // leader badged in was the one person the office picks work for by hand, he was dealt
+  // a round anyway. That put 403 on Ahmed Daahir before six on 29 Aug.
+  const byHandOnly = await page.evaluate(async () => {
+    const arrivedIds = Object.keys(hikArrivals || {});
+    const soloId = arrivedIds[0];
+    (state.staff || []).forEach((p) => { p.isLeader = false; delete p.noAuto; });
+    const solo = (state.staff || []).find((p) => p.id === soloId);
+    solo.isLeader = true; solo.noAuto = true;      // the ONLY leader in, and by hand only
+    (state.servicedUnits || []).forEach((u) => { u.assignedTo = null; u.usualTo = null; });
+    state.assignConfirmed = {}; state.planCarried = {}; state.autoAssignedFor = null;
+    maybeAutoAssign(); render();
+    await new Promise((r) => setTimeout(r, 300));
+    return {
+      name: solo.name,
+      others: arrivedIds.length - 1,
+      his: (state.servicedUnits || []).filter((u) => u.assignedTo === soloId).length,
+      rest: (state.servicedUnits || []).filter((u) => u.assignedTo && u.assignedTo !== soloId).length,
+    };
+  });
+  check('somebody marked "rooms by hand only" is dealt nothing, even as the only leader in',
+    byHandOnly.his === 0, byHandOnly.name + ' was dealt ' + byHandOnly.his + ' rooms');
+  // ...and the morning is not left undone to achieve it: the fallback still reaches the
+  // people who are in, it just no longer reaches him.
+  if (byHandOnly.others > 0) {
+    check('the rooms go to the others instead of being left unhanded', byHandOnly.rest > 0,
+      'nobody else was given anything (' + byHandOnly.others + ' others in)');
+  }
+
   // A PIN OUTLASTS A PLAN. A plan made before the room was tied to somebody still
   // carries the old name; it must not take the room off the person it belongs to.
   const pinVsPlan = await page.evaluate(async () => {

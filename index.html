@@ -4180,7 +4180,16 @@ function autoAssignRooms(onlyRooms, loadSeed, slotSeed, silent) {
   // …unless nobody in today is anything but an assistant. A room still has to be
   // cleaned, and refusing to hand it to the only people in the building is not a rule
   // worth keeping — it just leaves the morning undone.
-  const people = (leaders.length ? leaders : arrived)
+  //
+  // "ROOMS BY HAND ONLY" SURVIVES THE FALLBACK. noAuto is filtered out of `leaders`
+  // above and then handed straight back by this line, so on a morning where no other
+  // leader had badged in yet, the one person the office marked as never to be dealt to
+  // got a round of his own — which is how 403 came to be on Ahmed Daahir at 05:51 on
+  // 29 Aug. The fallback exists to reach past isLeader when only assistants are in. It
+  // may never reach past noAuto: that is not a preference about who is best placed, it
+  // is the office saying this person's work is chosen by hand.
+  const dealable = arrived.filter((id) => byId[id] && !noAuto(byId[id]));
+  const people = (leaders.length ? leaders : dealable)
     .map((id) => ({ id, raw: hikArrivals[id].raw }))
     .sort((a, b) => String(a.raw || '').localeCompare(String(b.raw || '')));   // earliest badge-in first
   if (!people.length) { if (silent) return; hikSyncMsg = { err: true, text: 'No one clocked in to assign rooms to.' }; render(); return; }
@@ -6978,8 +6987,11 @@ function assignNewPlanJobs(day, keys, skip) {
   // them, so a plan must not name an assistant either — otherwise tomorrow is drawn up
   // one way and handed out another. Falls back to everybody when no leader is down to
   // work that day, because a plan with nobody on it is no plan.
+  // ...and never past "rooms by hand only", for the same reason the morning deal does
+  // not: the fallback is there to reach assistants when no leader is on, not to undo a
+  // decision the office made about one person.
   const withLead = able.filter((p) => p.isLeader && !noAuto(p));
-  const crew = withLead.length ? withLead : able;
+  const crew = withLead.length ? withLead : able.filter((p) => !noAuto(p));
   if (!crew.length) return 0;
 
   const unitById = {};
@@ -12457,7 +12469,23 @@ function startTVLoop() {
     // die — the board cannot diagnose itself, and nobody is going to walk over and
     // reload a screen that claims to be fine. A reload costs the wall two seconds and
     // fixes every one of those causes.
-    if (tvLastData && Date.now() - tvLastData > 30 * 60 * 1000) location.reload();
+    // ...AND A WALL THAT NEVER HEARD ANYTHING AT ALL IS THE SAME WALL. tvLastData starts
+    // at zero and is only stamped when a pull or a realtime update actually lands, so
+    // `tvLastData &&` skipped the very case this exists for: a board that came up, drew
+    // the numbers it had, and never heard another word. Reckon from the boot when
+    // nothing has landed yet — silence since we started is still silence.
+    const heardAt = tvLastData || bootedAt;
+    if (Date.now() - heardAt > 30 * 60 * 1000) location.reload();
+    // THE SOCKET GOES QUIET WITHOUT SAYING SO. The retry ladder hangs off subscribe()'s
+    // status callback, and a channel the server has let go does not always report it —
+    // the board simply stops hearing, and nothing on the page knows. That is what stood
+    // on the wall for most of this morning: 402 and 404 on Sadaaq, Ahmed Daahir holding
+    // 403, every name reading NO SCAN, hours after all of it had come off every phone.
+    // Nothing was late; it had stopped listening. Ask the channel how it is on every
+    // pull rather than waiting to be told, and rejoin if it has gone. 'joining' is left
+    // alone so a socket already on its way back is not torn down and started again.
+    const rtState = _rtChannel && _rtChannel.state;
+    if (db && rtState !== 'joined' && rtState !== 'joining') subscribeRealtime();
   }, TV_PULL_MS);
   // A TV that sleeps at 10am is a blank wall. Wake Lock is refused by most TV
   // browsers, so this is a try-and-shrug, not a guarantee — turn the screensaver
