@@ -3849,6 +3849,17 @@ function applyPlannedAssignments() {
 // hysteresis the floors use, for the same reason. Open at three or more apart, closed
 // again at two, so a board hovering on the boundary does not shuffle itself every time
 // somebody badges in.
+// FLOORS STAY. A room belongs to whoever owns its floor and the office wants it to stay
+// there — Ifrah, 2026-08-29: "i want the floor assignments to stay". Both levelling
+// passes used to open floors up once the round was LEVEL_OPEN_AT apart, and on the 30th
+// that moved three rooms across the building — 402 off Sadaaq, 1002 off Abdiwakiil, 105
+// off Hassan — to take the widest gap from 3 to 2. Three walks onto somebody else's
+// floor to shave one room off the spread is not a trade worth making unasked.
+//
+// Levelling itself is untouched: a room nobody owns still moves to whoever is lightest.
+// A floor is simply no longer currency. Flip this to true to get the old behaviour back;
+// the pass it gates is still there in both places, unchanged.
+const LEVEL_MAY_CROSS_FLOORS = false;
 const LEVEL_OPEN_AT = 3;    // gap at which a named room stops being untouchable
 const LEVEL_CLOSE_AT = 2;   // ...and the gap it stops moving at
 const leaderOf = (id) => (state.staff || []).find((p) => p.id === id);
@@ -4495,7 +4506,7 @@ function runAutoAssign(rooms, people, inIds, load, slotSeed, silent) {
     let done = false;
     // Unpinned rooms first, everywhere they can help, before disturbing any pin — and
     // a floor is only opened up once the round is wide enough to be worth the walking.
-    const passes = gap >= LEVEL_FLOORS_AT
+    const passes = (LEVEL_MAY_CROSS_FLOORS && gap >= LEVEL_FLOORS_AT)
       ? [freeToMove, timedButMovable, floorOwned]
       : [freeToMove, timedButMovable];
     for (const pass of passes) {
@@ -6630,7 +6641,7 @@ function autoPlanDay(day) {
     let done = false;
     // Rooms with no claim on them first, everywhere they can help. A floor is only
     // opened up once somebody is holding one room while somebody else holds four.
-    const passes = gap >= LEVEL_OPEN_AT
+    const passes = (LEVEL_MAY_CROSS_FLOORS && gap >= LEVEL_OPEN_AT)
       ? [movable, timedButMovable, movableFromFloor]
       : [movable, timedButMovable];
     for (const pass of passes) {

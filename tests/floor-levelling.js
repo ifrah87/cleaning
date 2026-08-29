@@ -125,13 +125,26 @@ const deal = (pins) => (pinMap) => {
   await page.waitForSelector('.header', { timeout: 20000 });
   await page.waitForTimeout(3000);
 
-  console.log('\n\x1b[1mFive rooms against one: the floor opens\x1b[0m');
+  // FLOORS STAY, WHATEVER THE GAP. This used to read "the floor opens": once the round
+  // was three or more apart the levelling was allowed to take a room off its own floor
+  // owner. The office does not want that trade made for them — on 30 Aug it walked
+  // three rooms onto other people's floors to take the spread from 3 to 2 — so a floor
+  // is no longer currency, and the assertion has to say so rather than tolerate it.
+  // "most rooms are still with their floor owner" passed either way, which is exactly
+  // how a rule stops being tested without anybody noticing.
+  console.log('\n\x1b[1mFive rooms against one: the floor does NOT open\x1b[0m');
   const wide = await page.evaluate(deal(), {});
-  check('the round is no longer three or more apart', wide.gap <= 2, JSON.stringify(wide.load));
+  // The rule is about the LEVELLING, which is what moved 402 across the building. The
+  // first hand-out can still spread a floor that is simply too big for one person —
+  // floor 4 carries five of these eight rooms against one owner — and that is a
+  // different decision, made before anybody has been given anything to take away.
+  check('the levelling never takes a room off its own floor, whatever the gap',
+    !/off their own floor/.test(wide.note), wide.note || '(no levelling note)');
+  check('and all but the overflow is still with its floor owner',
+    wide.onFloor >= 7, wide.onFloor + '/8 on their own floor · ' + JSON.stringify(wide.where));
+  check('the round is still evened out with the rooms nobody owns', wide.gap <= 2, JSON.stringify(wide.load));
   check('but it is not flattened either — floors are still worth something',
     wide.gap >= 1, JSON.stringify(wide.load));
-  check('most rooms are still with the person whose floor they are on',
-    wide.onFloor >= 5, wide.onFloor + '/8 on their own floor · ' + JSON.stringify(wide.where));
   check('nobody is left with nothing to do',
     Math.min(...Object.values(wide.load)) >= 1, JSON.stringify(wide.load));
 
