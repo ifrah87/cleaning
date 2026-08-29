@@ -8714,7 +8714,19 @@ function viewTick() {
 
   fcols.forEach((c) => {
     const giving = _giveTo === c.key;
-    if (!c.jobs.length && !giving) return;      // nothing to tick is nothing to show here
+    // A PERSON HOLDING NOTHING IS THE ONE YOU MOST NEED TO SEE. This dropped every empty
+    // column — "nothing to tick is nothing to show here" — which is true of ticking and
+    // false of everything else this screen is for. The wall keeps them (sorted last, so an
+    // empty column never leads), the office screen did not, and the same morning therefore
+    // looked different on the TV and on the laptop standing next to it.
+    //
+    // Worse than cosmetic: giving somebody work goes through their own column's "Give X
+    // more work" button, so a person holding nothing had no column and could not be given
+    // anything — the one person on the board with room to take it. Ahmed Daahir is offsite
+    // today with the offsite job sitting unassigned two feet away in NOBODY YET.
+    //
+    // An empty NOBODY YET still goes: no work with nobody behind it IS nothing to show.
+    if (!c.jobs.length && !giving && c.none) return;
     const col = el(`<div class="bd-col${c.none ? ' none' : ''}${c.out ? ' out' : ''}`
       + `${c.status === 'off' ? ' off' : ''}`
       + `${c.none && c.jobs.length > 8 ? ' wide3' : c.none && c.jobs.length > 3 ? ' wide2' : ''}${_picked ? ' drop' : ''}"></div>`);
