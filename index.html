@@ -11794,6 +11794,17 @@ function tvColumnsForDay(day) {
         team: p ? tvTeam(p) : '', at: '', left: '', note: '' };
     });
 }
+// A job is the same job on whoever's list it turns up. Keyed the way countJobs keys
+// them, so a column and the tally at the top can never disagree about what one job is.
+function dedupeJobs(jobs) {
+  const by = new Map();
+  (jobs || []).forEach((j) => {
+    const k = (j.area ? 'a:' : 'u:') + j.id;
+    const had = by.get(k);
+    if (!had || (had.helper && !j.helper)) by.set(k, j);
+  });
+  return [...by.values()];
+}
 function tvColumns() {
   const grouped = tvJobsByPerson();
   // "Spare" = holding nothing of their own today. Computed once from the same buckets
@@ -11831,7 +11842,18 @@ function tvColumns() {
       cols.push({
         key: p.id,                                   // work dropped on the pair lands on them
         name: pair.map((x) => tvName(x)).join(' / '),
-        jobs: pair.reduce((all, x) => all.concat(grouped.buckets[x.id] || []), []),
+        // ONE JOB, ONCE, however many of the pair are named on it. A shared area is
+        // pushed into the bucket of everybody walking it — that is the whole point, so
+        // each of them can see it in their own list — and this column is the buckets of
+        // two or three people run together. So the trash walk, put on Mohamed Salaal
+        // with Nur Ali Sidow beside him, came out on their shared card TWICE: once as
+        // "Trash / Recycling + Nur" and once as "Trash / Recycling + Mohamed", and the
+        // card's own count read 0/2 for one bin round. The totals at the top were right
+        // all along (countJobs dedupes), which is exactly why nobody caught it.
+        //
+        // Keep the owner's copy where there is one — it is the entry that is not marked
+        // helper, and the one whose name the walk actually answers to.
+        jobs: dedupeJobs(pair.reduce((all, x) => all.concat(grouped.buckets[x.id] || []), [])),
         none: false, out: AWAY.indexOf(st) >= 0, status: st, with: '',
         team: tvTeam(p), at: tvArrival(p), left: tvLeft(p), note: p.note || '',
       });
