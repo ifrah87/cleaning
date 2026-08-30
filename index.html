@@ -6980,7 +6980,22 @@ function resyncPlanDay(day, addOnly) {
     const j = plan[k];
     if (j.kind !== 'unit') return;
     const u = (state.servicedUnits || []).find((x) => x.id === j.refId);
-    if (!u || !u.usualTo || j.assignedTo === u.usualTo) return;
+    if (!u) return;
+    // A PIN DOES NOT HAND OUT A GUEST FLAT. This walks the whole plan rather than the
+    // list autoPlanDay deals from, and it was the one pass in the app that had never
+    // heard of neverAutoDealt: a flat with a usual cleaner was written onto them here
+    // every time the day re-synced, and mirrorPlanToBoard then put that name on the
+    // board. Which flats get done, and by whom, follows who checked out and who is free
+    // once the offices are finished — a pin cannot know either. The pin still says who
+    // USUALLY takes it, which is worth knowing when the office gives them out; what it
+    // does not do is give them out. A name the app dealt onto a flat before this is
+    // cleared on the next sync — byHand is what somebody deciding looks like, and a name
+    // without it was the machine's.
+    if (neverAutoDealt(u)) {
+      if (j.assignedTo && !j.byHand) { j.assignedTo = null; repinned += 1; }
+      return;
+    }
+    if (!u.usualTo || j.assignedTo === u.usualTo) return;
     j.assignedTo = u.usualTo; repinned += 1;
   });
 
@@ -6993,7 +7008,13 @@ function resyncPlanDay(day, addOnly) {
 // autoPlanDay deals the whole day from scratch and would wipe existing hand-outs.
 function assignNewPlanJobs(day, keys, skip) {
   const plan = getPlan(day);
-  const roomKeys = keys.filter((k) => plan[k] && plan[k].kind === 'unit');
+  // THE SAME ROOMS autoPlanDay REFUSES TO DEAL. That pass lifts the guest flats out
+  // before it hands anything round; this one, which tops a plan up with the jobs just
+  // added, dealt whatever it was given — so a flat arriving on a day's plan was handed
+  // to whoever was carrying least, and the carry wrote the name onto the board. The flat
+  // belongs on the day and in NOBODY YET until a person gives it out. See neverAutoDealt.
+  const roomKeys = keys.filter((k) => plan[k] && plan[k].kind === 'unit'
+    && !neverAutoDealt((state.servicedUnits || []).find((u) => u.id === plan[k].refId)));
   if (!keys.some((k) => plan[k])) return 0;
   // skip = whoever cannot take work today, so somebody off sick does not get handed
   // their own rooms straight back.
@@ -11561,9 +11582,25 @@ function tvJobsByPerson() {
   // now, in a colour of their own so nobody mistakes one for a morning room.
   // Any kind the office has switched off the roll call in Settings still shows — the
   // work exists whether or not it is dealt out. Empty while everything is switched on.
+  //
+  // ...ONCE SOMEBODY HAS BEEN GIVEN ONE, AND NOT BEFORE. Every flat went on, held or
+  // not, so the twelve unhanded ones landed in NOBODY YET as a block of fourteen and
+  // the morning read as thirty-six jobs when the round is twenty-four. The office looked
+  // at the wall and saw the app proposing a dozen flats for a morning that is not
+  // theirs: the flats are done after the offices, by whoever is free, on whoever checked
+  // out — and the office picks them. Nothing unhanded belongs on the morning board.
+  //
+  // A flat WITH a name on it does still show, in its cleaner's column and its own
+  // colour, because that is the half of this that was right: the wall is where "what has
+  // been done today" is read, and a flat cleaned at two o'clock has to be visible on it.
+  // Handing one out is what puts it there — see neverAutoDealt: no automatic pass ever
+  // will. Unhanded flats are picked up on the roll call's own Airbnb strip, which reads
+  // the rooms directly and is not affected by any of this. (This is not 26 Aug's mistake
+  // repeated: that took the flats off every screen at once, ticking included.)
   tvOffRollCall().forEach((u) => {
     const air = unitType(u) === 'airbnb';
     const holder = heldBy(u.assignedTo);
+    if (!holder) return;                              // nobody has been given it — not the morning's
     const who = staffById[holder];
     bucket(holder).push({                             // handed flats go to their cleaner
       id: u.id, label: u.unit + (air && who ? ' · ' + who.name.split(' ')[0] : ''),

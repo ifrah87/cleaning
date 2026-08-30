@@ -42,11 +42,18 @@ const APP_STATE = {
     // Hodan needs a room of her own, or she is holding nothing and the board gives
     // her no column — and a column is what a room is dropped on.
     { id: 'su301', unit: '301', type: 'building', freq: 'daily', lastCleaned: DAY_BEFORE, assignedTo: 'p2' },
-    { id: 'su406', unit: '406', type: 'airbnb', freq: 'daily', preferLate: true, lastCleaned: DAY_BEFORE },
+    // ALREADY IN SOMEBODY'S HANDS. An unhanded guest flat is not on the morning board
+    // at all — the flats are given out by a person after the offices, and nothing the
+    // app does puts one there (see tvJobsByPerson). A flat only reaches a column once
+    // somebody has been given it, which is the state this test needs: the drag it is
+    // about is moving a chip that is already on the board from one column to another.
+    { id: 'su406', unit: '406', type: 'airbnb', freq: 'daily', preferLate: true, lastCleaned: DAY_BEFORE, assignedTo: 'p1' },
     { id: 'su506', unit: '506', type: 'airbnb', freq: 'daily', preferLate: true, lastCleaned: DAY_BEFORE },
   ],
   areas: [{ id: 'corridors', label: 'Corridors', kind: 'interior', freq: 'daily', assignedTo: 'p1' }],
-  completions: {}, assignConfirmed: {}, manualArrivals: {}, floors: 11,
+  // ...and stamped as THIS round's decision, or clearStaleHandouts takes the name off
+  // again before the board is drawn: a name with no stamp is last round's leftover.
+  completions: {}, assignConfirmed: { su406: WORK_TODAY }, manualArrivals: {}, floors: 11,
   rollCallTypes: ['office', 'building'],   // as in the building: Airbnb is its own job
 };
 const EVENTS = [
