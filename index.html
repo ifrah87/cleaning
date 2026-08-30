@@ -11825,14 +11825,25 @@ function tvColumns() {
   const pairMates = (p) => {
     const c = crewOf(p);
     if (!c) return null;
-    const mates = cleaningStaff().filter((x) => crewOf(x) === c && worksToday(x) && tvHere(x));
+    const mates = cleaningStaff().filter((x) => crewOf(x) === c && onDutyToday(x) && tvHere(x));
     if (mates.length < 2 || mates.some((x) => x.isLeader)) return null;
     return mates.sort((a, b) => String(tvArrival(b) ? 0 : 1).localeCompare(String(tvArrival(a) ? 0 : 1))
       || String(a.name).localeCompare(String(b.name)));
   };
 
   const seen = {};
-  cleaningStaff().filter((p) => worksToday(p) && (tvOnTeam(p) || tvOutside(p)) && !tvNamedElsewhere(p, spare)).forEach((p) => {
+  // IN IS IN, WHATEVER THE ROTA SAYS. This asked worksToday — the rota alone — while
+  // every other part of the app asks onDutyToday, which is "rostered on OR actually
+  // badged in". The strip along the top has always used the looser rule, and so does
+  // heldBy, the thing that decides whose column a job sits in. So somebody who turned up
+  // on a day the rota has them off appeared as a chip saying they were here, their work
+  // fell into NOBODY YET because the board would not name them, and there was no column
+  // to hand them anything on: present on the screen, absent from the board.
+  //
+  // Ahmed Daahir is the case that showed it — rostered off Sundays, and on a Sunday the
+  // board has nowhere to put him even if he walks in. A rota says who is EXPECTED; a
+  // scan says who is THERE, and the wall is about who is there.
+  cleaningStaff().filter((p) => onDutyToday(p) && (tvOnTeam(p) || tvOutside(p)) && !tvNamedElsewhere(p, spare)).forEach((p) => {
     const pair = pairMates(p);
     if (pair && pair[0].id !== p.id) { seen[p.id] = true; return; }   // their mate carries the column
     seen[p.id] = true;
