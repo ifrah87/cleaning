@@ -715,7 +715,17 @@
   .tv-at.gone { color: var(--tv-muted); opacity: 0.9; }
   .tv-chip .st { font-size: 0.85vw; font-weight: 700; opacity: 0.85; margin-left: 0.5vw; font-variant-numeric: tabular-nums; }
 
-  .tv-cols { --tvs: 1; flex: 1; display: grid; gap: calc(1.2vw * var(--tvs)); grid-auto-rows: minmax(0, 1fr); }
+  /* THE BOARD CANNOT BE TALLER THAN THE TELEVISION. flex:1 shares out what is left,
+     but a flex item's default min-height is `auto` — it will not shrink below its own
+     content — so a tall column simply grew, and .tv-wrap's overflow:hidden cut the
+     result off at the bottom of the screen without a mark to say it had. With twelve
+     guest flats stacked in NOBODY YET the rows came to 985px against 760px of room and
+     the whole second row of the board hung 225px below the panel: four cleaners, and
+     the remote's own key legend, off the wall and unreachable. min-height:0 lets the
+     grid be given the height that actually exists; grid-auto-rows then divides it, and
+     a column with too much in it clips itself (.tv-col is overflow:hidden) rather than
+     shoving everybody beneath it off the television. */
+  .tv-cols { --tvs: 1; flex: 1; min-height: 0; display: grid; gap: calc(1.2vw * var(--tvs)); grid-auto-rows: minmax(0, 1fr); }
   /* overflow hidden as a backstop: type is sized to fit, but a freak name or a
      column with ten rooms in it must clip inside its own card rather than spill
      down the screen and take the row below with it. */
