@@ -4620,8 +4620,20 @@ async function syncFromHik() {
     const persons = data.persons || [];
     if (!Array.isArray(state.staff)) state.staff = [];
     const defaultCrew = (getTeams()[0] && getTeams()[0].name) || 'Team A';
-    let added = 0, matched = 0;
+    // SOMEBODY TAKEN OFF THE ROSTER STAYS OFF IT. This adds anyone the door reader knows
+    // who is not already on the list, and it had never heard of removedStaff — the
+    // tombstone removeEmployee writes, which the sync between devices has always
+    // honoured. So the one thing that could undo a removal was the button next to it:
+    // a leaver's badge still exists at the door for weeks, and the next roster sync put
+    // them back as a brand-new cleaner on the first team, ready to be dealt rooms. The
+    // office would have removed them and watched them reappear with work.
+    //
+    // Skipped rather than re-added, and SAID so on the sync line — a person quietly
+    // missing from an import is the next question after this one.
+    const gone = state.removedStaff || {};
+    let added = 0, matched = 0, archived = 0;
     for (const p of persons) {
+      if (gone['p' + p.personId]) { archived++; continue; }
       // Match existing staff by Hik id, then badge code, then name — so re-syncs don't duplicate.
       const s = state.staff.find((x) => x.hikPersonId && x.hikPersonId === p.personId)
         || state.staff.find((x) => x.hikCode && p.personCode && x.hikCode === p.personCode)
@@ -4644,7 +4656,9 @@ async function syncFromHik() {
     save();
     await loadHikArrivals();
     const arr = Object.keys(hikArrivals).length;
-    hikSyncMsg = { text: `Synced ${persons.length} staff — ${added} added, ${matched} matched. ${arr} badged in today${hikUnknown.length ? `, ${hikUnknown.length} unknown` : ''}.` };
+    hikSyncMsg = { text: `Synced ${persons.length} staff — ${added} added, ${matched} matched`
+      + `${archived ? `, ${archived} left off (removed from the roster)` : ''}. `
+      + `${arr} badged in today${hikUnknown.length ? `, ${hikUnknown.length} unknown` : ''}.` };
     render();
   } catch (e) {
     hikSyncMsg = { err: true, text: 'Sync failed: ' + ((e && e.message) || e) };
