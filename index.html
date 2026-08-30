@@ -2093,7 +2093,23 @@ function applyRemote(saved) {
   // and then deleted by somebody else's snapshot, which is why it never reached the
   // roll call. Days the incoming copy has are still its business; days it has never
   // heard of are kept and pushed back rather than dropped on the floor.
-  const localPlans = state.plans || {};
+  // A DISPLAY HAS NOTHING TO RESCUE. Everything from here down exists to protect an edit
+  // made on THIS device that the server has not got yet — a room added by hand, a day
+  // arranged this minute, a tick — so a pull cannot drop it on the floor before it is
+  // delivered. The board never delivers: remotePush returns early on TV_MODE, and the
+  // two lines at the end of this function already know it, declining to markDirty or
+  // push whatever was rescued here.
+  //
+  // So on the wall the rescue is not protection, it is a leak. An entry the server does
+  // not have is not "not yet delivered", it is STALE — and rescuing it re-inserts it on
+  // every pull, fifteen seconds apart, for ever. Four rooms the office had taken off
+  // today's plan (305, 803, 702, 704 — a Mon/Wed/Sat set, on a Sunday) sat on the
+  // television all day doing exactly that: the desk showed twenty-nine jobs, the wall
+  // showed thirty-three, and nothing anybody did on the desk could shift them, because
+  // the wall put them straight back from its own copy every time it looked.
+  //
+  // The server is the truth for a screen that only reads. Nothing local is kept.
+  const localPlans = TV_MODE ? {} : (state.plans || {});
   const mergedPlans = { ...(saved.plans || {}) };
   let rescued = 0;
   Object.keys(localPlans).forEach((d) => {
@@ -2121,7 +2137,7 @@ function applyRemote(saved) {
   // A DAY ARRANGED BY HAND HERE, MORE RECENTLY THAN THERE, STAYS. Same rule the rooms
   // have. Without it a balanced morning could be undone a minute after it was made by
   // any device that still held the old one — which is exactly what happened on 24 Aug.
-  const localEdited = state.planEdited || {};
+  const localEdited = TV_MODE ? {} : (state.planEdited || {});
   const mergedEdited = { ...(saved.planEdited || {}) };
   Object.keys(localEdited).forEach((d) => {
     const mine = localEdited[d], theirs = mergedEdited[d];
@@ -2141,7 +2157,8 @@ function applyRemote(saved) {
   let unitsKept = 0, mergedUnits = remoteUnits;
   if (remoteUnits) {
     const haveId = new Set(remoteUnits.map((u) => u.id));
-    const extra = (state.servicedUnits || []).filter((u) => u && !haveId.has(u.id) && !gone[u.id]);
+    const extra = TV_MODE ? []
+      : (state.servicedUnits || []).filter((u) => u && !haveId.has(u.id) && !gone[u.id]);
     mergedUnits = remoteUnits.concat(extra);
     unitsKept = extra.length;
     // A tombstone has to bite in BOTH directions, or a delete simply travels back
@@ -2233,7 +2250,8 @@ function applyRemote(saved) {
     // a real building's board and being dealt real rooms. A person added here carries
     // the moment they were added (addEmployee stamps it); the seeded crew carries
     // nothing, and nothing is what it is worth.
-    const extraP = (state.staff || []).filter((x) => x && x.editedAt && !haveStaff.has(x.id) && !goneStaff[x.id]);
+    const extraP = TV_MODE ? []
+      : (state.staff || []).filter((x) => x && x.editedAt && !haveStaff.has(x.id) && !goneStaff[x.id]);
     mergedStaff = mergedStaff.concat(extraP);
     staffKept = extraP.length;
     const beforeP = mergedStaff.length;
@@ -2252,7 +2270,10 @@ function applyRemote(saved) {
       // back. Every edit somebody makes carries the moment it was made (stampUnitEdit),
       // so a copy that predates an edit can no longer undo it. Untouched rooms are
       // unaffected: with no stamp on either side this changes nothing.
-      if (mine.editedAt && (!u.editedAt || String(mine.editedAt) > String(u.editedAt))) {
+      // ...and not on the wall, which has no hand edits of its own to defend. See the
+      // note at the top of the merge: a stamp the board is carrying is one it read from
+      // the server at some point and has been re-applying over the top ever since.
+      if (!TV_MODE && mine.editedAt && (!u.editedAt || String(mine.editedAt) > String(u.editedAt))) {
         u = { ...u,
           unit: mine.unit, guest: mine.guest, note: mine.note, type: mine.type,
           freq: mine.freq, days: mine.days || null, daysAuto: mine.daysAuto,
@@ -2273,7 +2294,7 @@ function applyRemote(saved) {
     });
   }
 
-  const localSeeded = state.planSeeded || {};
+  const localSeeded = TV_MODE ? {} : (state.planSeeded || {});
   const mergedSeeded = { ...(saved.planSeeded || {}) };
   Object.keys(localSeeded).forEach((d) => { if (mergedPlans[d]) mergedSeeded[d] = mergedSeeded[d] || localSeeded[d]; });
 

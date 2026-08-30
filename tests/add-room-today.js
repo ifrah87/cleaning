@@ -168,6 +168,37 @@ const todayChips = (page) => page.locator('.body > div', { has: page.locator('.s
     'still not ticked');
 
   // --- the TV reads it back ---------------------------------------------------
+  // THE WALL READS THE SERVER, NOT THIS BROWSER. The television is a different device
+  // in a different room with its own storage; the only path from "added on a phone" to
+  // "on the wall" is the push. This opened the TV a fixed three seconds later and
+  // passed on whichever came first — and for a while it passed for the wrong reason,
+  // because the board used to keep whatever its own copy held whether the server had it
+  // or not. That rescue is what left four stale rooms on the real wall for a whole day,
+  // re-inserted every fifteen seconds, so it is gone; a display keeps nothing of its
+  // own. Which means this has to wait for the round trip it is actually about.
+  // Not merely "the room exists on the server" — the thing under test is that it was put
+  // ON TODAY, which is a stamp (rollCallOn) written by the taps above. Both rooms carry
+  // one: A1 is a guest flat, off the roll call by kind, and Suite 9 is a weekly room
+  // that is not due. Waiting for the rooms alone let the wall be asked before either
+  // stamp had travelled, which is a race the old rescue used to hide.
+  const stamped = () => {
+    const us = (APP_STATE.servicedUnits || []);
+    // Two different stamps, because the two rooms are on today for two different
+    // reasons: a kind that is off the roll call is put on it for the day (rollCallOn),
+    // and a room whose own schedule does not land today is given an extra clean
+    // (alsoCleanOn). Either one is "the office put this on today".
+    const on = (n) => {
+      const u = us.find((x) => x.unit === n) || {};
+      return u.rollCallOn === WORK_TODAY || u.alsoCleanOn === WORK_TODAY;
+    };
+    return on('A1') && on('Suite 9');
+  };
+  for (let i = 0; i < 80 && !stamped(); i += 1) await page.waitForTimeout(250);
+  check('both rooms reached the server, which is the only way the wall can see them',
+    stamped(), 'never pushed: ' + JSON.stringify((APP_STATE.servicedUnits || [])
+      .filter((u) => u.unit === 'A1' || u.unit === 'Suite 9')
+      .map((u) => u.unit + '=' + (u.rollCallOn || u.alsoCleanOn || 'no stamp'))));
+
   const tv = await ctx.newPage();
   const tvErrs = [];
   tv.on('pageerror', (e) => tvErrs.push('pageerror: ' + e.message));
