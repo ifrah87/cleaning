@@ -12449,6 +12449,9 @@ function renderTV() {
   }
 
   app.appendChild(wrap);
+  // Measured only once it is on the page — a card's height is not knowable before it
+  // has been laid out, which is the whole reason the row-count guess could be wrong.
+  tvFitColumns(grid);
 }
 
 // No hands on this screen, so the board has to keep itself alive: redraw on a
@@ -12481,6 +12484,31 @@ function startBuildWatch() {
   };
   check();
   setInterval(check, 3 * 60 * 1000);
+}
+
+// A CARD THAT CANNOT SHOW ITS OWN WORK IS NOT A BOARD. The type is scaled by how many
+// ROWS the columns are stacked into — which is a guess at how much they hold, and the
+// guess broke the moment a card carried seven jobs and a COMMUNAL heading under them:
+// .tv-col is overflow:hidden, so the bottom of the busiest card was quietly sliced off
+// and the last jobs on it could not be read from the room. (Before min-height:0 the
+// same overflow pushed whole ROWS off the panel instead; this is the other half of
+// that fix — the board now fits the screen, and the cards now fit the board.)
+//
+// A row count cannot know how full a card is; only the laid-out page does. So the page
+// is measured and the type stepped down until nothing is cut. A handful of reflows on a
+// screen that redraws every twenty seconds and is read from across an office.
+function tvFitColumns(grid) {
+  if (!grid) return;
+  const cols = [].slice.call(grid.querySelectorAll('.tv-col'));
+  if (!cols.length) return;
+  const clipped = () => cols.some((c) => c.scrollHeight > c.clientHeight + 1);
+  let s = parseFloat(grid.style.getPropertyValue('--tvs')) || 1;
+  // Floor of 0.28: past that a name stops reading from the far side of the office, and
+  // a board nobody can read is not an improvement on one that is cut off.
+  for (let i = 0; i < 16 && s > 0.28 && clipped(); i += 1) {
+    s = Math.round((s - 0.04) * 100) / 100;
+    grid.style.setProperty('--tvs', String(s));
+  }
 }
 
 function startTVLoop() {
@@ -12519,7 +12547,16 @@ function startTVLoop() {
   // into a reload loop faster than somebody can revert it.
   let _builtAt = null;
   const checkBuild = () => {
-    fetch(location.href, { method: 'HEAD', cache: 'no-store' })
+    // ...AND THE ASK HAS TO REACH THE SERVER. cache:'no-store' empties the BROWSER's
+    // cache of this URL and nothing else. The site sits behind a CDN, and the origin
+    // labels this page `s-maxage=86400` — a shared cache may answer for it, without
+    // asking, for a DAY. So the board asked whether the build had changed and the edge
+    // told it no, out of a copy from yesterday, every three minutes for as long as that
+    // copy lived. The wall carried on running week-old code while the desk it sits
+    // twenty feet from picked up every deploy, because the desk's own check (see
+    // startBuildWatch) has always carried a unique query and this one never did.
+    // A query the edge has not seen is a URL the edge has not got: it goes to origin.
+    fetch(location.pathname + '?tvbc=' + Date.now(), { method: 'HEAD', cache: 'no-store' })
       .then((r) => {
         const stamp = r.headers.get('last-modified') || r.headers.get('etag');
         if (!stamp) return;                       // nothing to compare - leave it alone
