@@ -2360,6 +2360,39 @@ function applyRemote(saved) {
   if (mergedUnits) state.servicedUnits = mergedUnits;
   if (mergedStaff) { state.staff = mergedStaff; STAFF = state.staff; }
   state.removedStaff = goneStaff;
+  // A NAME THAT IS GONE CANNOT STILL BE HOLDING WORK. removeEmployee hands back
+  // everything that was theirs at the moment it removes them, and the tombstone keeps
+  // them off the roster for good — but nothing scrubbed the REFERENCES, and a reference
+  // is what a device carrying an older copy pushes back. Abdiwakiil was archived on the
+  // Sunday; overnight a stale copy arrived and his room ties, his rooms, his communal
+  // walk and seventy-three plan jobs all came back, pointing at a person the roster no
+  // longer has. Work against a name nobody can see is worse than work against nobody:
+  // it is on no column, it is in no NOBODY YET box, and the morning simply does not
+  // contain it. Two rooms went uncleaned that Monday for exactly that reason.
+  //
+  // So the tombstone is enforced everywhere the name can appear, on every pull, and the
+  // work falls back into the nobody box where somebody can see it and give it out.
+  const dropGone = (id) => !!(id && goneStaff[id]);
+  let orphans = 0;
+  (state.servicedUnits || []).forEach((u) => {
+    if (dropGone(u.assignedTo)) { u.assignedTo = null; orphans += 1; }
+    if (dropGone(u.usualTo)) { u.usualTo = null; orphans += 1; }
+  });
+  (state.areas || []).forEach((a) => {
+    if (dropGone(a.assignedTo)) { a.assignedTo = null; orphans += 1; }
+    if (Array.isArray(a.assignedWith) && a.assignedWith.some(dropGone)) {
+      a.assignedWith = a.assignedWith.filter((x) => !dropGone(x));
+      if (!a.assignedWith.length) a.assignedWith = null;
+      orphans += 1;
+    }
+  });
+  Object.keys(state.plans || {}).forEach((day) => {
+    Object.values(state.plans[day] || {}).forEach((j) => {
+      if (j && dropGone(j.assignedTo)) { j.assignedTo = null; delete j.byHand; orphans += 1; }
+    });
+  });
+  // Ours to deliver: the server is still carrying the orphans until somebody says so.
+  if (orphans && !TV_MODE) markDirty();
   if ((rescued || unitsKept || areasKept || ticksKept || staffKept) && !TV_MODE) markDirty();   // ours to deliver — the server has not got these
   if (state.coverageDay !== todayKey()) { state.coverage = {}; state.unitCover = {}; state.pendingCover = null; state.coverageDay = todayKey(); }
   finalizeState();
@@ -13068,7 +13101,15 @@ function evenOutEarlyRooms() {
   const staffById = {};
   (state.staff || []).forEach((p) => { staffById[p.id] = p; });
   // Only people who could actually take one: on the crew, here, and cleared for the kind.
-  const takers = cleaningStaff().filter((p) => p.isLeader && !isAway(p.id) && worksToday(p));
+  // ...AND IN THE HAND-OUT AT ALL. This asked for leaders who are in and nothing else, so
+  // somebody marked "rooms by hand only" was a taker like anybody else — and because
+  // noAuto means they are carrying nothing, they were always the lightest person in the
+  // table and every spare early room went to them. Ahmed Daahir is off the automatic
+  // hand-out precisely so the app never gives him rooms, and this pass gave him two on a
+  // Monday he had otherwise been left out of. takesRooms is the same test the morning
+  // deal and the planner use; it belongs here too.
+  const takers = cleaningStaff().filter((p) => p.isLeader && takesRooms(p)
+    && !isAway(p.id) && worksToday(p));
   if (takers.length < 2) return { moved: 0 };
 
   const early = todaysRoomList().filter((u) => timeSlot(u) === 'early' && !cleanedToday(u));
@@ -13088,7 +13129,17 @@ function evenOutEarlyRooms() {
     const under = Object.keys(load).filter((id) => load[id] < cap)
       .sort((a, b) => load[a] - load[b] || String(staffById[a].name).localeCompare(String(staffById[b].name)))[0];
     if (under === undefined) break;                          // everybody is at the cap already
-    const room = early.find((u) => u.assignedTo === over && !moves.some((m) => m.u.id === u.id)
+    // A TIED ROOM IS NOT SPARE CAPACITY. Everywhere else a pin is absolute — freeToMove
+    // requires !u.usualTo, mayBeTakenFrom refuses outright, the plan will not deal one
+    // away — because a pin is the office saying THIS person cleans THIS room, and a room
+    // that moves every time the morning is uneven is not tied to anybody. This pass never
+    // asked, so it undid the ties nightly: 1102 was tied to Hassan and handed to Mahamed
+    // Nur on the first morning it existed, and 503 and 803 came off their own people too.
+    // The cap is a rule of thumb; a pin is an instruction, and the instruction wins. The
+    // cost is that a morning whose pins fall unevenly stays uneven — the same price the
+    // hand-out already pays, and the office fixes it by re-pinning.
+    const room = early.find((u) => u.assignedTo === over && !u.usualTo
+      && !moves.some((m) => m.u.id === u.id)
       && canCleanUnit(staffById[under], u));
     if (!room) break;                                        // nothing of theirs the other may clean
     moves.push({ u: room, from: over, to: under });

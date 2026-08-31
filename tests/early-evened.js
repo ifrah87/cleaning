@@ -31,14 +31,24 @@ const DAY_BEFORE = (() => { const d = new Date(); d.setDate(d.getDate() - (d.get
 
 const SESSION = { access_token: 't', token_type: 'bearer', expires_in: 3600, expires_at: Math.floor(Date.now() / 1000) + 3600, refresh_token: 'r', user: { id: 'u1', email: 'a@b.c', aud: 'authenticated', role: 'authenticated' } };
 const L = (id, name, crew, floors, hik) => ({ id, name, crew, isCleaner: true, isLeader: true, floors, hikPersonId: hik });
-// Four early rooms all pinned to one person — the shape the office actually has.
-const R = (id, unit, who) => ({ id, unit, type: 'office', freq: 'daily', lastCleaned: DAY_BEFORE,
-  preferEarly: true, usualTo: who, assignedTo: who });
+// Four early rooms on one person. TWO OF THEM TIED, TWO NOT — because the pass has two
+// jobs and the old fixture could only see one of them. It pinned all four and then
+// expected two to be moved, which cannot both be true: a tie is the office saying THIS
+// person cleans THIS room, and the hand-out already refuses to break one ("the early cap
+// is not checked here on purpose... a rule of thumb does not overrule that"). With every
+// room tied, "nobody holds more than the cap" was asking the pass to undo the ties, and
+// it obliged — 1102 was handed to somebody else on the first morning it existed. The
+// pins-intact check missed it because it looked at whether usualTo still had a value,
+// not at whether the room had moved. So: two tied rooms that must not budge, two loose
+// ones that must, and a check that a tied room is still with its own person.
+const R = (id, unit, who, tied) => ({ id, unit, type: 'office', freq: 'daily', lastCleaned: DAY_BEFORE,
+  preferEarly: true, usualTo: tied ? who : null, assignedTo: who });
 const APP_STATE = {
   staff: [L('p1', 'Amina Yusuf', 'Team A', [4], 'h1'), L('p2', 'Hodan Omar', 'Team B', [3], 'h2'),
           L('p3', 'Sofia Reyes', 'Team C', [2], 'h3')],
   servicedUnits: [
-    R('su401', '401', 'p1'), R('su402', '402', 'p1'), R('su403', '403', 'p1'), R('su404', '404', 'p1'),
+    R('su401', '401', 'p1', true), R('su402', '402', 'p1', true),
+    R('su403', '403', 'p1', false), R('su404', '404', 'p1', false),
     { id: 'su301', unit: '301', type: 'office', freq: 'daily', lastCleaned: DAY_BEFORE, assignedTo: 'p2' },
   ],
   areas: [], completions: {}, assignConfirmed: {}, manualArrivals: {}, floors: 11,
@@ -108,6 +118,16 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
 
   console.log('\n\x1b[1mThe early round is levelled once, at the start of the day\x1b[0m');
 
+  // The pass moves the rooms in memory and says what it moved in state.lastEarlyEven —
+  // which is not a setting and not device state, so it only survives a pull once it has
+  // been pushed. Asking three seconds in caught it mid-round trip. Wait for the sentence
+  // to exist rather than for a fixed number of seconds.
+  for (let i = 0; i < 40; i += 1) {
+    const said = await page.evaluate(() => ((state.lastEarlyEven || {}).moves || []).length);
+    if (said) break;
+    await page.waitForTimeout(250);
+  }
+
   const after = await page.evaluate(() => {
     const nm = {}; (state.staff || []).forEach((p) => { nm[p.id] = p.name; });
     const load = {};
@@ -118,6 +138,9 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
     return { load, cap: earlyCap(), stamped: state.earlyEvenedOn === workToday(),
              said: (state.lastEarlyEven || {}).moves || [],
              pinsIntact: state.servicedUnits.filter((u) => u.usualTo === 'p1').map((u) => u.unit).sort(),
+             tiedStillHers: state.servicedUnits.filter((u) => u.usualTo === 'p1' && u.assignedTo === 'p1')
+               .map((u) => u.unit).sort(),
+             where: state.servicedUnits.map((u) => u.unit + ':' + (nm[u.assignedTo] || '-') + (u.usualTo ? '(tied)' : '')),
              decided: state.servicedUnits.filter((u) => (state.assignConfirmed || {})[u.id]).map((u) => u.unit).sort() };
   });
 
@@ -125,11 +148,45 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
   check('nobody is left holding more than the cap', worst <= after.cap, JSON.stringify(after.load));
   check('and the early rooms are spread, not stacked',
     Object.keys(after.load).length >= 2, JSON.stringify(after.load));
-  check('it says what it moved', after.said.length > 0, JSON.stringify(after.said));
+  // ...AND THE PASS ITSELF, DRIVEN ON PURPOSE. Asserting this off the boot state was
+  // asking the wrong component: the planner deals the loose rooms out before anybody
+  // badges in, so by the time the early pass runs there is nothing left over the cap and
+  // it correctly does nothing. That is the right OUTCOME and a useless test of the pass.
+  // So: pile three loose early rooms back onto one person, clear the once-a-day stamp,
+  // and watch what evenOutEarlyRooms does with them.
+  const driven = await page.evaluate(() => {
+    ['403', '404'].forEach((n) => {
+      const u = state.servicedUnits.find((x) => x.unit === n);
+      u.assignedTo = 'p1';
+    });
+    delete state.earlyEvenedOn;
+    const r = evenOutEarlyRooms();
+    const nm = {}; (state.staff || []).forEach((p) => { nm[p.id] = p.name; });
+    return {
+      moved: r.moved || ((state.lastEarlyEven || {}).moves || []).length,
+      said: (state.lastEarlyEven || {}).moves || [],
+      tied: state.servicedUnits.filter((u) => u.usualTo === 'p1')
+        .map((u) => u.unit + ':' + (nm[u.assignedTo] || '-')).sort(),
+      decided: state.servicedUnits.filter((u) => (state.assignConfirmed || {})[u.id])
+        .map((u) => u.unit).sort(),
+    };
+  });
+  check('driven at an uneven morning, it moves the loose rooms', driven.said.length > 0,
+    JSON.stringify(driven));
+  check('it says what it moved, out loud on the morning screen',
+    driven.said.every((m) => m.unit && m.from && m.to), JSON.stringify(driven.said));
+  check('it will not touch the tied ones to do it',
+    JSON.stringify(driven.tied) === JSON.stringify(['401:Amina Yusuf', '402:Amina Yusuf']),
+    JSON.stringify(driven.tied));
   check('every move is a decision, so the day cannot re-deal it',
-    after.decided.length >= after.said.length, JSON.stringify(after.decided));
-  check('the pins are untouched — they are standing instructions',
-    JSON.stringify(after.pinsIntact) === JSON.stringify(['401', '402', '403', '404']), JSON.stringify(after.pinsIntact));
+    driven.said.every((m) => driven.decided.includes(String(m.unit))), JSON.stringify(driven));
+  check('the ties still exist',
+    JSON.stringify(after.pinsIntact) === JSON.stringify(['401', '402']), JSON.stringify(after.pinsIntact));
+  // The one that matters: a tie is only a standing instruction if the ROOM stayed put.
+  // Checking that usualTo still holds a value proves nothing — the pass never cleared it
+  // while it was moving the room out from under it.
+  check('and a tied room is still with the person it is tied to',
+    JSON.stringify(after.tiedStillHers) === JSON.stringify(['401', '402']), JSON.stringify(after.tiedStillHers));
 
   // ...and once only. Move something by hand, run the pass again, nothing stirs.
   const again = await page.evaluate(() => {
