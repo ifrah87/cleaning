@@ -108,6 +108,37 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
   check('an area the office added is still there', (r.areas || []).includes('OFFSITE- 2 DHAGAX'), (r.areas || []).join(', '));
   check('an area the office deleted does not come back', !(r.areas || []).includes('Main Lobby/Office'), (r.areas || []).join(', '));
   check('and the deletion is recorded so it keeps biting', (r.tombstoned || []).includes('lobby'), JSON.stringify(r.tombstoned));
+
+  // --- A TIE IS AN EDIT TOO ----------------------------------------------------
+  // Tying a room to a cleaner is the strongest instruction the office can give: every
+  // deal, every levelling pass and the plan itself refuse to move a tied room. It was
+  // also, until now, the ONE thing on a room with no defence in the sync — setUnitAssignee
+  // never stamped it, and usualTo was not among the fields a newer copy protects, so
+  // whatever another device happened to be carrying won on the next pull. Three rooms
+  // tied on a Sunday evening came back on the Monday tied to a man archived the night
+  // before, and it read as the rota drifting rather than as a copy winning an argument.
+  const tie = await page.evaluate((stale) => {
+    const u = state.servicedUnits.find((x) => x.unit === '401');
+    const before = u.editedAt || null;
+    setUnitAssignee(u.id, 'p1', true);                 // tie it, on this device
+    const tied = state.servicedUnits.find((x) => x.unit === '401');
+    const stamped = tied.editedAt && tied.editedAt !== before;
+    localStorage.removeItem('cleaning_app_v5_dirty');   // the server has it; nothing owed
+    // ...and a copy that never saw the tie arrives from somewhere else.
+    applyRemote(stale);
+    const after = state.servicedUnits.find((x) => x.unit === '401');
+    return { stamped: !!stamped, usualTo: after.usualTo || null };
+  }, {
+    ...APP_STATE, _fromAnotherDevice: 1,
+    // The copy that arrives is not merely missing the tie — it carries the OLD one, which
+    // is what a phone that has not looked since breakfast actually holds, and what put
+    // an archived cleaner's name back on three rooms. A copy that lacks the field
+    // entirely proves nothing: it cannot lose an argument it is not having.
+    servicedUnits: APP_STATE.servicedUnits.map((u) => ({ ...u, usualTo: 'pOLD' })),
+  }).catch((e) => ({ error: String(e) }));
+
+  check('tying a room stamps it, like every other edit', tie.stamped, JSON.stringify(tie));
+  check('and a copy carrying the OLD tie cannot put it back', tie.usualTo === 'p1', JSON.stringify(tie));
   // --- a morning arranged by hand is not undone by an older copy --------------------
   const plan = await page.evaluate((stale) => {
     const day = workToday();
