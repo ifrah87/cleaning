@@ -1861,6 +1861,23 @@ let _pushTimer = null;
 let _retryTimer = null;
 let _retryDelay = 0;
 let _pushing = false;
+// THE VERSION OF THE BOARD THIS DEVICE IS WORKING FROM.
+// Every save sends the WHOLE board, and the server took whatever arrived. So a device
+// holding an old copy — a phone left open overnight, a laptop that slept — overwrote
+// everybody's work the moment somebody touched it, silently and with no way to tell
+// afterwards. That is how an archived cleaner's name came back onto three rooms and
+// seventy-three planned days: not a bug in the removal, a copy from before it winning
+// an argument nobody knew was happening.
+//
+// The row carries updated_at. Remember the value we last SAW, and make the write
+// conditional on it still being that value: if the server has moved on, our write
+// matches no row and is refused rather than landing on top. Refused is not the end of
+// it — see pushNow, which then pulls, merges our own stamped edits onto what arrived,
+// and tries again. Only if that cannot be made to work does anybody see a warning.
+let _serverStamp = null;
+// Remembering what we saw. Called from the pull and from the realtime socket, because
+// both are the server telling us where it has got to.
+function noteServerStamp(v) { if (v) _serverStamp = String(v); }
 
 const DIRTY_SINCE = DIRTY_KEY + '_since';
 function isDirty() { try { return localStorage.getItem(DIRTY_KEY) === '1'; } catch (e) { return false; } }
@@ -1933,17 +1950,69 @@ async function pushNow() {
   clearTimeout(_pushTimer);    // a pending debounce is now redundant
   clearTimeout(_retryTimer);
   _pushing = true;
-  const snapshot = JSON.stringify(sharedState());   // this device's screen stays on it
   try {
-    const { error } = await db.from('app_state')
-      .upsert({ building: BUILDING, data: JSON.parse(snapshot), updated_at: new Date().toISOString() });
-    if (error) throw error;
-    _lastRemoteJSON = snapshot;   // only now is it genuinely our own write echoing back
-    stampSynced();                // so an offline session can say how old the board is
-    clearDirty();
-    _retryDelay = 0;
-    hideStorageWarn();
-    return true;
+    // A WRITE IS AGAINST THE VERSION WE READ, NOT AGAINST WHATEVER IS THERE NOW.
+    // Up to two goes: if the server has moved since we last saw it our write matches no
+    // row, and rather than forcing it we take what is there, merge our own stamped edits
+    // onto it (applyRemote is exactly that merge — newest hand edit wins, ticks unioned,
+    // tombstones honoured) and try once more against the new version. Two is enough for
+    // the case this exists for, which is one other device having written while we were
+    // composing; a genuine storm of writers is somebody's finger on a screen, and the
+    // warning below is the honest answer to it.
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const snapshot = JSON.stringify(sharedState());   // this device's screen stays on it
+      const stamp = new Date().toISOString();
+      let landed = false;
+      if (_serverStamp) {
+        const { data, error } = await db.from('app_state')
+          .update({ data: JSON.parse(snapshot), updated_at: stamp })
+          .eq('building', BUILDING)
+          .eq('updated_at', _serverStamp)          // ...and only if nobody moved it
+          .select('updated_at');
+        if (error) throw error;
+        landed = Array.isArray(data) && data.length > 0;
+      } else {
+        // Never read the row — a building being set up for the first time. There is no
+        // version to be careful about, so the original upsert stands. Every other path
+        // has been through a pull, because pushNow refuses an unsynced starter board.
+        const { error } = await db.from('app_state')
+          .upsert({ building: BUILDING, data: JSON.parse(snapshot), updated_at: stamp });
+        if (error) throw error;
+        landed = true;
+      }
+      if (landed) {
+        _serverStamp = stamp;         // this is the version we are now working from
+        _lastRemoteJSON = snapshot;   // only now is it genuinely our own write echoing back
+        stampSynced();                // so an offline session can say how old the board is
+        clearDirty();
+        _retryDelay = 0;
+        hideStorageWarn();
+        return true;
+      }
+      // Somebody else wrote while we were composing. Take theirs, put ours back on top.
+      //
+      // Read the row here rather than calling remotePull, which starts by trying to
+      // PUSH whatever is owed — and we are inside that push. Going through it re-enters
+      // this function, is refused for the same reason, recurses, and then returns early
+      // on the dirty flag without ever having read anything, so the version never moves
+      // and the retry cannot succeed. The merge is the part that matters and it is right
+      // here: applyRemote puts our stamped edits back on top of what arrived.
+      const fresh = await db.from('app_state')
+        .select('data, updated_at').eq('building', BUILDING).maybeSingle();
+      if (fresh.error) throw fresh.error;
+      if (!fresh.data || !fresh.data.data) break;   // nothing to merge onto; do not force
+      noteServerStamp(fresh.data.updated_at);
+      applyRemote(fresh.data.data, true);   // a conflict, not an ordinary arrival
+    }
+    // Could not do it safely. What we are holding is still owed and still retried, but
+    // the office is told, because a device quietly failing to save is the whole reason
+    // any of this exists.
+    markDirty();
+    showStorageWarn('Somebody else changed the board while this device was saving, and it '
+      + 'could not merge safely. Nothing has been overwritten. Reload this page to pick up '
+      + 'their version — anything you have just changed here may need doing again.');
+    scheduleRetry();
+    return false;
   } catch (e) {
     markDirty();                  // still ours to deliver
     showStorageWarn('Not saved to the server yet (' + (e.message || e) + '). Retrying — keep this page open.');
@@ -2036,9 +2105,11 @@ async function remotePull() {
     if (isDirty()) return;
   }
   try {
-    const { data, error } = await db.from('app_state').select('data').eq('building', BUILDING).maybeSingle();
+    const { data, error } = await db.from('app_state')
+      .select('data, updated_at').eq('building', BUILDING).maybeSingle();
     if (error) throw error;
     if (data && data.data && Object.keys(data.data).length) {
+      noteServerStamp(data.updated_at);   // the version this device is now working from
       applyRemote(data.data);
       _everSynced = true;      // these people came from the server; this copy is real
       hideStorageWarn();
@@ -2079,11 +2150,18 @@ async function remotePull() {
 }
 
 // Adopt state coming from the server (initial pull or a live update from another device).
-function applyRemote(saved) {
+// `merging` says this is a conflict being resolved rather than an ordinary arrival: our
+// write has just been refused because somebody else moved the row, and the whole point
+// of the next few lines is to take what they wrote and put our own stamped edits back on
+// top of it. Without the flag the guard below would refuse — we are holding something
+// unsent by definition at that moment, which is exactly the case it was written for —
+// and the retry could never make progress. The merge itself is what protects the unsent
+// change; the guard is only there to stop an ordinary broadcast arriving mid-edit.
+function applyRemote(saved, merging) {
   const serialized = JSON.stringify(saved);
   if (serialized === _lastRemoteJSON) return;   // this is our own write echoing back
   // Never discard a change this device has not delivered yet; send ours instead.
-  if (isDirty() && !TV_MODE && dirtyForMs() < DEAF_LIMIT_MS) { pushNow(); return; }
+  if (!merging && isDirty() && !TV_MODE && dirtyForMs() < DEAF_LIMIT_MS) { pushNow(); return; }
   _lastRemoteJSON = serialized;
   const keepTab = state.tab;
   // A DAY THAT ONLY THIS DEVICE HAS SEEN SURVIVES THE PULL.
@@ -2425,7 +2503,15 @@ function subscribeRealtime() {
   _rtChannel = db.channel('app_state_' + BUILDING + '_' + Date.now())
     .on('postgres_changes',
         { event: '*', schema: 'public', table: 'app_state', filter: 'building=eq.' + BUILDING },
-        (payload) => { if (payload.new && payload.new.data) applyRemote(payload.new.data); })
+        (payload) => {
+          if (!payload.new || !payload.new.data) return;
+          // The socket is the server saying where it has got to, so it moves the
+          // baseline exactly as a pull does. Without this a device that had only ever
+          // heard about a change over the socket would push against a version two
+          // writes old and be refused for no reason.
+          noteServerStamp(payload.new.updated_at);
+          applyRemote(payload.new.data);
+        })
     .subscribe((status) => {
       if (status === 'SUBSCRIBED') { _rtRetry = 0; return; }
       if (status === 'CLOSED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
