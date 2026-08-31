@@ -954,6 +954,42 @@ function cleaningStaff() {
 // floors to feed a round they were never meant to have. Communal work still goes to
 // them like anybody else — this is only the room count.
 const takesRooms = (p) => !!p && !noAuto(p);
+
+// ============================================================================
+// ONE ANSWER TO "MAY THE APP PUT THIS ROOM ON THIS PERSON?"
+//
+// This question was being answered in nine places, each remembering a different part of
+// it. autoPlanDay knew about ties and hand-only; assignNewPlanJobs knew about neither;
+// evenOutEarlyRooms knew about neither until this morning; the levelling passes knew
+// about ties but by a different route. So a rule fixed in one place stayed broken in the
+// others, and every few days a room came off the person it was tied to by whichever pass
+// had not been told yet. Four separate bugs this week were the same bug in four rooms.
+//
+// The refusals, and why each is absolute:
+//   · a TIED room goes to its own person or to nobody. It is the strongest instruction
+//     the office can give, and the early cap already yields to it by design — "a rule of
+//     thumb does not overrule that". A pass that cannot place it leaves it in NOBODY YET,
+//     where somebody can see it and give it out, which is the honest outcome.
+//   · ROOMS BY HAND ONLY (noAuto) means what it says. Such a person is carrying nothing
+//     by definition, so any pass that picks "whoever has least" picks them every time —
+//     which is precisely how a man kept off the hand-out was dealt two rooms.
+//   · somebody who is NOT A CLEANER, or is not on the roster at all, cannot hold work.
+//   · somebody ARCHIVED cannot either. Their name still exists in old copies, and a room
+//     against a name with nobody behind it appears on no column at all.
+//   · and nobody is handed a kind of room they are not cleared for.
+//
+// Handing a room to somebody BY HAND is not this function's business: a person deciding
+// outranks all of it, and setUnitAssignee is where that happens.
+function mayGiveRoomTo(u, toId) {
+  if (!u || !toId) return false;
+  if (u.usualTo && u.usualTo !== toId) return false;      // tied elsewhere: not the app's to move
+  if ((state.removedStaff || {})[toId]) return false;     // archived
+  const p = (state.staff || []).find((x) => x.id === toId);
+  if (!p) return false;                                   // not on the roster
+  if (!p.isCleaner) return false;                         // not on the cleaning crew
+  if (noAuto(p)) return false;                            // rooms by hand only
+  return canCleanUnit(p, u);                              // cleared for this kind of room
+}
 function buildUnits() {
   const u = [];
   const floors = (state && state.floors) ? state.floors : DEFAULT_FLOORS;
@@ -3940,7 +3976,12 @@ function applyPlannedAssignments() {
       out[hikArrivals[j.assignedTo] ? 'absent' : 'waiting'] += 1;
       return;
     }
-    if (!canCleanUnit(staffById[j.assignedTo], u)) return;
+    // THE CARRY ASKS THE SAME QUESTION AS THE DEAL. A name reaching the board from a
+    // plan the APP drew is the app placing a room, so it goes through the one rule —
+    // which refuses a room tied to somebody else, an archived name, somebody off the
+    // hand-out and anybody not cleared for the kind. A room the office placed BY HAND is
+    // a different thing entirely and never reaches here: handHeld returns above.
+    if (!mayGiveRoomTo(u, j.assignedTo)) return;
     // A plan drawn up automatically must not put a room on an assistant either — they
     // work the leader's round with them. The room is left for the deal, which hands it
     // to a leader. A room the office assigned by hand is a different thing and is not
@@ -4106,7 +4147,7 @@ function rebalanceNamedRooms(due, inIds) {
       return [keepEarly, belongs];
     };
     const cands = (due || []).filter((u) => u.assignedTo === hi && mayBeTakenFrom(u)
-      && canCleanUnit(staffById[lo], u))
+      && mayGiveRoomTo(u, lo))
       .sort((a, b) => {
         const ra = rank(a), rb = rank(b);
         return (ra[0] - rb[0]) || (ra[1] - rb[1])
@@ -4492,7 +4533,7 @@ function runAutoAssign(rooms, people, inIds, load, slotSeed, silent) {
     u.autoDealtOn = todayKey();
   };
   const ableFor = (u) => {
-    const all = order.filter((id) => canCleanUnit(staffById[id], u) && !overEarly(u, id));
+    const all = order.filter((id) => mayGiveRoomTo(u, id) && !overEarly(u, id));
     const spare = all.filter(underCap);
     return spare.length ? spare : all;      // nobody spare — the room still gets cleaned
   };
@@ -4550,7 +4591,7 @@ function runAutoAssign(rooms, people, inIds, load, slotSeed, silent) {
   let pinnedFirst = 0;
   rooms.forEach((u) => {
     if (u.assignedTo || !u.usualTo) return;
-    if (!inIds.has(u.usualTo) || !canCleanUnit(staffById[u.usualTo], u)) return;
+    if (!inIds.has(u.usualTo) || !mayGiveRoomTo(u, u.usualTo)) return;
     place(u, u.usualTo); pinnedFirst += 1;
   });
   spreadSlot('early');
@@ -4565,7 +4606,7 @@ function runAutoAssign(rooms, people, inIds, load, slotSeed, silent) {
     // The early cap is not checked here on purpose: tying a room to somebody is the
     // office saying THIS person cleans it, and a rule of thumb does not overrule that.
     // It is counted, though, so their next room goes to somebody else.
-    if (!u.assignedTo && u.usualTo && inIds.has(u.usualTo) && canCleanUnit(staffById[u.usualTo], u)) {
+    if (!u.assignedTo && u.usualTo && inIds.has(u.usualTo) && mayGiveRoomTo(u, u.usualTo)) {
       place(u, u.usualTo); kept++;
     }
   });
@@ -4576,7 +4617,7 @@ function runAutoAssign(rooms, people, inIds, load, slotSeed, silent) {
   rooms.forEach((u) => {
     if (u.assignedTo) return;
     const owner = ownerOfFloor(floorOfUnit(u.unit));
-    if (owner && inIds.has(owner.id) && canCleanUnit(owner, u) && underCap(owner.id)
+    if (owner && inIds.has(owner.id) && mayGiveRoomTo(u, owner.id) && underCap(owner.id)
         && !overEarly(u, owner.id)) {
       place(u, owner.id); onFloor++;
     }
@@ -4590,7 +4631,7 @@ function runAutoAssign(rooms, people, inIds, load, slotSeed, silent) {
     const t = teamOfFloor(floorOfUnit(u.unit));
     if (!t) return;
     const allMates = teamMembers(t.name)
-      .filter((p) => inIds.has(p.id) && canCleanUnit(p, u) && !overEarly(u, p.id));
+      .filter((p) => inIds.has(p.id) && mayGiveRoomTo(u, p.id) && !overEarly(u, p.id));
     const spareMates = allMates.filter((p) => underCap(p.id));
     const mates = spareMates.length ? spareMates : allMates;
     if (!mates.length) return;                    // nobody from that team in today who can take it
@@ -4684,7 +4725,7 @@ function runAutoAssign(rooms, people, inIds, load, slotSeed, silent) {
         // floor to a person who already has work of their own.
         if (pass === floorOwned && load[lo] !== 0) continue;
         const cands = rooms.filter((u) => u.assignedTo === hi && pass(u)
-          && canCleanUnit(staffById[lo], u) && !overEarly(u, lo));
+          && mayGiveRoomTo(u, lo) && !overEarly(u, lo));
         // Of the rooms that could move, shift one this person didn't clean last time.
         const move = cands.find((u) => !repeats(lo, u)) || cands[0];
         if (!move) continue;
@@ -6658,7 +6699,7 @@ function autoPlanDay(day) {
   const EARLY_CAP = earlyCap();
   const overEarly = (u, id) => timeSlot(u) === 'early' && (slotLoad.early[id] || 0) >= EARLY_CAP;
   const ableFor = (u) => {
-    const all = order.filter((id) => canCleanUnit(staffById[id], u) && !overEarly(u, id));
+    const all = order.filter((id) => mayGiveRoomTo(u, id) && !overEarly(u, id));
     const spare = all.filter(underCap);
     return spare.length ? spare : all;
   };
@@ -6701,7 +6742,7 @@ function autoPlanDay(day) {
   keys.forEach((k) => {
     const u = roomOf(k);
     if (!u || !u.usualTo || plan[k].assignedTo) return;
-    if (!staffById[u.usualTo] || !canCleanUnit(staffById[u.usualTo], u)) return;
+    if (!staffById[u.usualTo] || !mayGiveRoomTo(u, u.usualTo)) return;
     plan[k].assignedTo = u.usualTo;
     load[u.usualTo] += 1;
     const sl = timeSlot(u);
@@ -6739,7 +6780,7 @@ function autoPlanDay(day) {
     if (!u) return;
     const owner = ownerOfFloor(floorOfUnit(u.unit));
     if (!owner || !staffById[owner.id]) return;                 // not rostered on today
-    if (!canCleanUnit(owner, u) || !underCap(owner.id)) return;
+    if (!mayGiveRoomTo(u, owner.id) || !underCap(owner.id)) return;
     const sl = timeSlot(u);
     if (sl === 'early' && slotLoad.early[owner.id] >= EARLY_CAP) return;
     plan[k].assignedTo = owner.id; load[owner.id] += 1; onFloor += 1;
@@ -6833,7 +6874,7 @@ function autoPlanDay(day) {
         if (load[hi] - load[lo] <= 1) break;
         if (pass === movableFromFloor && load[lo] !== 0) continue;   // empty hands only
         const cands = keys.filter((k) => plan[k].assignedTo === hi && pass(k)
-          && canCleanUnit(staffById[lo], roomOf(k)) && canTake(lo, k));
+          && mayGiveRoomTo(roomOf(k), lo) && canTake(lo, k));
         const move = cands.find((k) => !repeats(lo, roomOf(k))) || cands[0];
         if (!move) continue;
         const ms = timeSlot(roomOf(move));
@@ -7268,14 +7309,14 @@ function assignNewPlanJobs(day, keys, skip) {
     //
     // If their person is not rostered that day the room still has to be cleaned, so it
     // falls through to the count below, exactly as autoPlanDay lets it.
-    if (u.usualTo && staffById[u.usualTo] && canCleanUnit(staffById[u.usualTo], u)) {
+    if (u.usualTo && staffById[u.usualTo] && mayGiveRoomTo(u, u.usualTo)) {
       plan[k].assignedTo = u.usualTo;
       load[u.usualTo] += 1;
       if (slot !== 'any') slotLoad[slot][u.usualTo] += 1;
       return true;
     }
     const pick = order
-      .filter((id) => canCleanUnit(staffById[id], u))
+      .filter((id) => mayGiveRoomTo(u, id))
       .sort((a, b) => (slot !== 'any' ? slotLoad[slot][a] - slotLoad[slot][b] : 0)
         || (load[a] - load[b])
         || ((u.lastCleanedBy === a ? 1 : 0) - (u.lastCleanedBy === b ? 1 : 0))
@@ -13254,9 +13295,9 @@ function evenOutEarlyRooms() {
     // The cap is a rule of thumb; a pin is an instruction, and the instruction wins. The
     // cost is that a morning whose pins fall unevenly stays uneven — the same price the
     // hand-out already pays, and the office fixes it by re-pinning.
-    const room = early.find((u) => u.assignedTo === over && !u.usualTo
+    const room = early.find((u) => u.assignedTo === over
       && !moves.some((m) => m.u.id === u.id)
-      && canCleanUnit(staffById[under], u));
+      && mayGiveRoomTo(u, under));
     if (!room) break;                                        // nothing of theirs the other may clean
     moves.push({ u: room, from: over, to: under });
     load[over] -= 1; load[under] += 1;
