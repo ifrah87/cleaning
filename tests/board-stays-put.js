@@ -118,6 +118,7 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
     return {
       dow, here, elsewhere, before, afterLevel, afterPin,
       u601WasDue, u601Also: u601.alsoCleanOn || null, u601OnBoard: onBoard().indexOf('601') >= 0,
+      due401: dueOnDay(u401, workToday()),
       days401: u401.days, days305: u305.days,
       also401: u401.alsoCleanOn || null, also305: u305.alsoCleanOn || null,
       day: workToday(),
@@ -129,7 +130,18 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
     r.afterLevel.includes('401') && r.afterLevel.includes('204'), 'after: ' + r.afterLevel.join(', '));
   check('and the new pattern is what they actually carry from now on',
     JSON.stringify(r.days401) === JSON.stringify(r.elsewhere), JSON.stringify(r.days401));
-  check('today is kept as the one-off the schedule already understands', r.also401 === r.day, String(r.also401));
+  // ...BY WHICHEVER ROUTE, AND THIS ASKED FOR ONLY ONE OF THEM. The guarantee is that a
+  // room due today does not silently fall off today because its DAYS were rearranged
+  // underneath it. There are two honest ways that holds: the room is still due on its
+  // own terms, or keepTodayThroughDayChange stamps today as a one-off (alsoCleanOn).
+  // This asked for the stamp specifically — and on 28 Aug a pinned day that came round
+  // unticked started keeping a room outstanding by itself, so the room stays due, the
+  // stamp is correctly not needed, and the check failed while the behaviour was right.
+  // A test that fails when the app gets better is testing the wrong thing. Ask for the
+  // guarantee: still on the board, by either route.
+  check('today is kept — still due, or written down as a one-off',
+    r.due401 === true || r.also401 === r.day,
+    JSON.stringify({ stillDue: r.due401, oneOff: r.also401, day: r.day }));
   check('pinning a room onto days that exclude today leaves it on today’s board',
     r.afterPin.includes('305'), 'after: ' + r.afterPin.join(', '));
   check('and it too carries the new days', JSON.stringify(r.days305) === JSON.stringify(r.elsewhere), JSON.stringify(r.days305));
