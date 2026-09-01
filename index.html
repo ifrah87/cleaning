@@ -7622,6 +7622,21 @@ function mirrorPlanToBoard(day, key, keepBoard) {
       // somebody's assistant, and on 24 Aug Interior Windows was: Abdirisaq Ahmed Nur
       // holding a job of his own while the leader he works with held none of it.
       if (j.assignedTo && !((state.staff || []).find((x) => x.id === j.assignedTo) || {}).isLeader) return;
+      // A PLAN WITH NO NAME ON AN AREA IS NOT SAYING "NOBODY". autoPlanDay leaves the
+      // communal areas alone on purpose - "who does it is a call for the morning" - so
+      // every area on every plan carries assignedTo: null and always will. Writing that
+      // null through to the board meant the plan, which has no opinion about areas,
+      // erased the opinion somebody else had: one tap on "⚡ Plan this day", or sharing
+      // an absent person's rooms out, and the lobby, the trash, the lifts and the
+      // mosque all lost their cleaner while the rooms beside them were untouched. On
+      // 1 Sep the live board had the Mosque and OFFSITE-2 DHAGAX standing empty with
+      // five other areas still named, which is this caught halfway through.
+      //
+      // Clearing an area is still possible, it just has to be somebody doing it:
+      // setPlanAssignee names the one key it changed, and a mirror of a single key is
+      // a person at the screen. A sweep of the whole day is the plan talking, and the
+      // plan has nothing to say here.
+      if (!j.assignedTo && !key) return;
       a.assignedTo = j.assignedTo || null;
     }
   });
