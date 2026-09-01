@@ -139,6 +139,35 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
 
   check('tying a room stamps it, like every other edit', tie.stamped, JSON.stringify(tie));
   check('and a copy carrying the OLD tie cannot put it back', tie.usualTo === 'p1', JSON.stringify(tie));
+
+  // --- AND SO IS WHEN THE ROOM WANTS DOING ---------------------------------------
+  // The tie was called "the ONE thing on a room with no defence" and it was not: the
+  // early/late flag had neither the stamp nor a place in the protected list either.
+  // It bites harder than a frequency, because the early round is CAPPED — a stale copy
+  // turning preferEarly back on does not just change one room, it puts a leader over
+  // their cap and the morning re-deals around it. On 1 Sep the building was running one
+  // early room over capacity every working day and 1002 was the room being taken out.
+  const early = await page.evaluate((stale) => {
+    const u = state.servicedUnits.find((x) => x.unit === '401');
+    const before = u.editedAt || null;
+    setUnitPreferEarly(u.id, false);                   // off the early round, on this device
+    const now = state.servicedUnits.find((x) => x.unit === '401');
+    const stamped = now.editedAt && now.editedAt !== before;
+    localStorage.removeItem('cleaning_app_v5_dirty');
+    applyRemote(stale);
+    const after = state.servicedUnits.find((x) => x.unit === '401');
+    return { stamped: !!stamped, preferEarly: !!after.preferEarly, slot: timeSlot(after) };
+  }, {
+    ...APP_STATE, _fromAnotherDevice: 1,
+    // The copy that arrives still has the room on the early round, which is what a
+    // phone that has not looked since breakfast is holding.
+    servicedUnits: APP_STATE.servicedUnits.map((u) => ({ ...u, preferEarly: true })),
+  }).catch((e) => ({ error: String(e) }));
+
+  check('taking a room off the early round stamps it, like every other edit',
+    early.stamped, JSON.stringify(early));
+  check('and a copy that still has it early cannot put it back',
+    early.preferEarly === false && early.slot !== 'early', JSON.stringify(early));
   // --- a morning arranged by hand is not undone by an older copy --------------------
   const plan = await page.evaluate((stale) => {
     const day = workToday();

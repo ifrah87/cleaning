@@ -2476,6 +2476,12 @@ function applyRemote(saved, merging) {
           // decision somebody made about this room, not a fact that drifts. Left out, a
           // phone that had not looked since breakfast pushed the old owner back over it.
           usualTo: mine.usualTo || null,
+          // WHEN the room wants doing, for the same reason as WHO does it: a standing
+          // decision about the room, not a fact that drifts. The early round is capped,
+          // so a stale copy pushing preferEarly back on does not just change one room —
+          // it puts somebody over their cap and the morning re-deals around it.
+          preferEarly: !!mine.preferEarly, preferLate: !!mine.preferLate,
+          time: mine.time || '',
           startDate: mine.startDate, alsoCleanOn: mine.alsoCleanOn || null,
           holdUntil: mine.holdUntil || null, rollCallOn: mine.rollCallOn || null,
           paused: mine.paused, editedAt: mine.editedAt };
@@ -4381,14 +4387,24 @@ const timeSlot = (u) => (u && u.preferEarly) ? 'early' : (u && u.preferLate) ? '
 // ones the customer would rather have left until the afternoon.
 const SLOT_RANK = { early: 0, any: 1, late: 2 };
 const slotRank = (u) => SLOT_RANK[timeSlot(u)];
+// WHEN A ROOM WANTS DOING IS A DECISION, AND A DECISION CARRIES ITS MOMENT. These
+// two were the last unstamped edits on a room. Everything else somebody changes —
+// the frequency, the days, the tie — is stamped so a copy that predates the change
+// cannot undo it, and the tie was added to that list after three rooms came back on
+// a Monday tied to a man archived the night before. The early/late flag had neither
+// the stamp nor a place in the merge's protected list, so it was in exactly the
+// position the tie had been in: whatever any other device happened to be carrying
+// won, every pull. Take 1002 off the early round on the laptop and a phone that had
+// not looked since breakfast puts it straight back, silently, and the morning is
+// over its early cap again with nobody having asked for it.
 function setUnitPreferEarly(id, on) {
   const u = state.servicedUnits.find(x => x.id === id);
-  if (u) { u.preferEarly = !!on; if (on) u.preferLate = false; }
+  if (u) { u.preferEarly = !!on; if (on) u.preferLate = false; stampUnitEdit(u); }
   save(); render();
 }
 function setUnitPreferLate(id, on) {
   const u = state.servicedUnits.find(x => x.id === id);
-  if (u) { u.preferLate = !!on; if (on) u.preferEarly = false; }
+  if (u) { u.preferLate = !!on; if (on) u.preferEarly = false; stampUnitEdit(u); }
   save(); render();
 }
 // Manually set when a room was last cleaned (drives its next-due schedule).
