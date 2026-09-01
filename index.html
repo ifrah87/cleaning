@@ -12793,6 +12793,26 @@ function startTVLoop() {
   // loop, and never while something is still waiting to be delivered.
   const bootedAt = Date.now();
 
+  // RELOADING ON THE SAME URL CAN LAND BACK ON THE SAME OLD PAGE. The board now asks
+  // whether a new build has shipped against a URL the CDN has never seen, so it finds
+  // out — and then reloads the URL it is already on, which the edge may still be serving
+  // from a copy up to a day old (`s-maxage=86400`, set by the host, not by us). So the
+  // wall could correctly notice a new build, reload, and come back running the old one,
+  // three minutes later, for ever.
+  //
+  // Reloading to the same address with a fresh throwaway parameter is a URL the edge has
+  // not got, so it must fetch. The parameter means nothing to the app and is replaced
+  // rather than piled up, so the address does not grow with every reload. This is the
+  // half of the CDN problem that can be fixed from inside the page; the header itself
+  // needs somebody with a login to the host.
+  const reloadFresh = () => {
+    try {
+      const u = new URL(location.href);
+      u.searchParams.set('v', String(Date.now()));
+      location.replace(u.toString());
+    } catch (e) { location.reload(); }
+  };
+
   // SHIP A FIX, AND THE WALL HAS IT IN FIVE MINUTES.
   // The nightly reload below is the backstop; this is the thing that stops anybody
   // walking to a television. The board pulls fresh DATA all day but runs whatever
@@ -12826,7 +12846,7 @@ function startTVLoop() {
         if (_builtAt === null) { _builtAt = stamp; return; }
         if (stamp === _builtAt) return;
         if (Date.now() - bootedAt < 10 * 60 * 1000) return;
-        location.reload();
+        reloadFresh();
       })
       .catch(() => {});                           // offline: the retry loop already covers it
   };
@@ -12839,7 +12859,7 @@ function startTVLoop() {
     if (!quiet) return;
     if (Date.now() - bootedAt < 6 * 3600e3) return;
     if (isDirty()) return;                    // something of ours is still owed
-    location.reload();
+    reloadFresh();
   }, 60000);
   setInterval(() => renderTV(), TV_TICK_MS);
   // THE BOARD DOES NOT TURN ITSELF. It used to rotate — fifteen seconds of board,
