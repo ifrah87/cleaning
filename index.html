@@ -1918,7 +1918,14 @@ let _settingsSeen = null;
 // Stamped from one place rather than from every switch in Settings: there are a dozen
 // setters and a stamp missing from any one of them is a setting that can still be
 // undone by an old phone. save() is the choke point they all go through.
+// ...AND NOT ON THE WALL. save() writes localStorage before it returns on TV_MODE, so
+// this ran there too and stamped the board's own copy with the moment it happened to
+// notice a setting had changed — which is always LATER than the moment the office
+// changed it. A stamp is what wins an argument in applyRemote, so the one screen that
+// can never send a setting was quietly outranking the phone that set it. It has no
+// settings of its own to defend; it reads them.
 function stampChangedSettings() {
+  if (TV_MODE) return;
   if (!state.settingsEditedAt || typeof state.settingsEditedAt !== 'object') state.settingsEditedAt = {};
   const now = new Date().toISOString();
   const seen = _settingsSeen || {};
@@ -2381,9 +2388,16 @@ function applyRemote(saved, merging) {
   const untick = TV_MODE
     ? { ...(saved.untick || {}) }
     : { ...(saved.untick || {}), ...(state.untick || {}) };
+  // ...AND A DISPLAY HAS NO TICKS OF ITS OWN EITHER. The headstones above were given the
+  // board's treatment and the ticks beside them were not, which left the leak open in the
+  // other direction: a completion the wall is holding that the server has not got is not
+  // an un-delivered tick — the wall delivers nothing — it is a stale one, and unioning it
+  // back in on every pull keeps a room green on the wall that reads as due on every
+  // phone. The server is the truth for a screen that only reads, for the tick exactly as
+  // for the plan and the room.
   const mergedDone = { ...(saved.completions || {}) };
   let ticksKept = 0;
-  Object.keys(state.completions || {}).forEach((k) => {
+  Object.keys(TV_MODE ? {} : (state.completions || {})).forEach((k) => {
     if (!state.completions[k] || mergedDone[k]) return;
     mergedDone[k] = true; ticksKept += 1;
   });
@@ -2402,7 +2416,13 @@ function applyRemote(saved, merging) {
   let areasKept = 0;
   if (mergedAreas) {
     const haveArea = new Set(mergedAreas.map((a) => a.id));
-    const extraA = (state.areas || []).filter((a) => a && !haveArea.has(a.id) && !goneAreas[a.id] && !a.seeded);
+    // Rooms are rescued only off the wall's list (TV_MODE ? [] above) and areas were not,
+    // though the reason is word for word the same one: an area the board is holding that
+    // the server has not got cannot be an edit awaiting delivery, because the board never
+    // delivers. It is stale, and re-inserting it every fifteen seconds puts a communal job
+    // back on the wall that the office took off it.
+    const extraA = TV_MODE ? []
+      : (state.areas || []).filter((a) => a && !haveArea.has(a.id) && !goneAreas[a.id] && !a.seeded);
     mergedAreas = mergedAreas.concat(extraA);
     areasKept = extraA.length;
     const beforeA = mergedAreas.length;
@@ -2509,7 +2529,16 @@ function applyRemote(saved, merging) {
   // a copy that predates the change. Same rule the rooms and the roster get.
   const mineDevice = {};
   DEVICE_KEYS.forEach((k) => { mineDevice[k] = state[k]; });
-  const stampsMine = state.settingsEditedAt || {};
+  // A board that cannot deliver a setting must not win one either. Winning here is a dead
+  // end on the wall: line below declines to markDirty on TV_MODE, so the value is neither
+  // adopted from the server nor sent to it, and the wall sits on its own copy for good.
+  // rollCallTypes is one of these keys, so the shape of that failure is the whole board
+  // showing a different set of rooms from every phone, permanently, for no visible reason.
+  // Stamps go the same way: a stamp the wall is carrying is one it read from the server,
+  // and keeping the higher of the two only lets a clock-drifted board go on beating the
+  // office. It takes the server's word — the same rule as the plans, the ticks and the
+  // rooms above it.
+  const stampsMine = TV_MODE ? {} : (state.settingsEditedAt || {});
   const stampsTheirs = (saved && saved.settingsEditedAt) || {};
   const mineSettings = {};
   SETTING_KEYS.forEach((k) => {
@@ -2984,8 +3013,23 @@ function confirmCover(coverId) {
 }
 function dismissCover() { state.pendingCover = null; save(); render(); }
 function assignCover(floor, pid) { state.coverage[floor]=pid; state.coverageDay=todayKey(); save(); render(); }
-function toggleUnit(uid) { const k=uid+'::perm'; if(state.completions[k])delete state.completions[k];else state.completions[k]=true; save(); render(); }
-function toggleZone(zid, freq) { const k=zid+'::'+freqKey(freq); if(state.completions[k])delete state.completions[k];else state.completions[k]=true; save(); render(); }
+// AN UN-TICK NEEDS A HEADSTONE HERE TOO. Ticks merge across devices rather than being
+// overwritten — applyRemote unions in any completion the incoming copy has not heard of
+// — and the only thing that can remove one is a record saying it was deliberately
+// un-ticked. The room and area toggles have written one for a long time; these two, the
+// checklist ones, never did. So un-ticking a floor or a communal zone cleared it on the
+// phone in front of you and was then put straight back by the next device to pull, which
+// pushed it up again for everybody. Worst on the television, which cannot correct itself:
+// these keys are ::perm, weekly or monthly, so no daily rollover ever clears them and the
+// wall stayed green on a job the office had marked as not done.
+function toggleCompletion(k) {
+  if (!state.untick) state.untick = {};
+  if (state.completions[k]) { delete state.completions[k]; state.untick[k] = todayKey(); }
+  else { state.completions[k] = true; delete state.untick[k]; }   // ticked again — the headstone no longer applies
+  save(); render();
+}
+function toggleUnit(uid) { toggleCompletion(uid + '::perm'); }
+function toggleZone(zid, freq) { toggleCompletion(zid + '::' + freqKey(freq)); }
 function toggleFloorExpand(fid) { state.expandedFloors[fid]=!state.expandedFloors[fid]; save(); render(); }
 // FOUR TABS FOR ONE LIST. Offices, Buildings, Airbnb and All Rooms were four views
 // of the same rooms, so finding a room meant knowing which tab it lived on before you
@@ -6965,6 +7009,7 @@ function autoPlanDay(day) {
 // The hand-out goes in at the same time: a plan nobody is named on is half a plan,
 // and the whole point is that tomorrow is already laid out without being asked.
 function seedPlanOnce(day) {
+  if (TV_MODE) return 0;             // a display does not lay out days — see the note on resyncPlanDay
   if (!state.planSeeded) state.planSeeded = {};
   if (state.planSeeded[day]) return 0;
   state.planSeeded[day] = true;
@@ -7221,7 +7266,26 @@ function planAhead() {
 // schedule moves, but today is being worked — a room already cleaned drops out of
 // "what's due", and pruning against that would delete the morning's finished work off
 // the board. Today only ever gains rooms.
+// A DISPLAY DOES NOT PLAN. The guard on planningPass was written for exactly this —
+// "the television built a private plan every minute that no phone and no other TV ever
+// saw" — but it was put on the CALLER, and the caller is not the only way in.
+// startDayWatch's five-minute interval calls topUpTodayPlan() and then
+// carryPlanToBoardOnOpen() directly, both of which land here, and neither was guarded.
+// So the churn the planningPass guard was written to stop carried on happening through
+// the door next to it: on 4 Sep a board given a day the server had not topped up added
+// the room itself, dealt it, and mirrored the name onto its own copy of the room.
+//
+// And it did not wash out again. applyRemote returns early when the incoming copy is
+// identical to the last one, so on a quiet board — nobody editing, which is most of the
+// day — the fifteen-second pull never overwrites what the wall invented. The office
+// looked at a phone and a television showing different rooms, with different names on
+// them, and nothing on either screen to say which was right.
+//
+// The guard belongs on the writers themselves, so that a caller added later cannot
+// reopen this. Nothing is lost by refusing: every room the wall would have added is
+// added by any device that can actually save the result, and the wall then reads it.
 function resyncPlanDay(day, addOnly) {
+  if (TV_MODE) return { added: 0, removed: 0, assigned: 0 };
   const plan = getPlan(day);
   // Emptied on purpose ("Clear this day's plan") — an automatic refill would
   // override a deliberate act, so a cleared day stays cleared.
@@ -7598,9 +7662,20 @@ function mirrorPlanToBoard(day, key, keepBoard) {
       if (keepBoard && u.assignedTo && assignedThisRound(u)) return;
       // An assistant works the leader's round with them, so a plan naming one must not
       // put the room on the board against their name. The room stays free and the
-      // morning hands it to a leader. Assigning it to them on the board by hand still
-      // works — that is somebody deciding, which the app does not overrule.
-      if (j.assignedTo && !((state.staff || []).find((p) => p.id === j.assignedTo) || {}).isLeader) return;
+      // morning hands it to a leader.
+      //
+      // ...UNLESS SOMEBODY CHOSE IT. "Assigning it to them on the board by hand still
+      // works — that is somebody deciding, which the app does not overrule" was already
+      // the rule, and this line did not know it: a hand-out made in the Move sheet is a
+      // person deciding just as much as one made on the board, and it was thrown away
+      // here without a word. The plan showed the name, the board showed the room
+      // unhanded, and the morning it was drawn for arrived with nobody on it — which is
+      // the outside pair every time, because they run their own round and are not
+      // leaders. setPlanAssignee is the only thing that sets byHand, and it is only ever
+      // reached by somebody at a screen, so it is exactly the "somebody deciding" the
+      // rule already allowed for.
+      if (j.assignedTo && !j.byHand
+        && !((state.staff || []).find((p) => p.id === j.assignedTo) || {}).isLeader) return;
       // Same rule as the morning: a room tied to one cleaner is not the plan's to give
       // away. Left alone here, it shows as unassigned until it reaches its own person.
       if (j.assignedTo && u.usualTo && u.usualTo !== j.assignedTo) return;
@@ -7637,7 +7712,10 @@ function mirrorPlanToBoard(day, key, keepBoard) {
       // this branch never got the same line. So the corridors could be planned onto
       // somebody's assistant, and on 24 Aug Interior Windows was: Abdirisaq Ahmed Nur
       // holding a job of his own while the leader he works with held none of it.
-      if (j.assignedTo && !((state.staff || []).find((x) => x.id === j.assignedTo) || {}).isLeader) return;
+      // And with the same exception the rooms have: a walk somebody put on a person by
+      // hand is that person deciding, and it goes through.
+      if (j.assignedTo && !j.byHand
+        && !((state.staff || []).find((x) => x.id === j.assignedTo) || {}).isLeader) return;
       // A PLAN WITH NO NAME ON AN AREA IS NOT SAYING "NOBODY". autoPlanDay leaves the
       // communal areas alone on purpose - "who does it is a call for the morning" - so
       // every area on every plan carries assignedTo: null and always will. Writing that
@@ -7665,6 +7743,11 @@ function mirrorPlanToBoard(day, key, keepBoard) {
 // the roll call as the app opens, without touching anything already handed out
 // there: a change made on the board is newer than the plan and wins.
 function carryPlanToBoardOnOpen() {
+  // ...AND NOT ON THE WALL. Mirroring writes a name onto the room itself, which is the
+  // half of the churn that shows: the board grew columns nobody had handed out. Same
+  // reasoning as resyncPlanDay above — the guard is on the writer, not on whichever
+  // caller happens to reach it today.
+  if (TV_MODE) return 0;
   // The day the crew is actually working, which between midnight and 3am is still
   // yesterday's date — a round that runs late is on the day it started. The calendar
   // day is deliberately NOT included: in that window it is tomorrow's work day, and
@@ -9035,8 +9118,16 @@ function viewTick() {
     const out = rollCallOutstanding();
     const openRooms = out.rooms.filter((u) => u.assignedTo);
     const loose = out.rooms.length - openRooms.length;
-    if (openRooms.length + out.areas.length) {
-      const allBtn = el(`<button class="bd-close">${esc(markAllLabel(openRooms.length, out.areas.length))}</button>`);
+    if (out.rooms.length + out.areas.length) {
+      // COUNTED OVER WHAT IT WILL ACTUALLY MARK. The label counted only the rooms
+      // somebody was holding, and then markRollCallAllDone closed out EVERYTHING still
+      // open — so a board with nine rooms handed out and three nobody had been given
+      // offered to mark twelve, asked "Mark all 15 as cleaned?" in the next breath, and
+      // recorded fifteen. The unassigned ones are meant to go, and the confirm says
+      // where they land ("anything unassigned goes down as Office"); it was only the
+      // button that was quiet about them. The line underneath still breaks out how many
+      // nobody has been given.
+      const allBtn = el(`<button class="bd-close">${esc(markAllLabel(out.rooms.length, out.areas.length))}</button>`);
       allBtn.onclick = () => markRollCallAllDone();
       top.appendChild(allBtn);
       if (loose) top.appendChild(el(`<div class="lbl" style="color:#fbbf24">`
