@@ -7376,6 +7376,26 @@ function resyncPlanDay(day, addOnly) {
       return;
     }
     if (!u.usualTo || j.assignedTo === u.usualTo) return;
+    // A PIN IS NOT A CLAIM ON A DAY ITS PERSON IS NOT THERE FOR, and this was the one
+    // pass that thought it was. autoPlanDay and assignNewPlanJobs both ask whether the
+    // pinned cleaner may actually take the room — mayGiveRoomTo, against a crew built
+    // from the people who are ON that day. This asked nothing at all: it wrote the name
+    // over whatever was there, for anybody, on any day.
+    //
+    // And it runs on a CLOCK. topUpTodayPlan calls this every five minutes, so it needed
+    // nobody to touch the app. Mark somebody sick, share their rooms out from the phone
+    // — which correctly deals them to the people who are in — and within five minutes
+    // every pinned room was back on the cleaner sitting at home, with nothing on screen
+    // to say so. The office's correction undone by a timer, over and over, which reads
+    // exactly like the app refusing to accept that somebody is off.
+    //
+    // Marking somebody sick has to mean the same thing to every pass, or it means
+    // nothing. Same four questions the other two passes already ask.
+    if (j.byHand) return;                                  // a person decided; a pin does not outrank that
+    if (!mayGiveRoomTo(u, u.usualTo)) return;              // archived, off the hand-out, not cleared for it
+    const owner = (state.staff || []).find((x) => x.id === u.usualTo);
+    if (!owner || !worksOnDay(owner, day)) return;         // the rota does not have them in on this day
+    if (day === todayKey() && isAway(u.usualTo)) return;   // sick, off, or a no-show today
     j.assignedTo = u.usualTo; repinned += 1;
   });
 
