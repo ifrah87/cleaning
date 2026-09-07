@@ -216,6 +216,13 @@
   .bd-sub { font-size: 11px; font-weight: 700; color: #6f8ab0; width: 100%; }
   .bd-at { font-size: 11px; font-weight: 800; color: #86efac; }
   .bd-at.none { color: #fbbf24; }
+  /* WHERE THEY ARE IS NOT AN ALARM. Off-site is cyan, not amber: the column is saying
+     "he is at 2 Dhagax", which is the day going to plan, and amber is reserved for the
+     lines that mean somebody has to do something. */
+  .bd-at.site { color: #67e8f9; }
+  .bd-col.site { background: #0c2029; }
+  .bd-col.site .bd-who { color: #a5f3fc; }
+  .bd-note { font-size: 11px; font-weight: 700; color: #9fb6d4; width: 100%; }
   .bd-count { margin-left: auto; font-size: 13px; font-weight: 800; color: #6f8ab0; }
   .bd-grp { font-size: 10px; font-weight: 800; letter-spacing: 0.12em; color: #6f8ab0; margin: 10px 0 5px; }
   .bd-jobs { display: flex; flex-wrap: wrap; gap: 7px; }
@@ -1132,6 +1139,94 @@ function cycleWorksOn(pid, dow) {
   if (!p) return;
   const cur = worksStateOf(p, dow);
   setWorksState(pid, dow, WORKS_STATES[(WORKS_STATES.indexOf(cur) + 1) % WORKS_STATES.length]);
+}
+
+// WHERE SOMEBODY IS, WHEN IT IS NOT THIS BUILDING.
+//
+// The app has only ever known one address. BUILDING is a constant, and every screen
+// assumes the person you are looking at is in this tower — so for the cleaners who work
+// our other properties the board had nothing true to say. They are on the roster, they
+// are not off, and they are not here. Nur Ali Sidow shared a column with his crew mate
+// and stood on it all morning under NO SCAN YET, which reads as "still on his way" about
+// a man who was never coming: the one question the wall is asked at seven in the morning,
+// answered wrongly.
+//
+// It was being done by hand — the note that keeps being typed, "Offsite - 2 Dhagax". A
+// note has to be remembered on the way in and cleared on the way out, and the day nobody
+// clears it the board says he is at another building for a week. So a place gets a rota
+// like a rest day does: set once, right every morning after, and wrong on no morning
+// because somebody forgot.
+//
+// A place is not a team and not a status — he is working, for us, somewhere else — so it
+// is its own field. Absent means here, which leaves everyone who has never been sent
+// anywhere exactly as they were.
+const SITE_PALETTE = ['#0891b2', '#c2410c', '#4d7c0f', '#9333ea', '#be123c', '#0369a1'];
+const bySiteName = (a, b) => String(a.name).localeCompare(String(b.name), undefined, { numeric: true, sensitivity: 'base' });
+function getSites() { return (state.sites || []).slice().sort(bySiteName); }
+function siteColor(name) { const s = getSites().find((x) => x.name === name); return s ? s.color : '#0891b2'; }
+function addSite(name) {
+  if (!name || !name.trim()) return;
+  const sites = getSites();
+  if (sites.find((s) => s.name.toLowerCase() === name.trim().toLowerCase())) return;
+  const used = sites.map((s) => s.color);
+  sites.push({ name: name.trim(), color: SITE_PALETTE.find((c) => !used.includes(c)) || SITE_PALETTE[sites.length % SITE_PALETTE.length] });
+  state.sites = sites; save(); render();
+}
+// Who is scheduled to a building — asked before offering to delete it, the same way a
+// team with members cannot be removed. A building deleted out from under a rota leaves
+// a name on a card that resolves to nowhere.
+const siteStaff = (name) => (state.staff || []).filter((p) => Object.values((p && p.siteOn) || {}).includes(name));
+function removeSite(name) { state.sites = getSites().filter((s) => s.name !== name); save(); render(); }
+
+// THE PATTERN SAYS WHERE HE IS IN A NORMAL WEEK; THE DAY SAYS WHERE HE ACTUALLY WENT.
+// Kept apart on purpose. A Tuesday he was pulled across to another block is not a change
+// to every Tuesday, and typing it as one is exactly how a standing rota quietly rots into
+// something nobody trusts. An override is one date and expires by being in the past.
+function siteFor(p, day) {
+  if (!p) return null;
+  const ov = (state.siteDay || {})[day];
+  if (ov && Object.prototype.hasOwnProperty.call(ov, p.id)) return ov[p.id] || null;   // '' = pulled back here
+  const dow = new Date(day + 'T00:00:00').getDay();
+  return ((p.siteOn || {})[dow]) || null;
+}
+const siteToday = (p) => siteFor(p, workToday());
+const hasSitePattern = (p) => !!(p && p.siteOn && Object.keys(p.siteOn).length);
+// A BOX THAT COMES AND GOES IS NOT SOMEWHERE YOU CAN LOOK. Somebody who works elsewhere
+// keeps their own column on the days they are here too — the point of giving them one is
+// that there is a fixed place on the wall you find them, whatever the answer is today.
+const worksOffSite = (p) => hasSitePattern(p) || !!siteToday(p);
+
+// Tap a weekday to walk it round the buildings and back to here. Same shape as the rest
+// day cycling next to it, because it is the same gesture asked about a different fact.
+function cycleSiteOn(pid, dow) {
+  const p = (state.staff || []).find((x) => x.id === pid);
+  if (!p) return;
+  const names = getSites().map((s) => s.name);
+  if (!names.length) return;                       // no buildings set up yet: nothing to cycle to
+  const cur = (p.siteOn || {})[dow] || '';
+  const i = names.indexOf(cur);
+  const next = i < 0 ? names[0] : (i + 1 >= names.length ? '' : names[i + 1]);
+  if (!p.siteOn) p.siteOn = {};
+  if (next) p.siteOn[dow] = next; else delete p.siteOn[dow];
+  if (!Object.keys(p.siteOn).length) delete p.siteOn;
+  save(); render();
+}
+// One day changed. Landing back on what the pattern already says DELETES the override
+// rather than storing it — otherwise every "no, he is here after all" would freeze that
+// date against a rota that later changes underneath it.
+function cycleSiteDay(pid, day) {
+  const p = (state.staff || []).find((x) => x.id === pid);
+  if (!p) return;
+  const ring = [''].concat(getSites().map((s) => s.name));
+  const cur = siteFor(p, day) || '';
+  const next = ring[(ring.indexOf(cur) + 1) % ring.length];
+  const pattern = ((p.siteOn || {})[new Date(day + 'T00:00:00').getDay()]) || '';
+  if (!state.siteDay) state.siteDay = {};
+  if (!state.siteDay[day]) state.siteDay[day] = {};
+  if (next === pattern) delete state.siteDay[day][pid];
+  else state.siteDay[day][pid] = next;
+  if (!Object.keys(state.siteDay[day]).length) delete state.siteDay[day];
+  save(); render();
 }
 
 // Share a rest day out evenly. The Friday off rotates, so the fair split is half the
@@ -9237,6 +9332,7 @@ function viewTick() {
     // An empty NOBODY YET still goes: no work with nobody behind it IS nothing to show.
     if (!c.jobs.length && !giving && c.none) return;
     const col = el(`<div class="bd-col${c.none ? ' none' : ''}${c.out ? ' out' : ''}`
+      + `${c.site && !c.out ? ' site' : ''}`
       + `${c.status === 'off' ? ' off' : ''}`
       + `${c.none && c.jobs.length > 8 ? ' wide3' : c.none && c.jobs.length > 3 ? ' wide2' : ''}${_picked ? ' drop' : ''}"></div>`);
     // NOBODY YET TAKES A DROP TOO. Dragging only ever went one way: a room could be put
@@ -9262,6 +9358,14 @@ function viewTick() {
     hd.appendChild(el(`<div class="bd-count">${cDone}/${c.jobs.length}</div>`));
     const sub = [c.team || '', c.with || ''].filter(Boolean).join(' · ');
     if (sub) hd.appendChild(el(`<div class="bd-sub">${sub}</div>`));
+    // WHERE THEY ARE, BEFORE WHETHER THIS DOOR SAW THEM. Somebody working one of the
+    // other properties is not late and has not gone missing — this reader is simply not
+    // the one they walk past, so NO SCAN YET below is suppressed for them.
+    if (c.site) hd.appendChild(el(`<div class="bd-at site" style="width:100%">AT ${esc(String(c.site).toUpperCase())}</div>`));
+    // THE NOTE BELONGS ON BOTH SCREENS. It has always been drawn on the wall and never
+    // here, so "Offsite - 2 Dhagax" was visible from across the office and invisible on
+    // the phone of the person who typed it. Same column, same facts, either screen.
+    if (c.note) hd.appendChild(el(`<div class="bd-note">${esc(c.note)}</div>`));
     if (c.at || c.left) hd.appendChild(el(`<div class="bd-at" style="width:100%">`
       + (c.at ? 'IN ' + esc(c.at) : '')
       + (c.at && c.left ? ' · ' : '')
@@ -9272,7 +9376,7 @@ function viewTick() {
     // they are instead.
     else if (c.out) hd.appendChild(el(`<div class="bd-at none" style="width:100%">`
       + esc((STATUS[c.status] || {}).label || 'AWAY') + `</div>`));
-    else if (!c.none && !readOnly) hd.appendChild(el(`<div class="bd-at none" style="width:100%">NO SCAN YET</div>`));
+    else if (!c.none && !readOnly && !c.site) hd.appendChild(el(`<div class="bd-at none" style="width:100%">NO SCAN YET</div>`));
     col.appendChild(hd);
 
     // Rooms, then the communal walks — the order the board has always used, and the
@@ -10846,6 +10950,39 @@ function viewSettings() {
     + `after the offices are done. It never appears on the morning roll call.</div>`));
   wrap.appendChild(rcBox);
 
+  // --- Other buildings ---
+  // The estate is thirteen properties and this app has only ever known one of them.
+  // Naming the others is not a plan for cleaning them here — it is so the board can say
+  // where somebody is on a day they are not in this tower, instead of standing them in a
+  // column under NO SCAN YET as though they were late.
+  wrap.appendChild(el(`<div class="section-label" style="margin-top:22px">Other buildings</div>`));
+  const siteBox = el('<div class="addbox"></div>');
+  siteBox.appendChild(el(`<div style="font-size:12px;color:#5f7189;margin-bottom:10px">`
+    + `Somewhere else the crew works. Set who is there on which day on their card in Team.</div>`));
+  const siteRow = el(`<div style="display:flex;gap:8px;margin-bottom:10px"></div>`);
+  const siteIn = el(`<input id="newSite" placeholder="e.g. 2 Dhagax" style="flex:1">`);
+  const siteBtn = el(`<button class="add-btn" style="flex:0 0 auto;width:auto;padding:12px 18px">+ Add</button>`);
+  siteBtn.onclick = () => { const v = document.getElementById('newSite').value; if (!v.trim()) { document.getElementById('newSite').focus(); return; } addSite(v); };
+  siteIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') siteBtn.onclick(); });
+  siteRow.appendChild(siteIn); siteRow.appendChild(siteBtn); siteBox.appendChild(siteRow);
+  getSites().forEach((t) => {
+    const on = siteStaff(t.name);
+    const tr = el(`<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid #e7ecf3"></div>`);
+    tr.appendChild(el(`<div class="crew-dot" style="background:${t.color}"></div>`));
+    tr.appendChild(el(`<div style="flex:1;font-size:14px;font-weight:600;color:#0f1a27">${esc(t.name)}</div>`));
+    tr.appendChild(el(`<div style="font-size:11px;color:#5b6a7f">${on.length ? esc(on.map((x) => x.name.split(' ')[0]).join(', ')) : 'nobody yet'}</div>`));
+    // Same rule as a team: a building somebody is scheduled at cannot be deleted out
+    // from under them, or their card names a place that no longer exists.
+    if (!on.length) {
+      const rm = el(`<button class="su-rm">Remove</button>`);
+      rm.onclick = () => removeSite(t.name);
+      tr.appendChild(rm);
+    }
+    siteBox.appendChild(tr);
+  });
+  if (!getSites().length) siteBox.appendChild(el(`<div class="empty" style="padding:8px 0">None yet.</div>`));
+  wrap.appendChild(siteBox);
+
   // --- Teams ---
   wrap.appendChild(el(`<div class="section-label" style="margin-top:22px">Teams</div>`));
   const tbox = el(`<div class="addbox"></div>`);
@@ -11333,6 +11470,44 @@ function employeeCard(p) {
   rm.onclick = () => removeEmployee(p.id);
   ctl.appendChild(shift); ctl.appendChild(ctype); ctl.appendChild(ed); ctl.appendChild(rm);
   card.appendChild(ctl);
+
+  // WORKS AT — which building, on which day. Sits above the rest-day rota because it is
+  // the same shape of question asked of the same seven buttons, and because a card that
+  // can say "off Friday" but not "at 2 Dhagax on Tuesday" describes half a week.
+  //
+  // Only shown once there is somewhere to go: an office with one building has no use for
+  // a row of buttons that all say "here", and offering it invites somebody to wonder what
+  // they are for. Add a building in Settings and the row appears on every cleaner.
+  if (p.isCleaner && getSites().length) {
+    const sRow = el('<div class="su-ctl" style="border-top:none;padding-top:6px;margin-top:2px;flex-wrap:wrap;align-items:center"></div>');
+    sRow.appendChild(el(`<div style="flex:0 0 auto;font-size:11px;color:#5f7189;font-weight:700;margin-right:2px" `
+      + `title="Which building they work at on each day. Blank means here.">Works at</div>`));
+    WEEKDAYS.forEach(([lbl, dow]) => {
+      const at = (p.siteOn || {})[dow] || '';
+      const col = at ? siteColor(at) : '';
+      const b = el(`<button class="freqmini${at ? ' on' : ''}" title="${esc(at ? 'At ' + at + ' every ' + lbl : 'Here every ' + lbl)}" `
+        + `style="flex:0 0 auto;padding:6px 9px;font-size:11px${at ? ';background:' + col + ';border-color:' + col + ';color:#ffffff' : ''}">`
+        + `${lbl}${at ? '<br><span style="font-size:9px;font-weight:800">' + esc(at.slice(0, 6).toUpperCase()) + '</span>' : ''}</button>`);
+      b.onclick = () => cycleSiteOn(p.id, dow);
+      sRow.appendChild(b);
+    });
+    card.appendChild(sRow);
+    // TODAY IS THE ONE THE OFFICE ACTUALLY CHANGES, and it must not be typed in as a
+    // change to every Tuesday. Separate control, separate store, gone by tomorrow.
+    const day = selectedDay || workToday();
+    const now = siteFor(p, day);
+    const pat = ((p.siteOn || {})[dowOf(day)]) || '';
+    const tRow = el('<div style="display:flex;align-items:center;gap:8px;margin:0 0 6px"></div>');
+    const tb = el(`<button class="freqmini" style="flex:0 0 auto;padding:6px 10px;font-size:11px`
+      + `${now ? ';border-color:' + siteColor(now) + ';color:' + siteColor(now) + ';font-weight:800' : ''}">`
+      + `Today: ${esc(now || 'here')} · change</button>`);
+    tb.onclick = () => cycleSiteDay(p.id, day);
+    tRow.appendChild(tb);
+    tRow.appendChild(el(`<div style="font-size:11px;color:#5f7189;flex:1">`
+      + ((now || '') !== pat ? 'Just for today — the weekly pattern is unchanged.'
+                             : 'Following the weekly pattern above.') + `</div>`));
+    card.appendChild(tRow);
+  }
 
   // WORKS ON — only worth the room for cleaners; nobody is handing rooms to the
   // rest, so a rota for them is noise. All seven lit is the default and means
@@ -12192,6 +12367,10 @@ function tvWithLabel(p, spare) {
 
 // Named under somebody else, so not given a column of their own.
 function tvNamedElsewhere(p, spare) {
+  // Being at another building is not "working a leader's round" — there is no leader
+  // there to be named under, and folding them into a leader's card hides the one fact
+  // the board is being asked for.
+  if (worksOffSite(p)) return false;
   if (!p || !p.isCleaner || p.isLeader || !p.crew || !spare(p) || !tvHere(p)) return false;
   return teamMembers(p.crew).some((x) => x.id !== p.id && x.isLeader && tvHere(x));
 }
@@ -12239,7 +12418,10 @@ function tvColumnsForDay(day) {
       const p = byId[k];
       return { key: k, name: p ? tvName(p) : 'NOBODY YET', jobs: buckets[k],
         none: !p, out: false, status: null, with: '',
-        team: p ? tvTeam(p) : '', at: '', left: '', note: '' };
+        // ANOTHER DAY'S BOARD KNOWS WHERE PEOPLE WILL BE. The badge times cannot be known
+        // for a day that has not happened, but the site rota is a schedule — so stepping
+        // the board to Thursday can say who is at 2 Dhagax on Thursday.
+        team: p ? tvTeam(p) : '', at: '', left: '', note: p ? (p.note || '') : '', site: siteFor(p, day) };
     });
 }
 // A job is the same job on whoever's list it turns up. Keyed the way countJobs keys
@@ -12273,7 +12455,11 @@ function tvColumns() {
   const pairMates = (p) => {
     const c = crewOf(p);
     if (!c) return null;
-    const mates = cleaningStaff().filter((x) => crewOf(x) === c && onDutyToday(x) && tvHere(x));
+    // Somebody with a building rota is not half of a pair any more: they are somewhere
+    // else on their own days, and a shared card cannot say two places at once.
+    if (worksOffSite(p)) return null;
+    const mates = cleaningStaff().filter((x) => crewOf(x) === c && onDutyToday(x) && tvHere(x)
+      && !worksOffSite(x));
     if (mates.length < 2 || mates.some((x) => x.isLeader)) return null;
     return mates.sort((a, b) => String(tvArrival(b) ? 0 : 1).localeCompare(String(tvArrival(a) ? 0 : 1))
       || String(a.name).localeCompare(String(b.name)));
@@ -12291,7 +12477,12 @@ function tvColumns() {
   // Ahmed Daahir is the case that showed it — rostered off Sundays, and on a Sunday the
   // board has nowhere to put him even if he walks in. A rota says who is EXPECTED; a
   // scan says who is THERE, and the wall is about who is there.
-  cleaningStaff().filter((p) => onDutyToday(p) && (tvOnTeam(p) || tvOutside(p)) && !tvNamedElsewhere(p, spare)).forEach((p) => {
+  // ...OR WORKS ONE OF THE OTHER BUILDINGS. Whichever team they are carried on — or none
+  // at all — somebody on a site rota gets a column, because the column IS the answer to
+  // "where is he today" and a name that appears only on the days it is convenient is no
+  // answer at all.
+  cleaningStaff().filter((p) => onDutyToday(p) && (tvOnTeam(p) || tvOutside(p) || worksOffSite(p))
+      && !tvNamedElsewhere(p, spare)).forEach((p) => {
     const pair = pairMates(p);
     if (pair && pair[0].id !== p.id) { seen[p.id] = true; return; }   // their mate carries the column
     seen[p.id] = true;
@@ -12314,14 +12505,14 @@ function tvColumns() {
         // helper, and the one whose name the walk actually answers to.
         jobs: dedupeJobs(pair.reduce((all, x) => all.concat(grouped.buckets[x.id] || []), [])),
         none: false, out: AWAY.indexOf(st) >= 0, status: st, with: '',
-        team: tvTeam(p), at: tvArrival(p), left: tvLeft(p), note: p.note || '',
+        team: tvTeam(p), at: tvArrival(p), left: tvLeft(p), note: p.note || '', site: siteToday(p),
       });
       return;
     }
     cols.push({
       key: p.id, name: tvName(p), jobs: grouped.buckets[p.id] || [],
       none: false, out: AWAY.indexOf(st) >= 0, status: st, with: tvWithLabel(p, spare),
-      team: tvTeam(p), at: tvArrival(p), left: tvLeft(p), note: p.note || '',
+      team: tvTeam(p), at: tvArrival(p), left: tvLeft(p), note: p.note || '', site: siteToday(p),
     });
   });
   // Somebody off the rota still holding work has to show, or that work vanishes — and
@@ -12336,7 +12527,7 @@ function tvColumns() {
     cols.push({
       key: p.id, name: tvName(p), jobs: grouped.buckets[p.id],
       none: false, out: AWAY.indexOf(st) >= 0, status: st, with: tvWithLabel(p, spare),
-      team: tvTeam(p), at: tvArrival(p), left: tvLeft(p), note: p.note || '',
+      team: tvTeam(p), at: tvArrival(p), left: tvLeft(p), note: p.note || '', site: siteToday(p),
     });
   });
   // Stranded work first, then TEAMS TOGETHER. The first rule is unchanged: work with
@@ -12795,6 +12986,8 @@ function renderTV() {
     if (c.with) hd.appendChild(el(`<div class="tv-with">${c.with}</div>`));   // pre-escaped in tvWithLabel
     // Amber, and above the team line: it is the exception to everything else the
     // column says, so it should be read before the routine facts and not after them.
+    // The same fact the phone draws, from the same field — see the note on bd-at.site.
+    if (c.site) hd.appendChild(el(`<div class="tv-note" style="color:#67e8f9">AT ${esc(String(c.site).toUpperCase())}</div>`));
     if (c.note) hd.appendChild(el(`<div class="tv-note">${esc(c.note)}</div>`));
     // Team on the left, the time they badged in on the right: the two questions
     // asked of a name on this board that the name alone cannot answer.
