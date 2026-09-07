@@ -1362,11 +1362,38 @@ const extraCleanDue = (u, day) => !!(u.alsoCleanOn && String(u.alsoCleanOn) === 
 // today before the change and would not be after it, it is given today outright — the
 // one-off extra clean the schedule already understands — and the new pattern governs
 // from tomorrow. The week still levels; nothing is ever taken off the board mid-round.
+//
+// ...AND NEITHER IS TOMORROW'S, ONCE IT HAS BEEN DRAWN UP. The guard was written for the
+// day being worked and stopped there, which left the identical fault one day to the left.
+// Sunday 6 Sep, 22:41: a phone opened the app, the levelling ran for the calendar day, and
+// 204 moved from Sat/Mon/Wed onto Sun/Tue/Thu. Monday's plan had already been drawn up and
+// read through — 204 was on it — and because the job was `auto` and the schedule no longer
+// wanted it, the next re-sync deleted it. The office checked a correct plan at night and
+// got a different one in the morning, which from the outside is the app quietly changing
+// its mind about work it had already committed to. Same complaint as 24 Aug, one day over.
+//
+// A PLAN THAT HAS BEEN DRAWN UP IS A PROMISE, NOT A PREVIEW. The schedule may decide any
+// day it likes up to the moment somebody could have read it; after that a levelling pass
+// is too late to withdraw a room, exactly as it is too late once the round has started.
+// The room stays on the days already drawn, and the new pattern governs every day the
+// office has not seen yet. `keep` is the mark for "defended because it was already drawn",
+// deliberately not byHand: nobody decided this by hand, and byHand also changes how a
+// guest flat is dealt.
 function keepTodayThroughDayChange(u, change) {
   const day = workToday();
   const wasDue = dueOnDay(u, day);
+  // Snapshot BEFORE the change: which drawn days hold this room, and was it due on them.
+  const k = planKey('unit', u.id);
+  const drawn = Object.keys(state.plans || {})
+    .filter((d) => d >= day && (state.plans[d] || {})[k])      // the past is a record, not a plan
+    .map((d) => ({ day: d, was: dueOnDay(u, d) }));
   change();
   if (wasDue && !dueOnDay(u, day)) u.alsoCleanOn = day;
+  drawn.forEach((r) => {
+    if (!r.was || dueOnDay(u, r.day)) return;                  // still due: plan and schedule agree
+    const j = (state.plans[r.day] || {})[k];
+    if (j) j.keep = true;
+  });
 }
 // "Is this due today?" is the same question the plan asks about a future day, so
 // it is answered in one place. It used to count days against the CALENDAR day
@@ -7309,6 +7336,8 @@ function resyncPlanDay(day, addOnly) {
     // machine have no such claim, and jobs from before this flag existed carry no
     // mark — which is what lets the days already wrong put themselves right.
     if (plan[k].byHand) return;
+    // Drawn up before the schedule moved under it — see keepTodayThroughDayChange.
+    if (plan[k].keep) return;
     delete plan[k]; removed += 1;
   });
 
