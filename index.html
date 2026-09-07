@@ -9194,8 +9194,8 @@ function viewTick() {
     (state.staff || []).forEach((x) => { staffById2[x.id] = x; });
     const inRows = Object.keys(hikArrivals)
       .filter((id) => staffById2[id])
-      .map((id) => ({ name: staffById2[id].name, time: hikArrivals[id].time, raw: hikArrivals[id].raw }))
-      .concat((hikOther || []).map((o) => ({ name: o.name, time: o.time, raw: o.time })))
+      .map((id) => ({ id, name: staffById2[id].name, time: hikArrivals[id].time, raw: hikArrivals[id].raw }))
+      .concat((hikOther || []).map((o) => ({ id: o.id, name: o.name, time: o.time, raw: o.time })))
       .concat((hikUnknown || []).map((o) => ({ name: o.name + ' (not on roster)', time: o.time, raw: o.time })))
       .sort((a, b) => String(a.raw || '').localeCompare(String(b.raw || '')));
 
@@ -9209,23 +9209,62 @@ function viewTick() {
         const st = state.attendance[x.id] || 'present';
         const why = !worksToday(x) ? 'OFF ROTA'
           : st === 'off' ? 'OFF' : st === 'sick' ? 'SICK' : st === 'noshow' ? 'NO-SHOW' : 'NO SCAN';
-        return { name: x.name, why };
+        return { id: x.id, name: x.name, why };
       })
       .sort((a, b) => (RANK[a.why] - RANK[b.why]) || String(a.name).localeCompare(String(b.name)));
 
     if (inRows.length || outRows.length) {
       const box = el('<div class="bd-panel"></div>');
+      // TAP A NAME TO SAY WHAT IS WRONG WITH IT.
+      //
+      // cycleStatus — mark somebody late, a no-show, SICK or off; release the rooms they
+      // are holding; offer somebody to cover their floors — has been in this file the
+      // whole time and was called from NOWHERE. The .status-btn styling it used to have
+      // is still in the stylesheet with nothing to wear it. So there has been no way to
+      // tell the app that anybody is off, for anybody, on any screen: attendance has read
+      // "everyone present" every day, whatever was actually happening in the building.
+      //
+      // The office worked around it by reorganising the crew into different teams for the
+      // morning — which changes the roster, is slow, and has to be undone. On 7 Sep two
+      // leaders were off sick and the system was never told either.
+      //
+      // This strip is where the question is already being asked — IN, and NOT IN with a
+      // reason against each name — so the answer belongs on the same chips. One tap walks
+      // a name round present → late → no-show → sick → off, and everything downstream
+      // (isAway, the share-out, the board's AWAY column, the re-pin guard) has always been
+      // ready for it.
       const chips = (label, colour, items, render) => {
         if (!items.length) return;
         const row = el(`<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:6px"></div>`);
         row.appendChild(el(`<div style="font-size:11px;font-weight:800;letter-spacing:0.06em;color:${colour};`
           + `flex:0 0 auto;min-width:74px">${label} ${items.length}</div>`));
-        items.forEach((it) => row.appendChild(el(render(it))));
+        items.forEach((it) => {
+          const chip = el(render(it));
+          // Only somebody on the roster can carry a status. A name off the door reader
+          // that matches nobody has nothing to set it on.
+          if (it.id) {
+            chip.style.cursor = 'pointer';
+            chip.title = 'Tap: late → no-show → sick → off → back in';
+            chip.onclick = () => cycleStatus(it.id);
+          }
+          row.appendChild(chip);
+        });
         box.appendChild(row);
       };
-      chips('IN', '#22c55e', inRows, (r) => `<div style="font-size:11px;font-weight:700;color:#b7c8de;`
-        + `background:#101c30;border-radius:7px;padding:4px 8px">${esc(r.name)}`
-        + (r.time ? ` <span style="color:#7ea6dc">${esc(r.time)}</span>` : '') + `</div>`);
+      // BADGED IN AND THEN WENT HOME. The door saw them, so they sit in IN — and the IN
+      // chips said only what time that was. Somebody sent home sick at nine therefore read
+      // as present all day on the one strip the office looks at, while every other part of
+      // the app already knew they were away. If there is a status against a name, it is
+      // the more important half of the chip.
+      chips('IN', '#22c55e', inRows, (r) => {
+        const st = r.id ? (state.attendance[r.id] || 'present') : 'present';
+        const away = AWAY.indexOf(st) >= 0 || st === 'late';
+        return `<div style="font-size:11px;font-weight:700;color:#b7c8de;`
+          + `background:#101c30;border-radius:7px;padding:4px 8px">${esc(r.name)}`
+          + (r.time ? ` <span style="color:#7ea6dc">${esc(r.time)}</span>` : '')
+          + (away ? ` <span style="color:${(STATUS[st] || {}).color || '#fbbf24'}">${esc((STATUS[st] || {}).label || st.toUpperCase())}</span>` : '')
+          + `</div>`;
+      });
       chips('NOT IN', '#fbbf24', outRows, (r) => `<div style="font-size:11px;font-weight:700;color:#b7c8de;`
         + `background:#101c30;border-radius:7px;padding:4px 8px">${esc(r.name)}`
         + ` <span style="color:${COLOR[r.why]}">${esc(r.why)}</span></div>`);
