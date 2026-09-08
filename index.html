@@ -4536,12 +4536,25 @@ function dismissAssignPicker() { _assignPick = null; render(); }
 // Putting a room BACK in the pool still clears the pin — that is how a pin is
 // undone one room at a time, and it is what the amber button in the picker has
 // always meant.
-function setUnitAssignee(id, pid, pin) {
+function setUnitAssignee(id, pid, pin, clearTie) {
   const u = state.servicedUnits.find(x => x.id === id);
   if (u) {
     u.assignedTo = pid || null;   // '' → auto (by floor owner)
     const tieWas = u.usualTo || null;
-    if (!pid) u.usualTo = null;   // back in the pool: no cleaner, no standing decision
+    // TAKING A ROOM OFF SOMEBODY FOR TODAY IS NOT UNDOING WHOSE ROOM IT IS.
+    //
+    // Clearing the cleaner used to wipe the tie as well, and that was the deliberate way
+    // to undo a pin one room at a time — from the amber "Put it back in the pool" button
+    // in the picker, where it is spelled out. The trouble is that dropping a chip on
+    // NOBODY YET runs the identical call, and on the board it means something completely
+    // different: he is off sick, this needs doing by somebody else TODAY.
+    //
+    // So marking two leaders sick and moving their seven rooms into NOBODY YET quietly
+    // deleted six standing pins — 105, 201, 203, 1002, 1103 and 705 — and the rota was
+    // re-cut by an action nobody would read as re-cutting the rota. Nothing said so.
+    //
+    // The tie now goes only when something asks for it to go.
+    if (!pid && clearTie) u.usualTo = null;
     else if (pin) u.usualTo = pid;
     // A TIE IS AN EDIT, AND AN EDIT HAS TO CARRY THE MOMENT IT WAS MADE. Everything else
     // somebody changes about a room is stamped (stampUnitEdit) so a copy that predates
@@ -10982,7 +10995,7 @@ function viewRollCall(opts) {
     }
     const btnRow = el('<div class="modal-btns"></div>');
     const back = el('<button class="modal-confirm" style="background:#b45309">Put it back in the pool</button>');
-    back.onclick = () => setUnitAssignee(u.id, '');
+    back.onclick = () => setUnitAssignee(u.id, '', false, true);   // the amber button: tie included
     const cancel = el('<button class="modal-skip">Cancel</button>');
     cancel.onclick = () => dismissAssignPicker();
     btnRow.appendChild(cancel); btnRow.appendChild(back);

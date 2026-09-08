@@ -137,6 +137,26 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
   check('a room nobody touched still sits with its pin', afterTimer.untouched === 'pSick',
     String(afterTimer.untouched));
 
+  // PUTTING A ROOM BACK IN THE POOL FOR TODAY MUST NOT RE-CUT THE ROTA.
+  // Dropping a chip on NOBODY YET means "he is off, somebody else does this today".
+  // It ran the same call as the amber "Put it back in the pool" button, which means
+  // "this is not his room any more", and six real pins were deleted that way.
+  const pool = await page.evaluate(() => {
+    const u = state.servicedUnits.find((x) => x.id === 'su202');
+    const pinWas = u.usualTo;
+    setUnitAssignee('su202', '');                    // dropped on NOBODY YET
+    return { pinWas, pinNow: u.usualTo, held: u.assignedTo };
+  });
+  check('a room dropped in NOBODY YET is nobody\'s today', !pool.held, JSON.stringify(pool));
+  check('...but it is still their room', pool.pinNow === 'pSick', JSON.stringify(pool));
+
+  const undo = await page.evaluate(() => {
+    const u = state.servicedUnits.find((x) => x.id === 'su202');
+    setUnitAssignee('su202', '', false, true);       // the amber button, which does mean it
+    return u.usualTo;
+  });
+  check('the amber "put it back in the pool" button still clears the tie', !undo, String(undo));
+
   check('no console errors', errs.length === 0, errs.join('\n       '));
 
   await browser.close(); s.close();
