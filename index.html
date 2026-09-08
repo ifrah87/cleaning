@@ -9201,14 +9201,27 @@ function viewTick() {
 
     // Only the cleaning crew. A building full of office staff who did not badge in is
     // not a hole in the morning, and listing them would bury the three names that are.
-    const RANK = { 'NO SCAN': 0, 'SICK': 1, 'NO-SHOW': 2, 'OFF': 3, 'OFF ROTA': 4 };
-    const COLOR = { 'NO SCAN': '#fbbf24', 'SICK': '#9333ea', 'NO-SHOW': '#dc2626', 'OFF': '#94a3b8', 'OFF ROTA': '#94a3b8' };
+    const RANK = { 'NO SCAN': 0, 'LATE': 1, 'SICK': 2, 'NO-SHOW': 3, 'OFF': 4, 'OFF ROTA': 5 };
+    const COLOR = { 'NO SCAN': '#fbbf24', 'LATE': '#b45309', 'SICK': '#9333ea', 'NO-SHOW': '#dc2626', 'OFF': '#94a3b8', 'OFF ROTA': '#94a3b8' };
     const outRows = cleaningStaff()
       .filter((x) => !hikArrivals[x.id])
       .map((x) => {
         const st = state.attendance[x.id] || 'present';
-        const why = !worksToday(x) ? 'OFF ROTA'
-          : st === 'off' ? 'OFF' : st === 'sick' ? 'SICK' : st === 'noshow' ? 'NO-SHOW' : 'NO SCAN';
+        // EVERY TAP HAS TO CHANGE SOMETHING ON THE SCREEN, or the control reads as broken
+        // and people stop using it. Two ways this chip stayed silent while the tap worked:
+        //
+        //   · 'late' was not in the list, so it fell through to NO SCAN — the FIRST tap on
+        //     anybody who had not scanned changed the label to exactly what it already
+        //     said. One tap, no feedback, and the office concluded the button was dead.
+        //   · OFF ROTA was tested first and outranked everything, so a chip for somebody
+        //     the rota has off could never change at all, however many times it was tapped.
+        //
+        // What the office SAYS about today outranks what the rota expected of today —
+        // "he is off the rota but he is here and he is sick" is a real sentence, and the
+        // status is the half of it somebody had to type in.
+        const why = st === 'off' ? 'OFF' : st === 'sick' ? 'SICK' : st === 'noshow' ? 'NO-SHOW'
+          : st === 'late' ? 'LATE'
+          : !worksToday(x) ? 'OFF ROTA' : 'NO SCAN';
         return { id: x.id, name: x.name, why };
       })
       .sort((a, b) => (RANK[a.why] - RANK[b.why]) || String(a.name).localeCompare(String(b.name)));
