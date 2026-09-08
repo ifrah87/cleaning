@@ -13420,6 +13420,26 @@ function render() {
       + `style="display:flex;align-items:center;gap:5px;font-size:11px;font-weight:700;color:${dot[0]}">`
       + `<span style="width:7px;height:7px;border-radius:4px;background:${dot[0]};display:inline-block"></span>${dot[1]}</div>`);
     bar.appendChild(sync);
+    // WHICH CODE IS THIS SCREEN RUNNING? Nothing anywhere said. The dot above reports on
+    // the DATA — whether this device is holding an unsent change — and says nothing about
+    // the app itself, so a phone quietly running a week-old copy looked identical to one
+    // running the newest. Every "I tapped it and nothing happened" then had two possible
+    // answers and no way to tell them apart: a broken feature, or an old page. The office
+    // and whoever is fixing it both spent that argument blind.
+    //
+    // document.lastModified is when THIS page was built, straight from the server that
+    // served it — no build step, no constant anybody has to remember to bump, and it
+    // cannot lie about the file it came from. Read it aloud and two screens can be
+    // compared across a room.
+    try {
+      const lm = new Date(document.lastModified);
+      if (!isNaN(lm.getTime())) {
+        const v = lm.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
+          + ' ' + lm.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+        bar.appendChild(el(`<div title="The version of the app this screen is running" `
+          + `style="font-size:11px;font-weight:700;color:#6f8ab0">app ${esc(v)}</div>`));
+      }
+    } catch (e) {}
   }
   // ONE SMALL BUTTON, IN THE CORNER WITH THE OTHER TWO. It says where it takes you, not
   // where you are: on today it reads Tomorrow, on tomorrow it reads Today. Ahead of the
