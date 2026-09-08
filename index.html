@@ -9856,7 +9856,27 @@ function servicedCard(u, isDue) {
   // here would quietly move the room off the leader it belongs to.
   // And only the ones the rota has in today — naming somebody who is at home is the
   // same mistake as naming an assistant, made one step earlier.
-  const rmPick = cleaningStaff().filter(p => canCleanUnit(p, u) && p.isLeader && onDutyToday(p));
+  // WHO CLEANED IT IS A FACT, NOT A SCHEDULING DECISION.
+  //
+  // This offered leaders only, for a good reason: a room is the leader's round and the
+  // assistant works it with them, so naming the assistant would quietly move the room off
+  // the person it belongs to. That reasoning holds while the leader is THERE.
+  //
+  // On 8 Sep two leaders were off sick and their rooms were done by two assistants. There
+  // was no way to say so: the assistants hold no column on the board, so the work could
+  // not be dropped on them, and this list would not name them either. The office could
+  // record the rooms as cleaned by somebody who was at home, or not record who did them
+  // at all. Both are worse than the thing this filter was protecting against.
+  //
+  // Anybody who actually badged in can be named. Leaders first, because they still are
+  // the answer nearly every time; the rest are there for the mornings they are not.
+  // mayGiveRoomTo — which governs what the app deals on its own — is untouched: it still
+  // refuses to hand an assistant a round. This is a person recording what happened.
+  const inToday = (p) => !!(hikArrivals && hikArrivals[p.id]);
+  const rmPick = cleaningStaff()
+    .filter((p) => canCleanUnit(p, u) && (p.isLeader ? onDutyToday(p) : inToday(p)))
+    .sort((a, b) => (b.isLeader ? 1 : 0) - (a.isLeader ? 1 : 0)
+      || String(a.name).localeCompare(String(b.name)));
   rmPick.forEach(p => {
     const o = el(`<option value="${esc(p.id)}">${esc(p.name)}</option>`);
     if (u.assignedTo === p.id) o.setAttribute('selected', '');
