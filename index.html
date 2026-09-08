@@ -9228,6 +9228,12 @@ function viewTick() {
 
     if (inRows.length || outRows.length) {
       const box = el('<div class="bd-panel"></div>');
+      // A CONTROL NOBODY CAN SEE IS NOT A CONTROL. These chips have been tappable since
+      // the status button was put back, and they look exactly like the caption they used
+      // to be — so the office asked where to mark somebody absent while looking straight
+      // at the thing that does it. Say so, once, above the names.
+      box.appendChild(el(`<div style="font-size:10px;font-weight:700;letter-spacing:0.04em;color:#6f8ab0">`
+        + `TAP A NAME TO MARK THEM LATE, SICK OR OFF</div>`));
       // TAP A NAME TO SAY WHAT IS WRONG WITH IT.
       //
       // cycleStatus — mark somebody late, a no-show, SICK or off; release the rooms they
@@ -9273,14 +9279,15 @@ function viewTick() {
         const st = r.id ? (state.attendance[r.id] || 'present') : 'present';
         const away = AWAY.indexOf(st) >= 0 || st === 'late';
         return `<div style="font-size:11px;font-weight:700;color:#b7c8de;`
-          + `background:#101c30;border-radius:7px;padding:4px 8px">${esc(r.name)}`
+          + `background:#16233a;border:1px solid #3d557f;border-radius:7px;padding:5px 9px">${esc(r.name)}`
           + (r.time ? ` <span style="color:#7ea6dc">${esc(r.time)}</span>` : '')
           + (away ? ` <span style="color:${(STATUS[st] || {}).color || '#fbbf24'}">${esc((STATUS[st] || {}).label || st.toUpperCase())}</span>` : '')
           + `</div>`;
       });
       chips('NOT IN', '#fbbf24', outRows, (r) => `<div style="font-size:11px;font-weight:700;color:#b7c8de;`
-        + `background:#101c30;border-radius:7px;padding:4px 8px">${esc(r.name)}`
-        + ` <span style="color:${COLOR[r.why]}">${esc(r.why)}</span></div>`);
+        + `background:#16233a;border:1px solid #3d557f;border-radius:7px;padding:5px 9px">${esc(r.name)}`
+        + ` <span style="color:${COLOR[r.why]}">${esc(r.why)}</span>`
+        + ` <span style="color:#5f7189;font-weight:800">▾</span></div>`);
       top.appendChild(box);
     }
   }
