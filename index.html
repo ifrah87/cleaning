@@ -1195,12 +1195,25 @@ function removeSite(name) { state.sites = getSites().filter((s) => s.name !== na
 // Kept apart on purpose. A Tuesday he was pulled across to another block is not a change
 // to every Tuesday, and typing it as one is exactly how a standing rota quietly rots into
 // something nobody trusts. An override is one date and expires by being in the past.
-function siteFor(p, day) {
-  if (!p) return null;
+// A DAY CAN BE MORE THAN ONE BUILDING. This started as one place per day, which is what
+// an off-site day sounded like — and then the real schedule arrived: on a Saturday Nur is
+// at M.Xarbi, Shaam AND Cagadiid, a round of three. A single name could not say that, and
+// picking one of the three would put the board confidently in the wrong place.
+//
+// Stored as a list, and a bare string is read as a list of one so nothing already typed in
+// has to be redone. siteFor keeps returning a string because every screen wants one to
+// print; siteNamesFor is for the places that need to reason about them.
+function siteNamesFor(p, day) {
+  if (!p) return [];
+  const norm = (v) => !v ? [] : (Array.isArray(v) ? v.filter(Boolean) : [v]);
   const ov = (state.siteDay || {})[day];
-  if (ov && Object.prototype.hasOwnProperty.call(ov, p.id)) return ov[p.id] || null;   // '' = pulled back here
+  if (ov && Object.prototype.hasOwnProperty.call(ov, p.id)) return norm(ov[p.id]);   // '' = pulled back here
   const dow = new Date(day + 'T00:00:00').getDay();
-  return ((p.siteOn || {})[dow]) || null;
+  return norm((p.siteOn || {})[dow]);
+}
+function siteFor(p, day) {
+  const n = siteNamesFor(p, day);
+  return n.length ? n.join(', ') : null;
 }
 const siteToday = (p) => siteFor(p, workToday());
 const hasSitePattern = (p) => !!(p && p.siteOn && Object.keys(p.siteOn).length);
@@ -1211,33 +1224,41 @@ const worksOffSite = (p) => hasSitePattern(p) || !!siteToday(p);
 
 // Tap a weekday to walk it round the buildings and back to here. Same shape as the rest
 // day cycling next to it, because it is the same gesture asked about a different fact.
-function cycleSiteOn(pid, dow) {
+// Turn one building on or off for one weekday. A round of three is three taps, and any
+// of them can come off again without disturbing the others.
+function toggleSiteOn(pid, dow, name) {
   const p = (state.staff || []).find((x) => x.id === pid);
-  if (!p) return;
-  const names = getSites().map((s) => s.name);
-  if (!names.length) return;                       // no buildings set up yet: nothing to cycle to
-  const cur = (p.siteOn || {})[dow] || '';
-  const i = names.indexOf(cur);
-  const next = i < 0 ? names[0] : (i + 1 >= names.length ? '' : names[i + 1]);
+  if (!p || !name) return;
+  const raw = (p.siteOn || {})[dow];
+  const list = !raw ? [] : (Array.isArray(raw) ? raw.slice() : [raw]);
+  const at = list.indexOf(name);
+  if (at >= 0) list.splice(at, 1); else list.push(name);
   if (!p.siteOn) p.siteOn = {};
-  if (next) p.siteOn[dow] = next; else delete p.siteOn[dow];
+  if (list.length) p.siteOn[dow] = list; else delete p.siteOn[dow];
   if (!Object.keys(p.siteOn).length) delete p.siteOn;
   save(); render();
 }
 // One day changed. Landing back on what the pattern already says DELETES the override
 // rather than storing it — otherwise every "no, he is here after all" would freeze that
 // date against a rota that later changes underneath it.
-function cycleSiteDay(pid, day) {
+// One day changed. Toggling a building for TODAY starts from whatever the pattern says,
+// so "he is at Shaam as well today" adds to his round rather than replacing it. Landing
+// back on exactly what the pattern already says deletes the override rather than freezing
+// that date against a rota that later changes underneath it.
+function toggleSiteDay(pid, day, name) {
   const p = (state.staff || []).find((x) => x.id === pid);
   if (!p) return;
-  const ring = [''].concat(getSites().map((s) => s.name));
-  const cur = siteFor(p, day) || '';
-  const next = ring[(ring.indexOf(cur) + 1) % ring.length];
-  const pattern = ((p.siteOn || {})[new Date(day + 'T00:00:00').getDay()]) || '';
+  const list = siteNamesFor(p, day).slice();
+  const at = list.indexOf(name);
+  if (at >= 0) list.splice(at, 1); else list.push(name);
+  const dow = new Date(day + 'T00:00:00').getDay();
+  const raw = (p.siteOn || {})[dow];
+  const pattern = !raw ? [] : (Array.isArray(raw) ? raw : [raw]);
   if (!state.siteDay) state.siteDay = {};
   if (!state.siteDay[day]) state.siteDay[day] = {};
-  if (next === pattern) delete state.siteDay[day][pid];
-  else state.siteDay[day][pid] = next;
+  const same = list.length === pattern.length && list.every((x) => pattern.indexOf(x) >= 0);
+  if (same) delete state.siteDay[day][pid];
+  else state.siteDay[day][pid] = list;
   if (!Object.keys(state.siteDay[day]).length) delete state.siteDay[day];
   save(); render();
 }
@@ -9340,6 +9361,10 @@ function viewTick() {
     // not a hole in the morning, and listing them would bury the three names that are.
     const RANK = { 'NO SCAN': 0, 'LATE': 1, 'SICK': 2, 'NO-SHOW': 3, 'OFF': 4, 'OFF ROTA': 5 };
     const COLOR = { 'NO SCAN': '#fbbf24', 'LATE': '#b45309', 'SICK': '#9333ea', 'NO-SHOW': '#dc2626', 'OFF': '#94a3b8', 'OFF ROTA': '#94a3b8' };
+    // Off-site sorts last and wears the site colour: it is the one line here that means
+    // the day is going to plan, and amber is reserved for what somebody has to act on.
+    const rankOf = (r) => (r.at ? 6 : RANK[r.why]);
+    const colourOf = (r) => (r.at ? '#67e8f9' : COLOR[r.why]);
     const outRows = cleaningStaff()
       .filter((x) => !hikArrivals[x.id])
       .map((x) => {
@@ -9356,12 +9381,18 @@ function viewTick() {
         // What the office SAYS about today outranks what the rota expected of today —
         // "he is off the rota but he is here and he is sick" is a real sentence, and the
         // status is the half of it somebody had to type in.
+        // WHERE HE IS BEATS "THIS DOOR DID NOT SEE HIM". Somebody working one of the
+        // other properties has not badged in here and never will — this reader is not the
+        // one he walks past — so the strip called him NO SCAN while his own column two
+        // inches below said AT 2 DHAGAX. One screen, two answers, and the wrong one first.
+        const at = siteFor(x, workToday());
         const why = st === 'off' ? 'OFF' : st === 'sick' ? 'SICK' : st === 'noshow' ? 'NO-SHOW'
           : st === 'late' ? 'LATE'
+          : at ? ('AT ' + String(at).toUpperCase())
           : !worksToday(x) ? 'OFF ROTA' : 'NO SCAN';
-        return { id: x.id, name: x.name, why };
+        return { id: x.id, name: x.name, why, at: !!at };
       })
-      .sort((a, b) => (RANK[a.why] - RANK[b.why]) || String(a.name).localeCompare(String(b.name)));
+      .sort((a, b) => (rankOf(a) - rankOf(b)) || String(a.name).localeCompare(String(b.name)));
 
     if (inRows.length || outRows.length) {
       const box = el('<div class="bd-panel"></div>');
@@ -9424,7 +9455,7 @@ function viewTick() {
       });
       chips('NOT IN', '#fbbf24', outRows, (r) => `<div style="font-size:11px;font-weight:700;color:#b7c8de;`
         + `background:#16233a;border:1px solid #3d557f;border-radius:7px;padding:5px 9px">${esc(r.name)}`
-        + ` <span style="color:${COLOR[r.why]}">${esc(r.why)}</span>`
+        + ` <span style="color:${colourOf(r)}">${esc(r.why)}</span>`
         + ` <span style="color:#5f7189;font-weight:800">▾</span></div>`);
       top.appendChild(box);
     }
@@ -11737,32 +11768,61 @@ function employeeCard(p) {
   if (p.isCleaner && getSites().length) {
     const sRow = el('<div class="su-ctl" style="border-top:none;padding-top:6px;margin-top:2px;flex-wrap:wrap;align-items:center"></div>');
     sRow.appendChild(el(`<div style="flex:0 0 auto;font-size:11px;color:#5f7189;font-weight:700;margin-right:2px" `
-      + `title="Which building they work at on each day. Blank means here.">Works at</div>`));
+      + `title="Which buildings they work at on each day. Blank means here.">Works at</div>`));
+    const pick = (state.sitePick || {})[p.id];
     WEEKDAYS.forEach(([lbl, dow]) => {
-      const at = (p.siteOn || {})[dow] || '';
-      const col = at ? siteColor(at) : '';
-      const b = el(`<button class="freqmini${at ? ' on' : ''}" title="${esc(at ? 'At ' + at + ' every ' + lbl : 'Here every ' + lbl)}" `
-        + `style="flex:0 0 auto;padding:6px 9px;font-size:11px${at ? ';background:' + col + ';border-color:' + col + ';color:#ffffff' : ''}">`
-        + `${lbl}${at ? '<br><span style="font-size:9px;font-weight:800">' + esc(at.slice(0, 6).toUpperCase()) + '</span>' : ''}</button>`);
-      b.onclick = () => cycleSiteOn(p.id, dow);
+      const raw = (p.siteOn || {})[dow];
+      const on = !raw ? [] : (Array.isArray(raw) ? raw : [raw]);
+      const sel = pick === dow;
+      const col = on.length ? siteColor(on[0]) : '';
+      const b = el(`<button class="freqmini${on.length ? ' on' : ''}" `
+        + `title="${esc(on.length ? lbl + ': ' + on.join(', ') : 'Here every ' + lbl)}" `
+        + `style="flex:0 0 auto;padding:6px 9px;font-size:11px`
+        + `${on.length ? ';background:' + col + ';border-color:' + col + ';color:#ffffff' : ''}`
+        + `${sel ? ';outline:2px solid #38bdf8;outline-offset:1px' : ''}">`
+        + `${lbl}${on.length > 1 ? '<br><span style="font-size:9px;font-weight:800">×' + on.length + '</span>' : ''}</button>`);
+      b.onclick = () => { state.sitePick = { ...(state.sitePick || {}), [p.id]: sel ? null : dow }; save(); render(); };
       sRow.appendChild(b);
     });
     card.appendChild(sRow);
-    // TODAY IS THE ONE THE OFFICE ACTUALLY CHANGES, and it must not be typed in as a
-    // change to every Tuesday. Separate control, separate store, gone by tomorrow.
+    // A DAY CAN BE A ROUND OF SEVERAL. Tapping a weekday opens the buildings for that day
+    // rather than walking one at a time round a list — on a Saturday this crew is at three
+    // of them, and a control that can only say one would have to lie about two.
+    if (pick !== null && pick !== undefined) {
+      const raw = (p.siteOn || {})[pick];
+      const on = !raw ? [] : (Array.isArray(raw) ? raw : [raw]);
+      const bRow = el('<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:0 0 6px"></div>');
+      const lbl = (WEEKDAYS.find(([, d]) => d === pick) || ['?'])[0];
+      bRow.appendChild(el(`<div style="font-size:11px;color:#5f7189;font-weight:700;flex:0 0 auto">${esc(lbl)} at</div>`));
+      getSites().forEach((t) => {
+        const isOn = on.indexOf(t.name) >= 0;
+        const b = el(`<button class="freqmini${isOn ? ' on' : ''}" style="flex:0 0 auto;padding:6px 10px;font-size:11px`
+          + `${isOn ? ';background:' + t.color + ';border-color:' + t.color + ';color:#ffffff' : ''}">`
+          + `${isOn ? '✓ ' : ''}${esc(t.name)}</button>`);
+        b.onclick = () => toggleSiteOn(p.id, pick, t.name);
+        bRow.appendChild(b);
+      });
+      card.appendChild(bRow);
+      card.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin:-2px 0 6px">`
+        + (on.length ? esc('Every ' + lbl + ': ' + on.join(', ')) : esc('Here every ' + lbl)) + `</div>`));
+    }
+    // TODAY, which is the one the office actually changes, and must not be typed in as a
+    // change to every one of these weekdays.
     const day = selectedDay || workToday();
-    const now = siteFor(p, day);
-    const pat = ((p.siteOn || {})[dowOf(day)]) || '';
-    const tRow = el('<div style="display:flex;align-items:center;gap:8px;margin:0 0 6px"></div>');
-    const tb = el(`<button class="freqmini" style="flex:0 0 auto;padding:6px 10px;font-size:11px`
-      + `${now ? ';border-color:' + siteColor(now) + ';color:' + siteColor(now) + ';font-weight:800' : ''}">`
-      + `Today: ${esc(now || 'here')} · change</button>`);
-    tb.onclick = () => cycleSiteDay(p.id, day);
-    tRow.appendChild(tb);
-    tRow.appendChild(el(`<div style="font-size:11px;color:#5f7189;flex:1">`
-      + ((now || '') !== pat ? 'Just for today — the weekly pattern is unchanged.'
-                             : 'Following the weekly pattern above.') + `</div>`));
+    const now = siteNamesFor(p, day);
+    const tRow = el('<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:0 0 6px"></div>');
+    tRow.appendChild(el(`<div style="font-size:11px;color:#5f7189;font-weight:700;flex:0 0 auto">Today</div>`));
+    getSites().forEach((t) => {
+      const isOn = now.indexOf(t.name) >= 0;
+      const b = el(`<button class="freqmini${isOn ? ' on' : ''}" style="flex:0 0 auto;padding:5px 9px;font-size:11px`
+        + `${isOn ? ';background:' + t.color + ';border-color:' + t.color + ';color:#ffffff' : ''}">`
+        + `${isOn ? '✓ ' : ''}${esc(t.name)}</button>`);
+      b.onclick = () => toggleSiteDay(p.id, day, t.name);
+      tRow.appendChild(b);
+    });
     card.appendChild(tRow);
+    card.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin:-2px 0 8px">`
+      + (now.length ? esc('Today: ' + now.join(', ')) : 'Here today') + `</div>`));
   }
 
   // WORKS ON — only worth the room for cleaners; nobody is handing rooms to the

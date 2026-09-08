@@ -103,7 +103,7 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
     addSite('2 Dhagax');
     const p = state.staff.find((x) => x.id === 'p3');       // Sidow Cali
     const today = workToday();
-    p.siteOn = { [dowOf(today)]: '2 Dhagax' };              // there every one of these
+    p.siteOn = { [dowOf(today)]: ['2 Dhagax'] };            // there every one of these
     render();
     const cols = tvColumns();
     const his = cols.find((c) => /Sidow/.test(c.name));
@@ -137,12 +137,39 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
   const override = await page.evaluate(() => {
     const p = state.staff.find((x) => x.id === 'p3');
     const day = workToday();
-    while (siteFor(p, day)) cycleSiteDay(p.id, day);        // walk it round to "here"
-    return { today: siteFor(p, day), patternKept: (p.siteOn || {})[dowOf(day)] || null };
+    siteNamesFor(p, day).slice().forEach((n) => toggleSiteDay(p.id, day, n));
+    const pat = (p.siteOn || {})[dowOf(day)];
+    return { today: siteFor(p, day), patternKept: (Array.isArray(pat) ? pat[0] : pat) || null };
   });
   check('today can be overridden to here', !override.today, JSON.stringify(override));
   check('...without changing the weekly pattern', override.patternKept === '2 Dhagax',
     JSON.stringify(override));
+
+  // A DAY CAN BE A ROUND OF SEVERAL. Saturday for this crew is three buildings.
+  const many = await page.evaluate(() => {
+    addSite('M.Xarbi'); addSite('Shaam'); addSite('Cagadiid');
+    const p = state.staff.find((x) => x.id === 'p3');
+    const day = workToday(), dow = dowOf(day);
+    // the override set above says "here today"; the pattern is what we are testing now
+    if (state.siteDay && state.siteDay[day]) delete state.siteDay[day][p.id];
+    p.siteOn = {};
+    ['M.Xarbi', 'Shaam', 'Cagadiid'].forEach((n) => toggleSiteOn(p.id, dow, n));
+    render();
+    const col = tvColumns().find((c) => /Sidow/.test(c.name)) || {};
+    return { names: siteNamesFor(p, day), shown: col.site, stored: p.siteOn[dow] };
+  });
+  check('all three buildings are held for the day', many.names.length === 3, JSON.stringify(many));
+  check('...and the board prints the whole round',
+    /M.Xarbi/.test(many.shown || '') && /Shaam/.test(many.shown || '') && /Cagadiid/.test(many.shown || ''),
+    JSON.stringify(many));
+
+  const dropped = await page.evaluate(() => {
+    const p = state.staff.find((x) => x.id === 'p3');
+    toggleSiteOn(p.id, dowOf(workToday()), 'Shaam');       // one comes off
+    return siteNamesFor(p, workToday());
+  });
+  check('...and one can come off without disturbing the others',
+    dropped.length === 2 && dropped.indexOf('Shaam') < 0, JSON.stringify(dropped));
 
   check('no console errors', errs.length === 0, errs.join('\n       '));
 
