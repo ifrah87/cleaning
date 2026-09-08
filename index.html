@@ -4560,6 +4560,29 @@ function setUnitAssignee(id, pid, pin) {
   if (pid) state.assignConfirmed[id] = todayKey(); else delete state.assignConfirmed[id];
   // A person moved it, so it is no longer the app's to move back — see place().
   if (u) { if (pid) u.autoDealtOn = null; else delete u.autoDealtOn; }
+  // ...AND THE PLAN HAS TO HEAR ABOUT IT, OR THE MOVE IS UNDONE BY A CLOCK.
+  //
+  // A move made on the BOARD wrote u.assignedTo and nothing else. The plan's copy of the
+  // job stayed exactly as the app had dealt it — still marked `auto`, still with the old
+  // name on it — so the next re-sync's re-pin loop saw an automatic job whose room is
+  // tied elsewhere and put it straight back on the pinned cleaner, and mirrorPlanToBoard
+  // then wrote that onto the board. topUpTodayPlan runs that every five minutes, so the
+  // office moved a room, watched it come back, moved it again, and watched it come back:
+  // "I keep moving it and it keeps going back to the person it's pinned on."
+  //
+  // setPlanAssignee has always marked a hand move as byHand — the re-sync needs to tell a
+  // room somebody deliberately gave to a person from one the machine dealt out. A move is
+  // the same decision whichever screen it is made on, so it is recorded the same way.
+  {
+    const day = workToday();
+    const plan = (state.plans || {})[day];
+    const k = planKey('unit', id);
+    if (plan && plan[k]) {
+      plan[k].assignedTo = pid || null;
+      if (pid) plan[k].byHand = true; else delete plan[k].byHand;
+      stampPlanEdit(day);
+    }
+  }
   _assignPick = null;
   save(); render();
 }
