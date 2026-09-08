@@ -1846,6 +1846,10 @@ function scrubDanglingReferences() {
     if (!u) return;
     if (u.assignedTo && !live(u.assignedTo)) { u.assignedTo = null; n += 1; }
     if (u.usualTo && !live(u.usualTo)) { u.usualTo = null; n += 1; }
+    if (Array.isArray(u.assignedWith)) {
+      const keep = u.assignedWith.filter(live);
+      if (keep.length !== u.assignedWith.length) { u.assignedWith = keep.length ? keep : null; n += 1; }
+    }
   });
   (state.areas || []).forEach((a) => {
     if (!a) return;
@@ -4565,6 +4569,12 @@ function setUnitAssignee(id, pid, pin, clearTie) {
     // came back on the Monday morning tied to a man who had been archived the night
     // before. Stamped here, protected in applyRemote; the two only work together.
     if ((u.usualTo || null) !== tieWas) stampUnitEdit(u);
+    // Whoever now answers for it cannot also be named alongside it — same rule the
+    // areas have had since they became shareable.
+    if (pid && Array.isArray(u.assignedWith)) {
+      const rest = u.assignedWith.filter((x) => x !== pid);
+      u.assignedWith = rest.length ? rest : null;      // empty means not shared, not "shared with nobody"
+    }
     // pid without pin: today only. Any existing pin is left exactly as it was, so
     // covering one morning does not quietly re-cut the rota.
   }
@@ -6314,6 +6324,12 @@ function removeEmployee(id) {
     (state.servicedUnits || []).forEach((u) => {
       if (u.assignedTo === id) u.assignedTo = null;
       if (u.usualTo === id) u.usualTo = null;
+      // ...and off any room they were named alongside, or the room keeps a second name
+      // with nobody behind it — the thing the areas already guard against.
+      if (Array.isArray(u.assignedWith)) {
+        const keep = u.assignedWith.filter((x) => x !== id);
+        u.assignedWith = keep.length ? keep : null;
+      }
     });
     (state.areas || []).forEach((a) => {
       if (a.assignedTo === id) a.assignedTo = null;
@@ -6423,6 +6439,35 @@ function setAreaEveryone(id) {
   if (!a.assignedTo || !pool.some((p) => p.id === a.assignedTo)) a.assignedTo = pool[0].id;
   const rest = pool.filter((p) => p.id !== a.assignedTo).map((p) => p.id);
   a.assignedWith = rest.length ? rest : null;
+  save(); render();
+}
+// ONE ROOM, TWO LEADERS. A communal walk has been shareable since the outside pair
+// started doing the bins together — assignedTo answers for it, assignedWith is named
+// alongside — and a ROOM could only ever belong to one person. Most of them should: a
+// room is somebody's and the count only works if it is. But the big ones get done by two
+// leaders together, and until now the office had to give it to one of them and remember
+// the other, or invent a second job.
+//
+// Deliberately the same shape as an area, so everything downstream already works: the job
+// is pushed into both their columns with the second marked `helper`, dedupeJobs and
+// countJobs key on the room id so it is ONE job however many columns it appears in, and
+// the tick is the room's, not the person's, so either of them ticking it finishes it.
+// The owner is who gets the credit in History — somebody has to answer for it.
+function roomHelpers(u) {
+  if (!u || !Array.isArray(u.assignedWith)) return [];
+  return u.assignedWith
+    .map((id) => (state.staff || []).find((p) => p.id === id))
+    .filter(Boolean);
+}
+function toggleRoomHelper(id, pid) {
+  const u = (state.servicedUnits || []).find((x) => x.id === id);
+  if (!u || !pid) return;
+  if (u.assignedTo === pid) return;                 // already answerable for it
+  const cur = Array.isArray(u.assignedWith) ? u.assignedWith.slice() : [];
+  const at = cur.indexOf(pid);
+  if (at >= 0) cur.splice(at, 1); else cur.push(pid);
+  u.assignedWith = cur.length ? cur : null;
+  stampUnitEdit(u);
   save(); render();
 }
 // The names to print after a shared area, on the phone and on the wall alike. Empty for
@@ -9974,7 +10019,46 @@ function servicedCard(u, isDue) {
   }
   asel.onchange = (e) => setUnitAssignee(u.id, e.target.value);
   assignRow.appendChild(asel);
+
   card.appendChild(assignRow);
+
+  // SHARED WITH — the second leader on a big room. Folded away unless it says something:
+  // most rooms are one person's and a row of names on every card would be noise on the
+  // screen the office scrolls most. Offered only to the leaders who could actually take
+  // it, and never to whoever already answers for the room.
+  {
+    const mates = cleaningStaff().filter((p) => p.id !== u.assignedTo && p.isLeader
+      && onDutyToday(p) && canCleanUnit(p, u));
+    const on = roomHelpers(u);
+    if (mates.length || on.length) {
+      const shareOpen = (state.expandedShare || {})[u.id] || on.length > 0;
+      if (!shareOpen) {
+        const b = el(`<button class="freqmini" style="width:100%;padding:7px;font-size:11px;text-align:left;margin-top:6px">`
+          + `+ Share this room with another leader</button>`);
+        b.onclick = () => { state.expandedShare = { ...(state.expandedShare || {}), [u.id]: true }; save(); render(); };
+        card.appendChild(b);
+      } else {
+        const row = el('<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px"></div>');
+        row.appendChild(el(`<div style="font-size:11px;color:#5b6a7f;font-weight:700;flex:0 0 auto" `
+          + `title="Both are on this room. It counts once and either of them can tick it off.">Shared with</div>`));
+        mates.forEach((p) => {
+          const isOn = on.some((x) => x.id === p.id);
+          const b = el(`<button class="freqmini ${isOn ? 'on' : ''}" style="flex:0 0 auto;padding:6px 10px;font-size:11px">`
+            + `${isOn ? '✓ ' : ''}${esc(p.name.split(' ')[0])}</button>`);
+          b.onclick = () => toggleRoomHelper(u.id, p.id);
+          row.appendChild(b);
+        });
+        if (!on.length) {
+          const hide = el(`<button class="freqmini" style="flex:0 0 auto;padding:6px 9px;font-size:11px">▾</button>`);
+          hide.onclick = () => { state.expandedShare = { ...(state.expandedShare || {}), [u.id]: false }; save(); render(); };
+          row.appendChild(hide);
+        }
+        card.appendChild(row);
+        if (on.length) card.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin-top:4px">`
+          + `On both boards, counted once — either of them ticking it finishes it.</div>`));
+      }
+    }
+  }
 
   // WHICH DAYS. Pinning a room to weekdays stops its schedule drifting every time a
   // clean lands late or early. While days are set the frequency is not what decides
@@ -12354,12 +12438,25 @@ function tvJobsByPerson() {
     const air = unitType(u) === 'airbnb';
     const holder = heldBy(u.assignedTo);
     const who = staffById[holder];
+    // Named alongside the owner: the room appears in their column too, marked helper so
+    // it does not buy them a round of their own or count twice at the top.
+    roomHelpers(u).forEach((h) => {
+      if (!h || h.id === holder || !heldBy(h.id)) return;
+      bucket(h.id).push({
+        id: u.id, air, late: timeSlot(u) === 'late', kind: unitType(u),
+        early: timeSlot(u) === 'early', done: cleanedToday(u), helper: true, area: false,
+        label: u.unit + (who ? ' + ' + who.name.split(' ')[0] : ''),
+      });
+    });
     bucket(holder).push({
       id: u.id,
       air,                               // its own colour, wherever it is handed
       late: timeSlot(u) === 'late',      // ...and after the morning round in the column
       kind: unitType(u),                 // ...and its own button, for looking at one job at a time
-      label: u.unit + (air && who ? ' · ' + who.name.split(' ')[0] : ''),
+      // ...and if it is shared, whose help. The owner must be able to see it is not
+      // theirs alone, or the second name exists only on the other person's screen.
+      label: u.unit + (air && who ? ' · ' + who.name.split(' ')[0] : '')
+        + (roomHelpers(u).length ? ' + ' + roomHelpers(u).map((h) => h.name.split(' ')[0]).join(', ') : ''),
       done: cleanedToday(u),
       early: timeSlot(u) === 'early',
       area: false,
