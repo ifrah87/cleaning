@@ -157,6 +157,26 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
   });
   check('the amber "put it back in the pool" button still clears the tie', !undo, String(undo));
 
+  // A SECOND SCREEN MUST NOT UNDO IT. The whole board travels as one blob and the last
+  // writer wins, so the merge keeps the newest HAND edit rather than the newest push —
+  // and an ordinary reassignment used not to be stamped at all, so it had nothing to win
+  // with. Any other device that had not looked since breakfast took the room back.
+  const survives = await page.evaluate(() => {
+    setUnitAssignee('su201', 'pWell');
+    const mine = state.servicedUnits.find((u) => u.id === 'su201');
+    const stamped = !!mine.editedAt;
+    // what a stale device would push: the same room, older, still on the pinned cleaner
+    const theirs = JSON.parse(JSON.stringify(state));
+    const old = theirs.servicedUnits.find((u) => u.id === 'su201');
+    old.assignedTo = 'pSick';
+    old.editedAt = '2020-01-01T00:00:00.000Z';
+    applyRemote(theirs);
+    return { stamped, after: (state.servicedUnits.find((u) => u.id === 'su201') || {}).assignedTo };
+  });
+  check('a hand move is stamped', survives.stamped, JSON.stringify(survives));
+  check('...and a stale copy from another screen cannot undo it',
+    survives.after === 'pWell', JSON.stringify(survives));
+
   check('no console errors', errs.length === 0, errs.join('\n       '));
 
   await browser.close(); s.close();

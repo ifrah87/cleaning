@@ -2635,6 +2635,12 @@ function applyRemote(saved, merging) {
           // decision somebody made about this room, not a fact that drifts. Left out, a
           // phone that had not looked since breakfast pushed the old owner back over it.
           usualTo: mine.usualTo || null,
+          // WHO IS ON IT TODAY, for the same reason as who it belongs to. This was left
+          // out because assignedTo legitimately drifts — the app deals it every morning —
+          // but only a PERSON's change is stamped, so only a person's change is defended
+          // here. An automatic deal carries no editedAt and cannot win this comparison.
+          assignedTo: mine.assignedTo || null,
+          assignedWith: mine.assignedWith || null,
           // WHEN the room wants doing, for the same reason as WHO does it: a standing
           // decision about the room, not a fact that drifts. The early round is capped,
           // so a stale copy pushing preferEarly back on does not just change one room —
@@ -4568,7 +4574,14 @@ function setUnitAssignee(id, pid, pin, clearTie) {
     // be carrying won, every pull. That is how three rooms tied on the Sunday evening
     // came back on the Monday morning tied to a man who had been archived the night
     // before. Stamped here, protected in applyRemote; the two only work together.
-    if ((u.usualTo || null) !== tieWas) stampUnitEdit(u);
+    // EVERY HAND MOVE CARRIES ITS MOMENT, not only the ones that change the tie.
+    // Only a tie change was stamped, so an ordinary reassignment — the commonest hand
+    // edit in the building — went out with no timestamp on it at all. The merge keeps the
+    // newest HAND edit rather than the newest push, and an unstamped change has nothing to
+    // win with: whichever device pushed last took the room back to whatever it was
+    // holding. Two screens open in one office is enough, and it looks exactly like the
+    // move "not staying".
+    stampUnitEdit(u);
     // Whoever now answers for it cannot also be named alongside it — same rule the
     // areas have had since they became shareable.
     if (pid && Array.isArray(u.assignedWith)) {
@@ -13350,6 +13363,23 @@ function renderTV() {
 // may be halfway through typing a room number, and a page that reloads under a thumb is
 // worse than one that is a version behind. It says so instead, and reloads when asked.
 let _newBuild = false;
+// RELOADING ON THE SAME URL CAN LAND BACK ON THE SAME OLD PAGE. The host serves
+// index.html with s-maxage=86400, so Cloudflare's edge will hand out a copy up to a day
+// old — and location.reload() asks that same edge. So the app could correctly notice a
+// new build, offer a Reload button, and give you yesterday's page when you pressed it.
+// On 8 Sep that meant a morning of fixes that were live at the origin and invisible on
+// the office's screens, with no way to tell the difference from the fix not working.
+//
+// A throwaway parameter is a URL the edge has not got, so it must go and fetch. It means
+// nothing to the app and is replaced rather than piled up. The televisions have done this
+// since the same problem was found on them; the phones were left asking politely.
+function reloadFresh() {
+  try {
+    const u = new URL(location.href);
+    u.searchParams.set('v', String(Date.now()));
+    location.replace(u.toString());
+  } catch (e) { location.reload(); }
+}
 function startBuildWatch() {
   let seen = null;
   const check = () => {
@@ -13527,7 +13557,7 @@ function startTVLoop() {
     // the numbers it had, and never heard another word. Reckon from the boot when
     // nothing has landed yet — silence since we started is still silence.
     const heardAt = tvLastData || bootedAt;
-    if (Date.now() - heardAt > 30 * 60 * 1000) location.reload();
+    if (Date.now() - heardAt > 30 * 60 * 1000) reloadFresh();
     // THE SOCKET GOES QUIET WITHOUT SAYING SO. The retry ladder hangs off subscribe()'s
     // status callback, and a channel the server has let go does not always report it —
     // the board simply stops hearing, and nothing on the page knows. That is what stood
@@ -13717,7 +13747,7 @@ function render() {
       + `A newer version of the app is ready.</div>`));
     const rb = el(`<button class="freqmini" style="flex:0 0 auto;padding:8px 12px;background:#0284c7;`
       + `border-color:#0284c7;color:#ffffff">Reload</button>`);
-    rb.onclick = () => location.reload();
+    rb.onclick = () => reloadFresh();
     bar.appendChild(rb);
     app.appendChild(bar);
   }
