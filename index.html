@@ -989,7 +989,20 @@ const takesRooms = (p) => !!p && !noAuto(p);
 // outranks all of it, and setUnitAssignee is where that happens.
 function mayGiveRoomTo(u, toId) {
   if (!u || !toId) return false;
-  if (u.usualTo && u.usualTo !== toId) return false;      // tied elsewhere: not the app's to move
+  // A TIE SAYS WHOSE ROOM IT NORMALLY IS, NOT THAT NOBODY MAY CLEAN IT WHILE THEY ARE
+  // AT HOME. This refused outright, so every room tied to somebody off sick was stranded:
+  // the share-out could not place them, the morning deal would not touch them, and they
+  // sat in NOBODY YET until a person moved each one by hand. On 8 Sep that was seven
+  // rooms across two absent leaders — the exact morning the share-out exists for.
+  //
+  // The tie still wins every day its person could take the room. It stops applying only
+  // when they are marked away or the rota does not have them in, which is precisely when
+  // holding the room for them means it does not get cleaned.
+  if (u.usualTo && u.usualTo !== toId) {
+    const owner = (state.staff || []).find((x) => x.id === u.usualTo);
+    const ownerCanTakeIt = !!owner && worksToday(owner) && !isAway(owner.id);
+    if (ownerCanTakeIt) return false;                    // tied elsewhere, and they are here for it
+  }
   if ((state.removedStaff || {})[toId]) return false;     // archived
   const p = (state.staff || []).find((x) => x.id === toId);
   if (!p) return false;                                   // not on the roster
@@ -3092,7 +3105,21 @@ function whoCleansFloor(floor) {
 // ============================================================
 function cycleStatus(pid) {
   const cur = state.attendance[pid] || 'present';
-  const next = STATUS_ORDER[(STATUS_ORDER.indexOf(cur)+1) % STATUS_ORDER.length];
+  setStatus(pid, STATUS_ORDER[(STATUS_ORDER.indexOf(cur)+1) % STATUS_ORDER.length]);
+}
+// SICK IS THE ONE THE OFFICE ACTUALLY NEEDS, SO IT IS ONE TAP.
+//
+// The chip cycled present → late → no-show → sick → off, which is four taps to say the
+// only thing anybody says at seven in the morning, with two states nobody sets by hand in
+// between — and overshooting means going round again. "It should just be SICK."
+//
+// So a tap marks them sick, and a tap on somebody already away puts them back. Late and
+// no-show still exist and are still what the rota and the door reader infer on their own;
+// this control is for the sentence a person says out loud.
+function toggleSick(pid) {
+  setStatus(pid, AWAY.includes(state.attendance[pid] || 'present') ? 'present' : 'sick');
+}
+function setStatus(pid, next) {
   state.attendance[pid] = next;
 
   if (AWAY.includes(next)) {
@@ -3102,6 +3129,22 @@ function cycleStatus(pid) {
     (state.servicedUnits || []).forEach((u) => {
       if (u.assignedTo === pid && !cleanedToday(u)) { u.assignedTo = null; delete state.assignConfirmed[u.id]; }
     });
+    // AND SOMEBODY HAS TO DO THE WORK. Letting go of the rooms was only half of it: they
+    // landed in NOBODY YET and stayed there, because the only thing that deals them is
+    // maybeAutoAssign, which is gated on the auto hand-out switch — off on this building.
+    // So marking a leader sick reliably produced a pile of unhanded rooms and no hint
+    // that anything else was expected of you.
+    //
+    // Marking somebody away IS the instruction to share their round out, so it does not
+    // wait to be asked twice, and it does not consult the automation switch: that switch
+    // governs whether the app deals the morning unprompted, and this is a person telling
+    // it something. Anything nobody is cleared for still stays unhanded and visible.
+    const shared = sharePersonsRoomsOut(workToday(), pid);
+    if (shared.moved || shared.stranded) {
+      hikSyncMsg = shared.stranded
+        ? { err: true, text: 'Shared ' + shared.moved + ' of their rooms out — ' + shared.stranded + ' left for you to place.' }
+        : { text: 'Shared ' + shared.moved + ' room' + (shared.moved === 1 ? '' : 's') + ' round the rest.' };
+    }
     // Does this person own any serviced units (via their floors)?
     const affected = unitsOwnedBy(pid);
     if (affected.length) {
@@ -9233,7 +9276,7 @@ function viewTick() {
       // to be — so the office asked where to mark somebody absent while looking straight
       // at the thing that does it. Say so, once, above the names.
       box.appendChild(el(`<div style="font-size:10px;font-weight:700;letter-spacing:0.04em;color:#6f8ab0">`
-        + `TAP A NAME TO MARK THEM LATE, SICK OR OFF</div>`));
+        + `TAP A NAME TO MARK THEM SICK · TAP AGAIN TO PUT THEM BACK</div>`));
       // TAP A NAME TO SAY WHAT IS WRONG WITH IT.
       //
       // cycleStatus — mark somebody late, a no-show, SICK or off; release the rooms they
@@ -9263,8 +9306,9 @@ function viewTick() {
           // that matches nobody has nothing to set it on.
           if (it.id) {
             chip.style.cursor = 'pointer';
-            chip.title = 'Tap: late → no-show → sick → off → back in';
-            chip.onclick = () => cycleStatus(it.id);
+            const away = AWAY.includes(state.attendance[it.id] || 'present');
+            chip.title = away ? 'Tap to put them back in' : 'Tap to mark them sick';
+            chip.onclick = () => toggleSick(it.id);
           }
           row.appendChild(chip);
         });

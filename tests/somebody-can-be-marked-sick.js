@@ -123,20 +123,13 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
       if (c) c.onclick();
     };
     const seen = [];
-    for (let i = 0; i < 4; i += 1) { tap(); seen.push(state.attendance.pSick); }
+    tap(); seen.push(state.attendance.pSick);      // one tap is all it should take
     return seen;
   });
-  check('tapping walks the status round', cycled[0] === 'late' && cycled.includes('sick'),
-    JSON.stringify(cycled));
+  check('one tap marks them sick', cycled[0] === 'sick', JSON.stringify(cycled));
 
   const whenSick = await page.evaluate(() => {
-    // land it on sick whatever the cycle position
-    let n = 0;
-    while (state.attendance.pSick !== 'sick' && n < 8) {
-      const c = [...document.querySelectorAll('.bd-panel div')]
-        .filter((e) => /Hodan/.test(e.textContent) && e.onclick)[0];
-      if (c) c.onclick(); n += 1;
-    }
+    if (state.attendance.pSick !== 'sick') toggleSick('pSick');
     return { status: state.attendance.pSick, away: isAway('pSick'),
       stillHolding: (state.servicedUnits || []).filter((u) => u.assignedTo === 'pSick').map((u) => u.unit) };
   });

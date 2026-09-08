@@ -1,7 +1,7 @@
 /**
  * MARKING SOMEBODY SICK MEANS THE SAME THING TO EVERY PASS.
  *
- * Run:  NODE_PATH="$(pwd)/scraper/node_modules" node tests/marking-somebody-sick-means-something.js
+ * Run:  NODE_PATH="$(pwd)/scraper/node_modules" node tests/sick-hands-the-round-on.js
  *
  * The office runs the morning from a phone: somebody rings in sick, they are marked
  * sick, and "Off — share out" deals their rooms round whoever is actually in. That part
@@ -94,68 +94,41 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
   await page.waitForSelector('.header', { timeout: 20000 });
   await page.waitForTimeout(3000);
 
-  console.log('\n\x1b[1mSomebody rings in sick and the office sorts the morning out\x1b[0m');
+  console.log('\n\x1b[1mMarking a leader sick hands their round on\x1b[0m');
 
-  const shared = await page.evaluate(() => {
+  const before = await page.evaluate(() => {
     const day = workToday();
     const plan = getPlan(day);
-    [['su201', '201'], ['su202', '202'], ['su203', '203']].forEach(([id, lbl]) => {
-      plan['unit:' + id] = { kind: 'unit', refId: id, label: 'Unit ' + lbl, assignedTo: 'pSick', auto: true };
+    ['su201', 'su202', 'su203'].forEach((id, i) => {
+      plan['unit:' + id] = { kind: 'unit', refId: id, label: 'Unit 20' + (i + 1), assignedTo: 'pSick', auto: true };
     });
-    state.attendance.pSick = 'sick';          // the office marks them sick on the phone
-    const r = sharePersonsRoomsOut(day, 'pSick');
-    return { moved: r.moved, stranded: r.stranded,
-      tied: ['su201', 'su202'].map((id) => plan['unit:' + id].assignedTo),
-      untied: plan['unit:su203'].assignedTo };
+    return Object.values(plan).filter((j) => j.assignedTo === 'pSick').length;
   });
-  // A TIE USED TO STRAND THE ROOM, and this test asserted that. It was the behaviour and
-  // it was wrong: holding a room for a man who is at home means it is not cleaned. A tie
-  // now stops applying while its owner is away, so the share-out places these too — see
-  // mayGiveRoomTo. Kept as a check that they go SOMEWHERE, and to whoever is actually in.
-  check('an untied room shares out to whoever is in', shared.untied === 'pWell', JSON.stringify(shared));
-  check('...and a tied room is shared out too, now its owner is away',
-    shared.tied.every((w) => w === 'pWell'), JSON.stringify(shared));
+  check('the sick leader starts with their round', before === 3, String(before));
 
-  // So the office places them by hand, which is the whole point of having the phone.
-  const placed = await page.evaluate(() => {
-    const day = workToday();
-    setPlanAssignee(day, 'unit:su201', 'pWell');
-    setPlanAssignee(day, 'unit:su202', 'pWell');
-    const plan = getPlan(day);
-    return ['su201', 'su202', 'su203'].map((id) => plan['unit:' + id].assignedTo);
-  });
-  check('the office can place a tied room on somebody else', placed.every((w) => w === 'pWell'),
-    JSON.stringify(placed));
-
-  // The five-minute top-up. Nobody touches the app; a clock runs this.
-  const afterTimer = await page.evaluate(() => {
-    const r = topUpTodayPlan();                 // exactly what startDayWatch fires
+  const after = await page.evaluate(() => {
+    toggleSick('pSick');                       // ONE tap
     const plan = getPlan(workToday());
-    return { repinned: r.repinned,
-      who: ['su201', 'su202', 'su203'].map((id) => plan['unit:' + id].assignedTo) };
+    const who = {};
+    Object.values(plan).forEach((j) => { const k = j.assignedTo || 'NOBODY'; who[k] = (who[k] || 0) + 1; });
+    return { who, onSick: who.pSick || 0, stranded: who.NOBODY || 0,
+      tiedStill: (state.servicedUnits || []).filter((u) => u.usualTo === 'pSick').map((u) => u.unit) };
   });
-  check('the timer does NOT put them back on the cleaner at home',
-    afterTimer.who.every((w) => w === 'pWell'), JSON.stringify(afterTimer));
+  check('nothing is left on the person at home', after.onSick === 0, JSON.stringify(after.who));
+  check('...and their TIED rooms were handed on, not stranded', after.stranded === 0,
+    JSON.stringify(after.who));
+  check('...while the ties themselves are untouched, for when they are back',
+    after.tiedStill.length === 2, JSON.stringify(after.tiedStill));
 
-  const afterTwice = await page.evaluate(() => {
-    topUpTodayPlan(); topUpTodayPlan(); topUpTodayPlan();
-    const plan = getPlan(workToday());
-    return ['su201', 'su202', 'su203'].map((id) => plan['unit:' + id].assignedTo);
+  // The tie must still win on an ordinary day, or this has broken pinning outright.
+  const backAtWork = await page.evaluate(() => {
+    toggleSick('pSick');                       // and one tap back
+    const u = (state.servicedUnits || []).find((x) => x.id === 'su201');
+    return { mayGiveToOther: mayGiveRoomTo(u, 'pWell'), mayGiveToOwner: mayGiveRoomTo(u, 'pSick') };
   });
-  check('...and still not, however many times it runs the morning',
-    afterTwice.every((w) => w === 'pWell'), JSON.stringify(afterTwice));
-
-  // The pin must still do its job on a normal day, or this fix has broken the feature.
-  const wellDay = await page.evaluate(() => {
-    const day = workToday();
-    state.attendance.pSick = 'present';                  // back at work tomorrow
-    const plan = getPlan(day);
-    plan['unit:su201'].assignedTo = null;
-    delete plan['unit:su201'].byHand;
-    topUpTodayPlan();
-    return plan['unit:su201'].assignedTo;
-  });
-  check('a pin still claims its room when its cleaner is in', wellDay === 'pSick', String(wellDay));
+  check('back at work, the tie blocks anybody else again',
+    backAtWork.mayGiveToOther === false && backAtWork.mayGiveToOwner === true,
+    JSON.stringify(backAtWork));
 
   check('no console errors', errs.length === 0, errs.join('\n       '));
 
