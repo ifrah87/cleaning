@@ -1221,6 +1221,20 @@ const hasSitePattern = (p) => !!(p && p.siteOn && Object.keys(p.siteOn).length);
 // keeps their own column on the days they are here too — the point of giving them one is
 // that there is a fixed place on the wall you find them, whatever the answer is today.
 const worksOffSite = (p) => hasSitePattern(p) || !!siteToday(p);
+// SOMEBODY WHO WORKS THE OTHER PROPERTIES MAY NOT BE ON THIS BUILDING'S CLEANING CREW,
+// and that is a perfectly sensible thing for the office to have recorded: he does not
+// clean this tower. But every part of this feature hung off cleaningStaff(), so the
+// moment Nur Ali Sidow was taken off the crew his schedule was stored, correct, and
+// invisible — no row on his card to set it, no column on the board to show it, no line on
+// the strip. The one man the feature exists for was the one man it could not describe.
+//
+// Where somebody is, is a question about anybody the office schedules. So the board and
+// the strip ask for the crew PLUS anybody carrying a building rota.
+const placeablePeople = () => {
+  const crew = cleaningStaff();
+  const seen = new Set(crew.map((p) => p.id));
+  return crew.concat((state.staff || []).filter((p) => p && !seen.has(p.id) && worksOffSite(p)));
+};
 
 // Tap a weekday to walk it round the buildings and back to here. Same shape as the rest
 // day cycling next to it, because it is the same gesture asked about a different fact.
@@ -9365,7 +9379,7 @@ function viewTick() {
     // the day is going to plan, and amber is reserved for what somebody has to act on.
     const rankOf = (r) => (r.at ? 6 : RANK[r.why]);
     const colourOf = (r) => (r.at ? '#67e8f9' : COLOR[r.why]);
-    const outRows = cleaningStaff()
+    const outRows = placeablePeople()
       .filter((x) => !hikArrivals[x.id])
       .map((x) => {
         const st = state.attendance[x.id] || 'present';
@@ -11765,7 +11779,7 @@ function employeeCard(p) {
   // Only shown once there is somewhere to go: an office with one building has no use for
   // a row of buttons that all say "here", and offering it invites somebody to wonder what
   // they are for. Add a building in Settings and the row appears on every cleaner.
-  if (p.isCleaner && getSites().length) {
+  if ((p.isCleaner || worksOffSite(p)) && getSites().length) {
     const sRow = el('<div class="su-ctl" style="border-top:none;padding-top:6px;margin-top:2px;flex-wrap:wrap;align-items:center"></div>');
     sRow.appendChild(el(`<div style="flex:0 0 auto;font-size:11px;color:#5f7189;font-weight:700;margin-right:2px" `
       + `title="Which buildings they work at on each day. Blank means here.">Works at</div>`));
@@ -12810,7 +12824,7 @@ function tvColumns() {
   // at all — somebody on a site rota gets a column, because the column IS the answer to
   // "where is he today" and a name that appears only on the days it is convenient is no
   // answer at all.
-  cleaningStaff().filter((p) => onDutyToday(p) && (tvOnTeam(p) || tvOutside(p) || worksOffSite(p))
+  placeablePeople().filter((p) => onDutyToday(p) && (tvOnTeam(p) || tvOutside(p) || worksOffSite(p))
       && !tvNamedElsewhere(p, spare)).forEach((p) => {
     const pair = pairMates(p);
     if (pair && pair[0].id !== p.id) { seen[p.id] = true; return; }   // their mate carries the column
