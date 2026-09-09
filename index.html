@@ -9424,6 +9424,28 @@ function viewTick() {
       })
       .sort((a, b) => (rankOf(a) - rankOf(b)) || String(a.name).localeCompare(String(b.name)));
 
+    // NOTHING FETCHED IS NOT THE SAME AS NOBODY IN, AND THE BOARD SAID NEITHER.
+    //
+    // The trigger that pulls the door reader has now died twice — an expired token, no
+    // error anywhere — and each time it went unnoticed for over a week, because a morning
+    // with no data looks exactly like a morning where nobody has badged in yet. The crew
+    // arrive at 05:45; the board sat blank until 10:00 and said nothing was wrong.
+    //
+    // So once the morning is properly under way and the reader has still reported nobody
+    // at all, say so plainly. Not before 07:30 — Hik's Time Card fills in over hours and
+    // an empty board at 06:15 is ordinary — and not on a Friday, when the offices are shut
+    // and an empty board is correct.
+    const nowH = new Date().getHours() + new Date().getMinutes() / 60;
+    const nothingFetched = !inRows.length && !(hikUnknown || []).length && !(hikOther || []).length;
+    if (nothingFetched && nowH >= 7.5 && new Date().getDay() !== 5) {
+      const warn = el(`<div class="bd-panel" style="border-color:#7f1d1d;background:#2b1414">`
+        + `<div style="font-size:12px;font-weight:800;color:#fca5a5">NO ATTENDANCE DATA TODAY</div>`
+        + `<div style="font-size:11px;color:#f0b4b4;line-height:1.5">`
+        + `The door reader has reported nobody at all, and it is gone ${esc(String(Math.floor(nowH)).padStart(2, '0'))}:00. `
+        + `That is almost certainly the scrape not having run rather than an empty building — `
+        + `the times will stay blank until it does.</div></div>`);
+      top.appendChild(warn);
+    }
     if (inRows.length || outRows.length) {
       const box = el('<div class="bd-panel"></div>');
       // A CONTROL NOBODY CAN SEE IS NOT A CONTROL. These chips have been tappable since
