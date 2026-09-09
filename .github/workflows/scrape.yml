@@ -21,9 +21,16 @@ name: Attendance scrape
 # This schedule is only a backup — GitHub runs it hours late or not at all. The
 # reliable trigger is an external cron calling workflow_dispatch every 5 minutes
 # from 05:00 to 09:59 EAT; see scraper/deploy/external-cron.md.
+# TWO WINDOWS, BECAUSE A DAY HAS TWO ENDS.
+# The morning one catches people arriving; the evening one catches them LEAVING, which is
+# the other half of a time card and was never being fetched at all. The office asked for
+# 5am and again at 4pm, when the crew go home.
+#   '*/5 2-6   * * *'  =  05:00-09:59 EAT   (arrivals)
+#   '*/5 13-16 * * *'  =  16:00-19:59 EAT   (departures)
 on:
   schedule:
     - cron: '*/5 2-6 * * *'
+    - cron: '*/5 13-16 * * *'
   workflow_dispatch: {}   # lets you run it on demand from the Actions tab
 
 concurrency:

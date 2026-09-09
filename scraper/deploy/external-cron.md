@@ -25,7 +25,7 @@ Create a job with these exact settings:
 | URL | `https://api.github.com/repos/ifrah87/cleaning/actions/workflows/scrape.yml/dispatches` |
 | Method | **POST** |
 | Schedule | Every **5 minutes** |
-| Hours | **05 – 09** (mornings only) |
+| Hours | **05 – 09** and **16 – 19** (arrivals, then departures) |
 | Timezone | **Africa/Mogadishu** (EAT) |
 
 Request body (raw / JSON):

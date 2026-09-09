@@ -15,7 +15,10 @@ REPO_URL="${REPO_URL:-https://github.com/ifrah87/cleaning.git}"
 APP_DIR="${APP_DIR:-/opt/cleaning}"
 ENV_FILE="/etc/cleaning-scraper.env"
 TZ_NAME="${TZ_NAME:-Africa/Mogadishu}"      # EAT — the timer's window is in local time
-WINDOW="${WINDOW:-06..19}"                  # hours to run; :0/5 = every 5 minutes
+WINDOW="${WINDOW:-05..19}"                  # hours to run; :0/5 = every 5 minutes
+                                            # 05 so arrivals are caught from the first badge-in
+                                            # (earliest ever recorded is 06:03), and it runs
+                                            # through to 19:xx so departures land too.
 
 log() { echo "==> $*"; }
 
