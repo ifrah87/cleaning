@@ -7993,8 +7993,24 @@ function mirrorPlanToBoard(day, key, keepBoard) {
       if (j.assignedTo && !j.byHand
         && !((state.staff || []).find((p) => p.id === j.assignedTo) || {}).isLeader) return;
       // Same rule as the morning: a room tied to one cleaner is not the plan's to give
-      // away. Left alone here, it shows as unassigned until it reaches its own person.
-      if (j.assignedTo && u.usualTo && u.usualTo !== j.assignedTo) return;
+      // away — WHILE THAT CLEANER COULD ACTUALLY TAKE IT.
+      //
+      // mayGiveRoomTo learned that a tie stops applying when its owner is marked away or
+      // the rota does not have them in; this did not, and the two halves then disagreed
+      // in the worst possible way. The share-out correctly re-dealt a sick leader's tied
+      // rooms in the plan, and this silently refused to write any of them to the board —
+      // so 401, 403 and 1002 had an owner in the plan and sat in NOBODY YET on the wall,
+      // which is the screen the crew actually works from. The comment that used to be
+      // here said "it shows as unassigned until it reaches its own person" and that is
+      // exactly what it did: a room held for a man at home.
+      //
+      // Same predicate as mayGiveRoomTo, so there is one answer to "is this tie in force
+      // today" rather than two that drift apart.
+      if (j.assignedTo && u.usualTo && u.usualTo !== j.assignedTo) {
+        const owner = (state.staff || []).find((x) => x.id === u.usualTo);
+        const ownerCanTakeIt = !!owner && worksToday(owner) && !isAway(owner.id);
+        if (ownerCanTakeIt) return;
+      }
       u.assignedTo = j.assignedTo || null;
       // Handing a room out on purpose is the sign-off, exactly as it is on the board.
       // Marked as having come from the PLAN, though, not from somebody at the screen:
