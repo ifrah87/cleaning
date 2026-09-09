@@ -44,6 +44,20 @@ jobs:
               -H "Accept: application/vnd.github+json" \
               "${API}/$1/dispatches" -d '{"ref":"main"}'
           }
+          # THE HAND-ON IS THE ONE CALL THAT MUST NOT FAIL. Everything else this job does
+          # is retried five minutes later by the next iteration; the hand-on has no next
+          # iteration. One dropped connection at midnight and there is no chain at 05:00,
+          # which is the morning the crew arrive to a blank board. So it gets four goes.
+          fire_hard () {
+            for attempt in 1 2 3 4; do
+              CODE=$(fire "$1")
+              echo "  hand-on attempt ${attempt}: ${CODE}"
+              [ "$CODE" = "204" ] && return 0
+              sleep 15
+            done
+            echo "  HAND-ON FAILED — the hourly re-seed is now the only thing keeping this alive"
+            return 1
+          }
           # Five hours of keeping time, then hand on. Leaving before the timeout matters:
           # a job killed at the ceiling never reaches the hand-on and the chain dies.
           END=$(( $(date +%s) + 300*60 ))
@@ -56,8 +70,12 @@ jobs:
               echo "$(TZ=Africa/Mogadishu date +%H:%M) EAT — in window, dispatching scrape: $(fire scrape.yml)"
               sleep 300
             else
+              # Four minutes, not fifteen: the wait costs nothing (it is a sleep inside a
+              # job that is already running, not another run) and a fifteen-minute loop
+              # could enter the morning window a quarter of an hour late.
               echo "$(TZ=Africa/Mogadishu date +%H:%M) EAT — outside the window, idling"
-              sleep 900
+              sleep 240
             fi
           done
-          echo "handing the chain on: $(fire heartbeat.yml)"
+          echo "handing the chain on"
+          fire_hard heartbeat.yml
