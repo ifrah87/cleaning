@@ -25,12 +25,18 @@ name: Attendance scrape
 # The morning one catches people arriving; the evening one catches them LEAVING, which is
 # the other half of a time card and was never being fetched at all. The office asked for
 # 5am and again at 4pm, when the crew go home.
-#   '*/5 2-6   * * *'  =  05:00-09:59 EAT   (arrivals)
-#   '*/5 13-16 * * *'  =  16:00-19:59 EAT   (departures)
+# THE EVENING ENDS AT FIVE. The crew go home at 17:00 EAT and nothing is scraped after
+# it — a later run reads the same finished day and, because a re-scrape appends a fresh
+# "out" row rather than replacing the old one, it only adds departures that never
+# happened. 16:00 catches them leaving; 17:00 is the last word on the day.
+#   '*/5 2-6 * * *'  =  05:00-09:59 EAT   (arrivals)
+#   '*/5 13   * * *'  =  16:00-16:55 EAT  (departures)
+#   '0 14     * * *'  =  17:00 EAT        (the last one)
 on:
   schedule:
     - cron: '*/5 2-6 * * *'
-    - cron: '*/5 13-16 * * *'
+    - cron: '*/5 13 * * *'
+    - cron: '0 14 * * *'
   workflow_dispatch: {}   # lets you run it on demand from the Actions tab
 
 concurrency:

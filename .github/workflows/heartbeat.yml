@@ -64,9 +64,18 @@ jobs:
           while [ "$(date +%s)" -lt "$END" ]; do
             H=$(TZ=Africa/Mogadishu date +%H)
             H=$((10#$H))                       # 08 and 09 are not octal, thank you
-            # 05:00-09:59 arrivals, 16:00-19:59 departures. Friday (5) the offices are shut.
+            M=$(TZ=Africa/Mogadishu date +%M)
+            M=$((10#$M))
+            T=$((H*60+M))                      # minutes since midnight, EAT
+            # 05:00-09:59 arrivals (300-599), 16:00-17:00 departures (960-1020).
+            # NOTHING AFTER FIVE. The crew go home at 17:00 and the day is finished, so a
+            # later run has nothing new to read — it re-reads the same punches and, since
+            # a re-scrape APPENDS an "out" row rather than replacing the one before it,
+            # every extra run can only add a departure that did not happen. The window used
+            # to run to 19:59 and that is what filled the log with them.
+            # Friday (5) the offices are shut.
             D=$(TZ=Africa/Mogadishu date +%u)  # 1=Mon .. 5=Fri .. 7=Sun
-            if [ "$D" -ne 5 ] && { { [ "$H" -ge 5 ] && [ "$H" -le 9 ]; } || { [ "$H" -ge 16 ] && [ "$H" -le 19 ]; }; }; then
+            if [ "$D" -ne 5 ] && { { [ "$T" -ge 300 ] && [ "$T" -le 599 ]; } || { [ "$T" -ge 960 ] && [ "$T" -le 1020 ]; }; }; then
               echo "$(TZ=Africa/Mogadishu date +%H:%M) EAT — in window, dispatching scrape: $(fire scrape.yml)"
               sleep 300
             else
