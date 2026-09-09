@@ -1,0 +1,63 @@
+name: Attendance heartbeat
+
+# A CLOCK THAT ACTUALLY KEEPS TIME.
+#
+# GitHub's `schedule` is best-effort and throttled. Measured against this repo, a request
+# for sixty runs between 05:00 and 09:59 EAT delivered ONE, at about 10:00, every day for
+# a week — so the crew badged in at 05:45 and the board had no times until ten. The
+# external cron that used to poke workflow_dispatch every five minutes died on 1 Sep when
+# its token expired, silently, and nobody noticed for a fortnight.
+#
+# This is the clock, kept inside GitHub so there is no third-party service to expire.
+# One run stays alive for five hours, dispatching the scrape every five minutes while the
+# office cares, then hands the chain on to a fresh run before it reaches the six-hour job
+# limit. The chain is what keeps time; `schedule` below is only a re-seed for the case
+# where the chain is ever broken, and being hours late is fine for that job.
+#
+# The repo is public, so Actions minutes are free and unmetered.
+
+on:
+  schedule:
+    - cron: '23 * * * *'      # hourly re-seed. Late is fine — it only has to restart a dead chain.
+  workflow_dispatch: {}
+
+# Exactly one heartbeat alive at a time. A re-seed replaces the running chain rather than
+# doubling it — two chains would dispatch two scrapes every five minutes for ever.
+concurrency:
+  group: attendance-heartbeat
+  cancel-in-progress: true
+
+jobs:
+  beat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 320        # 5h20 — comfortably under GitHub's 6h ceiling
+    steps:
+      - name: Keep time, and hand the chain on
+        env:
+          GH_TOKEN: ${{ secrets.CRON_PAT }}
+        run: |
+          set -uo pipefail
+          API="https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows"
+          fire () {
+            curl -sS -o /dev/null -w "%{http_code}" -X POST \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              "${API}/$1/dispatches" -d '{"ref":"main"}'
+          }
+          # Five hours of keeping time, then hand on. Leaving before the timeout matters:
+          # a job killed at the ceiling never reaches the hand-on and the chain dies.
+          END=$(( $(date +%s) + 300*60 ))
+          while [ "$(date +%s)" -lt "$END" ]; do
+            H=$(TZ=Africa/Mogadishu date +%H)
+            H=$((10#$H))                       # 08 and 09 are not octal, thank you
+            # 05:00-09:59 arrivals, 16:00-19:59 departures. Friday (5) the offices are shut.
+            D=$(TZ=Africa/Mogadishu date +%u)  # 1=Mon .. 5=Fri .. 7=Sun
+            if [ "$D" -ne 5 ] && { { [ "$H" -ge 5 ] && [ "$H" -le 9 ]; } || { [ "$H" -ge 16 ] && [ "$H" -le 19 ]; }; }; then
+              echo "$(TZ=Africa/Mogadishu date +%H:%M) EAT — in window, dispatching scrape: $(fire scrape.yml)"
+              sleep 300
+            else
+              echo "$(TZ=Africa/Mogadishu date +%H:%M) EAT — outside the window, idling"
+              sleep 900
+            fi
+          done
+          echo "handing the chain on: $(fire heartbeat.yml)"
