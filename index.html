@@ -12901,8 +12901,15 @@ function tvColumns() {
     // Somebody with a building rota is not half of a pair any more: they are somewhere
     // else on their own days, and a shared card cannot say two places at once.
     if (worksOffSite(p)) return null;
+    // ...AND NOT SOMEBODY WHO IS ALREADY ON SOMEBODY ELSE'S CARD. A crewmate folded into
+    // another round by helperRoundOwner is not available to carry this one, and the card
+    // is drawn by the FIRST of the pair — so leaving them in the list made the other half
+    // stand aside for a column nobody renders. Mohamed Salaal and Mahamed Abdi Abiker are
+    // both Outside team; the morning Abiker went to cover Sadaaq's rooms with Abukar,
+    // Salaal deferred to him and OFFSITE-2 DHAGAX/BANADIR left the board altogether — a
+    // real walk, on a real morning, that nobody would have been asked to do.
     const mates = cleaningStaff().filter((x) => crewOf(x) === c && onDutyToday(x) && tvHere(x)
-      && !worksOffSite(x));
+      && !worksOffSite(x) && !helperRoundOwner(x));
     if (mates.length < 2 || mates.some((x) => x.isLeader)) return null;
     return mates.sort((a, b) => String(tvArrival(b) ? 0 : 1).localeCompare(String(tvArrival(a) ? 0 : 1))
       || String(a.name).localeCompare(String(b.name)));
