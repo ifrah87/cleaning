@@ -12883,6 +12883,41 @@ function tvColumns() {
       || String(a.name).localeCompare(String(b.name)));
   };
 
+  // TWO PEOPLE ON THE SAME ROOMS ARE A PAIR, WHATEVER TEAM THEY ARE CARRIED ON.
+  // A helper entry is a room somebody was named ALONGSIDE on, and it is marked helper so
+  // it does not buy them a round of their own. That worked for the count at the top and
+  // nowhere else: the only thing that could put two names on one card was a CREW with no
+  // leader, so a pair drawn from two different teams — a cover pair, which is exactly when
+  // it happens — came out as two columns holding the same rooms twice. On 10 Sep Abukar
+  // Daud Osman (Team G) and Mahamed Abdi Amin (Outside team) covered Sadaaq's 401, 403 and
+  // 404 together and the wall drew all three of them twice, while the tally said 22 rooms
+  // because countJobs dedupes. The screen disagreed with its own total.
+  //
+  // Somebody whose whole day is helper entries on ONE person's rooms is not running a
+  // round; they are on that person's round. They belong in that card's name.
+  const helperRoundOwner = (p) => {
+    const mine = grouped.buckets[p.id] || [];
+    if (!mine.length || mine.some((j) => !j.helper)) return null;   // has work of their own
+    const owners = new Set();
+    mine.forEach((j) => {
+      const u = (state.servicedUnits || []).find((x) => x.id === j.id);
+      if (u && u.assignedTo) owners.add(u.assignedTo);
+    });
+    if (owners.size !== 1) return null;          // spread over two rounds — not a pair
+    const owner = (state.staff || []).find((x) => x.id === [...owners][0]);
+    return (owner && onDutyToday(owner) && tvHere(owner)) ? owner : null;
+  };
+  // ...and the other way round, so a card can name everybody on it.
+  const alongside = {};
+  (state.staff || []).forEach((p) => {
+    if (!onDutyToday(p) || !tvHere(p)) return;
+    const owner = helperRoundOwner(p);
+    if (!owner || owner.id === p.id) return;
+    (alongside[owner.id] = alongside[owner.id] || []).push(p);
+  });
+  const sharedName = (p) => [p].concat(alongside[p.id] || [])
+    .map((x) => tvName(x)).join(' / ');
+
   const seen = {};
   // IN IS IN, WHATEVER THE ROTA SAYS. This asked worksToday — the rota alone — while
   // every other part of the app asks onDutyToday, which is "rostered on OR actually
@@ -12901,6 +12936,8 @@ function tvColumns() {
   // answer at all.
   placeablePeople().filter((p) => onDutyToday(p) && (tvOnTeam(p) || tvOutside(p) || worksOffSite(p))
       && !tvNamedElsewhere(p, spare)).forEach((p) => {
+    // Named on the card of whoever's round they are on — see helperRoundOwner.
+    if (helperRoundOwner(p)) { seen[p.id] = true; return; }
     const pair = pairMates(p);
     if (pair && pair[0].id !== p.id) { seen[p.id] = true; return; }   // their mate carries the column
     seen[p.id] = true;
@@ -12928,7 +12965,7 @@ function tvColumns() {
       return;
     }
     cols.push({
-      key: p.id, name: tvName(p), jobs: grouped.buckets[p.id] || [],
+      key: p.id, name: sharedName(p), jobs: grouped.buckets[p.id] || [],
       none: false, out: AWAY.indexOf(st) >= 0, status: st, with: tvWithLabel(p, spare),
       team: tvTeam(p), at: tvArrival(p), left: tvLeft(p), note: p.note || '', site: siteToday(p),
     });
