@@ -5323,10 +5323,30 @@ async function arrivalsForDay(day) {
       .like('event_time', day + '%')              // only the selected day's scans
       .order('event_time', { ascending: true });  // earliest first
     if (error) throw error;
+    // A BADGE CODE IS WHO SOMEBODY IS. A NAME IS HOW IT GOT TYPED THAT DAY.
+    // Everything here was keyed by name, so one person whose name reaches the reader two
+    // different ways became two people — and neither of them had to match the roster.
+    // Code 41 arrives as both "Mahamed Abdi Abikar" and "Mahamed Abdi Amin"; there is one
+    // record for him, and on 10 Sep he badged in at 05:44 and the board said NO SCAN while
+    // he was covering somebody else's rooms. Worse than the missing tick: his first and
+    // last punch were worked out PER SPELLING, so even the half that did match could
+    // report an arrival an hour after he got there.
+    //
+    // The staff import has always resolved a person personId → code → name; the reader
+    // never got the same order. It has it now, and a name is only the fallback.
+    const byCode = {};
+    for (const s of (state.staff || [])) {
+      const c = String(s.hikCode || '').trim();
+      if (c) byCode[c] = s;
+    }
+    const keyOf = (e) => {
+      const s = byCode[String(e.person_code || '').trim()];
+      return s ? 'id:' + s.id : 'name:' + (e.person_name || '').trim().toLowerCase();
+    };
     const firstByName = {}, lastByName = {};
     for (const e of (data || [])) {
-      const key = (e.person_name || '').trim().toLowerCase();
-      if (!key) continue;
+      if (!String(e.person_code || '').trim() && !(e.person_name || '').trim()) continue;
+      const key = keyOf(e);
       if (!firstByName[key]) firstByName[key] = e;   // earliest (data ordered ascending) = In
       lastByName[key] = e;                           // keep overwriting → latest = Out
     }
@@ -5334,22 +5354,27 @@ async function arrivalsForDay(day) {
     // still matched, but non-cleaner staff (office/management) are dropped silently.
     const cleaners = (state.staff || []).filter((p) => p.isCleaner);
     const onlyCleaners = cleaners.length > 0;
-    const cleanerByName = {};
-    for (const s of cleaners) cleanerByName[(s.name || '').trim().toLowerCase()] = s;
-    const staffByName = {};
-    for (const s of (state.staff || [])) staffByName[(s.name || '').trim().toLowerCase()] = s;
+    const staffById = {}, staffByName = {};
+    for (const s of (state.staff || [])) {
+      staffById[s.id] = s;
+      staffByName[(s.name || '').trim().toLowerCase()] = s;
+    }
+    // Whoever the key points at, however it was matched.
+    const personFor = (key) => (key.slice(0, 3) === 'id:'
+      ? staffById[key.slice(3)] : staffByName[key.slice(5)]) || null;
     const arrivals = {}, unknown = [], other = [];
     for (const key in firstByName) {
       const e = firstByName[key];
       const t = fmtEventTime(e.event_time);
       const outE = lastByName[key];
       const outT = (outE && outE.event_time !== e.event_time) ? fmtEventTime(outE.event_time) : null;
-      const s = onlyCleaners ? cleanerByName[key] : staffByName[key];   // case-insensitive name match
+      const person = personFor(key);
+      const s = (person && (!onlyCleaners || person.isCleaner)) ? person : null;
       if (s) arrivals[s.id] = { time: t, out: outT, raw: e.event_time };
       // The door reader sees everyone, cleaners or not. Keep the non-cleaners out
       // of the roll call, but don't drop them without trace — silently vanishing
       // makes an untagged cleaner look like someone who never turned up.
-      else if (onlyCleaners && staffByName[key]) other.push({ id: staffByName[key].id, name: staffByName[key].name, time: t });
+      else if (onlyCleaners && person) other.push({ id: person.id, name: person.name, time: t });
       else unknown.push({ name: e.person_name, time: t });
     }
     mergeManualArrivals(day, arrivals);   // people the office added by hand (forgot to badge)
