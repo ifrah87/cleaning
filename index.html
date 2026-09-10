@@ -2083,9 +2083,14 @@ function load() {
 // back: this is how the guest flats returned to the morning board. They now carry the
 // moment they were changed, exactly as a room does, and the newest change wins rather
 // than the newest push.
+// A QUESTION ON A SCREEN IS NOT A FACT ABOUT THE BUILDING. pendingCover is the "who
+// covers their floors?" popup — a question put to whoever just marked somebody sick. It
+// used to travel in the shared blob AND be force-cleared on every merge, so it was wiped
+// by the device's own write coming back off the socket about a second after the tap. The
+// answer is shared, because unitCover is; the asking is this screen's alone.
 const DEVICE_KEYS = ['tab', 'tickFilter', 'roomsFilter', 'expandedFloors', 'expandedRota',
   'editingEmp', 'editingUnit', 'editingArea', 'rcFold', 'rcSetupOpen', 'checkExpanded',
-  'shutGroups'];
+  'shutGroups', 'pendingCover'];
 const SETTING_KEYS = ['autoAssign', 'autoConfirm', 'autoBalance', 'autoDays', 'earlyCap',
   'lockOnDeal', 'floors', 'rollCallTypes', 'teams'];
 let _settingsSeen = null;
@@ -2729,9 +2734,17 @@ function applyRemote(saved, merging) {
   Object.keys(stampsMine).forEach((k) => {
     if (!mergedStamps[k] || String(stampsMine[k]) > String(mergedStamps[k])) mergedStamps[k] = stampsMine[k];
   });
+  // THESE FOUR ARE THE SCREEN, NOT THE STATE. They are all DEVICE_KEYS and mineDevice
+  // has just put them back — and then this line threw them away again, on every single
+  // merge. Marking somebody sick raises the cover popup, save() pushes, the push comes
+  // back off the realtime socket about a second later, and the popup was gone before
+  // anybody could answer it. Same for a room, an area or a person open for editing: the
+  // sheet closed under your hands. Nothing here is a reason to interrupt somebody — an
+  // incoming copy has no opinion about what this screen is in the middle of. The only
+  // honest reason to drop one is that what it points at no longer exists, which is the
+  // check below, after the merged lists have landed.
   state = { ...state, ...saved, ...mineDevice, ...mineSettings,
-    settingsEditedAt: mergedStamps,
-    tab: keepTab, pendingCover: null, editingUnit: null, editingArea: null, editingEmp: null };
+    settingsEditedAt: mergedStamps, tab: keepTab };
   // A setting this device won on is a change the server has not got. Deliver it.
   if (Object.keys(mineSettings).length && !TV_MODE) markDirty();
   if (mergedAreas) state.areas = mergedAreas;
@@ -2774,6 +2787,16 @@ function applyRemote(saved, merging) {
   if (mergedUnits) state.servicedUnits = mergedUnits;
   if (mergedStaff) { state.staff = mergedStaff; STAFF = state.staff; }
   state.removedStaff = goneStaff;
+  // ...and now that the lists have landed, drop an open sheet only if its subject is
+  // actually gone. Somebody deleted the room you were editing on another phone; there is
+  // nothing left to edit and holding the sheet open would be a lie.
+  const hasUnit = (id) => (state.servicedUnits || []).some((u) => u.id === id);
+  const hasArea = (id) => (state.areas || []).some((a) => a.id === id);
+  const hasStaff = (id) => (state.staff || []).some((x) => x.id === id);
+  if (state.editingUnit && !hasUnit(state.editingUnit)) state.editingUnit = null;
+  if (state.editingArea && !hasArea(state.editingArea)) state.editingArea = null;
+  if (state.editingEmp && !hasStaff(state.editingEmp)) state.editingEmp = null;
+  if (state.pendingCover && !hasStaff(state.pendingCover.absentId)) state.pendingCover = null;
   // Anything naming somebody, or something, that is no longer there is handed back —
   // see scrubDanglingReferences, which runs from finalizeState so the boot from this
   // device's own copy gets the same treatment as a merge from the server. It is ours to
@@ -2808,6 +2831,20 @@ function subscribeRealtime() {
         { event: '*', schema: 'public', table: 'app_state', filter: 'building=eq.' + BUILDING },
         (payload) => {
           if (!payload.new || !payload.new.data) return;
+          // OUR OWN WRITE, COMING STRAIGHT BACK. applyRemote guards against this by
+          // comparing the incoming JSON with the string we pushed — and that comparison
+          // can never match. The column is jsonb, which stores an object with its keys
+          // reordered by length and then bytes; what comes back off the socket is that
+          // order, and what we pushed is the order the app built the object in. Two
+          // different strings for identical data, so every push this device made was
+          // treated as somebody else's change and merged over the top of the screen.
+          //
+          // The version stamp is the same fact without the ordering: if the row is at the
+          // version we just wrote, this is us. Compared as instants, not as text —
+          // Postgres hands back "+00:00" where we sent "Z".
+          const sameAsOurs = payload.new.updated_at && _serverStamp
+            && new Date(payload.new.updated_at).getTime() === new Date(_serverStamp).getTime();
+          if (sameAsOurs) return;
           // The socket is the server saying where it has got to, so it moves the
           // baseline exactly as a pull does. Without this a device that had only ever
           // heard about a change over the socket would push against a version two
