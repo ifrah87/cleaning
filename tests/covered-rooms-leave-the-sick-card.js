@@ -177,6 +177,35 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
     backIn.some((c) => /Sadaaq/.test(c.name) && /Adan/.test(c.with))
       && !backIn.some((c) => /^Adan/.test(c.name)), JSON.stringify(backIn));
 
+  // THE PAIR THE OFFICE ACTUALLY RUNS MUST BE NAMEABLE ON A ROOM. Sharing a room was
+  // written for two leaders taking a big one together and offered nobody else — which
+  // made the commonest pairing in the building impossible to pin: Abukar and Abiker walk
+  // floor 8 together every morning, and Abiker cannot be a leader, because two people
+  // only merge into one card when neither of them is. So the arrangement had to be
+  // rebuilt off the board by hand every day instead of being set once.
+  const share = await page.evaluate(() => {
+    const u = state.servicedUnits.find((x) => x.id === 'su802');
+    u.assignedTo = 'pAbu'; delete u.assignedWith;
+    const offered = cleaningStaff().filter((p) => p.id !== u.assignedTo
+      && onDutyToday(p) && canCleanUnit(p, u)).map((p) => p.id);
+    toggleRoomHelper('su802', 'pAbi');
+    return { offered, with: state.servicedUnits.find((x) => x.id === 'su802').assignedWith };
+  });
+  check('somebody who is not a leader can be named on a room',
+    share.offered.indexOf('pAbi') >= 0, JSON.stringify(share));
+  check('...and naming them sticks to the room, not to the day',
+    Array.isArray(share.with) && share.with.indexOf('pAbi') >= 0, JSON.stringify(share));
+
+  // ...and the board draws the two of them as one card, which is the whole point.
+  const card = await page.evaluate(() => {
+    render();
+    return tvColumns().map((c) => ({ name: c.name, jobs: c.jobs.map((j) => j.label) }));
+  });
+  check('...and the wall draws them side by side on one card, the room once',
+    card.some((c) => /Abukar/.test(c.name) && /Abiker/.test(c.name)
+      && c.jobs.filter((l) => /^802/.test(l)).length === 1),
+    JSON.stringify(card));
+
   check('no console errors', errs.length === 0, errs.join('\n       '));
 
   await browser.close(); s.close();

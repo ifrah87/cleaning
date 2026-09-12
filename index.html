@@ -10247,14 +10247,26 @@ function servicedCard(u, isDue) {
   // screen the office scrolls most. Offered only to the leaders who could actually take
   // it, and never to whoever already answers for the room.
   {
-    const mates = cleaningStaff().filter((p) => p.id !== u.assignedTo && p.isLeader
+    // ...AND THE SECOND NAME DOES NOT HAVE TO BE A LEADER. This was written for two
+    // leaders taking a big room together and offered nobody else, which quietly made the
+    // commonest pairing in the building impossible to record: Abukar Daud Osman and
+    // Mahamed Abdi Abiker walk floor 8 together every morning, and Abiker is not a
+    // leader — could not be, because two people only merge into one card when neither of
+    // them is. So the pair the office actually runs was the one pair the room card would
+    // not let it name, and the arrangement had to be rebuilt by hand off the board every
+    // day instead of being pinned once.
+    //
+    // Whether somebody may be put on a room is canCleanUnit's question and it is already
+    // being asked. Rank is not part of it. The owner still answers for the room and still
+    // takes the credit in History — that is what assignedTo means and it has not moved.
+    const mates = cleaningStaff().filter((p) => p.id !== u.assignedTo
       && onDutyToday(p) && canCleanUnit(p, u));
     const on = roomHelpers(u);
     if (mates.length || on.length) {
       const shareOpen = (state.expandedShare || {})[u.id] || on.length > 0;
       if (!shareOpen) {
         const b = el(`<button class="freqmini" style="width:100%;padding:7px;font-size:11px;text-align:left;margin-top:6px">`
-          + `+ Share this room with another leader</button>`);
+          + `+ Share this room with somebody else</button>`);
         b.onclick = () => { state.expandedShare = { ...(state.expandedShare || {}), [u.id]: true }; save(); render(); };
         card.appendChild(b);
       } else {
