@@ -13017,6 +13017,31 @@ function tvColumns() {
       team: tvTeam(p), at: tvArrival(p), left: tvLeft(p), note: p.note || '', site: siteToday(p),
     });
   });
+  // A ROOM SOMEBODY WHO IS HERE IS NAMED ON IS NOT STILL FALLING ON THE FLOOR.
+  // Two mornings running, the pair who went to cover a sick man's rooms was drawn
+  // correctly and the rooms stayed on HIS card as well. heldBy only asks whether the
+  // owner is on today's rota, and somebody who rings in sick after badging in still is —
+  // so the room sat in his bucket, and being covered never took it out again.
+  //
+  // On 12 Sep Abukar Daud Osman and Mahamed Abdi Abiker were doing 401, 403 and 404.
+  // They were drawn twice: once under the pair actually walking them, once under Sadaaq
+  // Ali Abdi, who was covering Hassan's 1002 on the other side of the board. His card
+  // read 0/9 and all three counted towards NEED COVER — the one number here that means
+  // somebody has to act, reading eleven when it was eight. JOBS TODAY said 33 against 36
+  // across the cards, because countJobs dedupes and the columns did not: the third time
+  // in three days this wall has disagreed with its own total in front of the crew.
+  //
+  // NEED COVER is work with nobody behind it. A job a cleaner who is in is named on has
+  // somebody behind it, whatever the rota still says about whoever used to hold it. Take
+  // it off the away card and leave it on theirs — one job, one card, one place to look.
+  const jobKey = (j) => (j.area ? 'a:' : 'u:') + j.id;
+  const covered = new Set();
+  cols.forEach((c) => { if (!c.out && !c.none) c.jobs.forEach((j) => covered.add(jobKey(j))); });
+  cols.forEach((c) => { if (c.out || c.none) c.jobs = c.jobs.filter((j) => !covered.has(jobKey(j))); });
+  // ...and the unhanded box is a box of work, not a heading. Emptied by that rule, it
+  // goes: NOBODY YET with nothing under it is a column asking for something that has
+  // already been dealt with.
+  for (let i = cols.length - 1; i >= 0; i--) if (cols[i].none && !cols[i].jobs.length) cols.splice(i, 1);
   // Stranded work first, then TEAMS TOGETHER. The first rule is unchanged: work with
   // nobody behind it leads, because it is the only thing on the board that is nobody's
   // job to notice. What follows it used to be arbitrary, which scattered Team B across
