@@ -12005,6 +12005,68 @@ function employeeCard(p) {
   return card;
 }
 
+// WHAT THE FLOOR MAP WOULD BE IF IT MATCHED THE ROOMS. Two things drifted apart with
+// nothing to notice it: `floors` on a person, which is what the board prints under a
+// name and what ownerOfFloor answers with, and `usualTo` on a room, which is where the
+// room actually goes back to every week. Nobody ever checks one against the other, so
+// by 12 Sep Team A owned floors 1-2 and its only pinned room was 1002 — the tenth
+// floor — while floor 7 had an owner holding none of it and floors 10 and 11 had no
+// owner at all, which is why their rooms landed wherever there was space each morning.
+//
+// READ FROM THE PINS, NOT FROM TODAY'S BOARD. assignedTo is who is walking a room this
+// morning, and on a morning with four people off sick that is mostly cover: rebuilding
+// from it would have handed floor 4 to Team H because Abukar picked it up when Sadaaq
+// went home, and written one bad morning into the map for good. usualTo is the standing
+// answer to "whose room is this", which is the question a floor map is asking.
+function floorOwnerProposal() {
+  const byFloor = {};
+  (state.servicedUnits || []).forEach((u) => {
+    if (u.paused || !u.usualTo) return;
+    const f = floorOfUnit(u.unit);
+    if (!f) return;
+    (byFloor[f] = byFloor[f] || {});
+    byFloor[f][u.usualTo] = (byFloor[f][u.usualTo] || 0) + 1;
+  });
+  const floorsOwned = {};
+  (state.staff || []).forEach((p) => { floorsOwned[p.id] = (p.floors || []).length; });
+  return allFloors().map((f) => {
+    const counts = byFloor[f] || {};
+    const now = ownerOfFloor(f);
+    const ids = Object.keys(counts);
+    // Most rooms on the floor takes it. A tie goes to whoever owns it already — a map
+    // that reshuffles itself over a one-room difference is not worth reading — and
+    // failing that to whoever is carrying fewer floors, so the ties spread the load
+    // rather than piling onto one name.
+    ids.sort((a, b) => counts[b] - counts[a]
+      || (now && b === now.id ? 1 : 0) - (now && a === now.id ? 1 : 0)
+      || floorsOwned[a] - floorsOwned[b]
+      || String(a).localeCompare(String(b)));
+    const win = ids.length ? (state.staff || []).find((x) => x.id === ids[0]) : null;
+    return { floor: f, now: now, next: win || null, counts: counts, rooms: ids.reduce((n, k) => n + counts[k], 0) };
+  });
+}
+// Applied in ONE pass with one save, not floor by floor. setFloorOwner saves and
+// re-renders on every call, so eleven floors would be eleven writes and eleven redraws
+// — and a half-applied map on a dropped connection is worse than the one being
+// replaced. Every person touched is stamped, or the next merge takes the server's copy
+// and the whole rebuild quietly vanishes; see the note above stampStaffEdit.
+function applyFloorProposal() {
+  const plan = floorOwnerProposal();
+  const touched = {};
+  (state.staff || []).forEach((p) => {
+    if ((p.floors || []).length) { touched[p.id] = p; p.floors = []; }
+  });
+  plan.forEach((r) => {
+    if (!r.next) return;
+    const p = (state.staff || []).find((x) => x.id === r.next.id);
+    if (!p) return;
+    p.floors = (p.floors || []).concat(r.floor).sort((a, b) => a - b);
+    touched[p.id] = p;
+  });
+  Object.values(touched).forEach(stampStaffEdit);
+  save(); render();
+}
+
 // Render staff grouped by team, using editable cards
 function employeeGroups(wrap) {
   if (!STAFF.length) {
@@ -12018,6 +12080,67 @@ function employeeGroups(wrap) {
   if (!list.length) {
     wrap.appendChild(el(`<div class="empty" style="text-align:center;padding:24px 0">No cleaners tagged yet. Switch to "All staff" and tap <b>+ Cleaner</b> on the cleaners.</div>`));
     return;
+  }
+  // THE FLOOR MAP, AGAINST THE ROOMS IT CLAIMS TO DESCRIBE. Folded shut unless the two
+  // disagree: on a building where they match this is a row nobody needs to read, and on
+  // one where they do not it is the answer to "why does the board say Floors 1-2 over a
+  // man holding 1002". Nothing moves until it is tapped, and it says what will move.
+  {
+    const plan = floorOwnerProposal();
+    const naming = (r) => (r.now ? tvName(r.now) : 'nobody') + ' → ' + (r.next ? tvName(r.next) : 'nobody');
+    const drift = plan.filter((r) => String((r.now || {}).id || '') !== String((r.next || {}).id || ''));
+    if (drift.length) {
+      const box = el('<div></div>');
+      box.appendChild(el(`<div style="font-size:11px;color:#5f7189;font-weight:700;line-height:1.6">`
+        + `The floors printed on the board and the rooms people actually keep have drifted `
+        + `apart on ${drift.length} floor${drift.length === 1 ? '' : 's'}. Read from each room's `
+        + `usual cleaner, not from today's hand-out.</div>`));
+      const rows = el('<div style="margin-top:8px;display:flex;flex-direction:column;gap:4px"></div>');
+      drift.forEach((r) => {
+        const units = (state.servicedUnits || []).filter((u) => !u.paused && u.usualTo
+          && floorOfUnit(u.unit) === r.floor && r.next && u.usualTo === r.next.id)
+          .map((u) => u.unit).sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
+        rows.appendChild(el(`<div style="font-size:12px;font-weight:600;display:flex;gap:8px;align-items:baseline">`
+          + `<span style="flex:0 0 54px;color:#b45309">Floor ${r.floor}</span>`
+          + `<span style="flex:1;min-width:0">${esc(naming(r))}`
+          + (units.length ? `<span style="color:#5f7189;font-weight:500"> · ${esc(units.join(', '))}</span>`
+                          : `<span style="color:#5f7189;font-weight:500"> · no rooms pinned here</span>`)
+          + `</span></div>`));
+      });
+      box.appendChild(rows);
+      const go = el(`<button class="freqpick" style="margin-top:10px;width:100%">`
+        + `Rebuild the floor map from the rooms</button>`);
+      // Asked before it happens, and told what it costs: every floor is cleared and
+      // re-given in one pass, which is not something to discover after the fact.
+      go.onclick = () => {
+        if (!confirm('Clear every floor and give each one to whoever keeps most of its rooms?\n\n'
+          + drift.length + ' floor' + (drift.length === 1 ? '' : 's') + ' will change hands. '
+          + 'No room moves — only the floors printed against each name.')) return;
+        applyFloorProposal();
+      };
+      box.appendChild(go);
+      // Its own collapsible rather than the roll call's fold(), which is local to that
+      // view and drawn for the dark board. Shut by default: this is a thing to go and
+      // look at, not a thing to read past every time the team page is opened.
+      const open = !!(state.teamFold && state.teamFold.floormap);
+      const panel = el('<div style="margin-bottom:14px;border:1px solid #d8e0ea;border-radius:10px;overflow:hidden"></div>');
+      const hd = el(`<button style="display:flex;align-items:center;gap:8px;width:100%;padding:12px;`
+        + `border:0;background:${open ? '#f2f6fb' : '#fff'};text-align:left;cursor:pointer">`
+        + `<span style="font-size:12px;color:#8a99ab;width:12px">${open ? '▾' : '▸'}</span>`
+        + `<span style="flex:1;min-width:0;font-size:13px;font-weight:800">Floor map vs rooms</span>`
+        + `<span style="font-size:11px;font-weight:700;color:#b45309">${drift.length}</span></button>`);
+      hd.onclick = () => {
+        state.teamFold = { ...(state.teamFold || {}), floormap: !open };
+        save(); render();
+      };
+      panel.appendChild(hd);
+      if (open) {
+        const inner = el('<div style="padding:10px 12px 12px"></div>');
+        inner.appendChild(box);
+        panel.appendChild(inner);
+      }
+      wrap.appendChild(panel);
+    }
   }
   const crews = [...new Set(list.map(p => p.crew))]
     .sort((a, b) => String(a || '').localeCompare(String(b || ''), undefined, { numeric: true, sensitivity: 'base' }));
