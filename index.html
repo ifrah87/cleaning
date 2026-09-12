@@ -12280,6 +12280,87 @@ function applyRoundList(parsed) {
   save(); render();
 }
 
+// RE-CUTTING THE ROUNDS IS A LIST, SO LET IT BE A LIST. Changing who keeps which room
+// is one room card at a time — twenty-three rooms is well over a hundred taps, done
+// standing up at eight in the morning, reading off a sheet somebody wrote out. Every
+// tap is a chance to put 704 on the wrong name and nothing afterwards says you did.
+// Paste the sheet instead; it says what it will change before it changes anything.
+function roundListPanel(wrap) {
+  // OPEN UNTIL IT IS SHUT, not shut until it is found. Folded, this reads as a heading
+  // rather than a thing you can use — a thin grey bar between the floor map and the
+  // first team, which is exactly where the eye skips. Somebody looking for it on a
+  // phone at nine at night went past it three times. The box is a few lines tall and
+  // the page it sits on is long; costing a little room at the top is nothing against
+  // not being found at all. Shut it and it stays shut.
+  const open = !(state.teamFold && state.teamFold.rounds === false);
+  const panel = el('<div style="margin-bottom:14px;border:1px solid #d8e0ea;border-radius:10px;overflow:hidden"></div>');
+  const hd = el(`<button style="display:flex;align-items:center;gap:8px;width:100%;padding:12px;`
+    + `border:0;background:${open ? '#f2f6fb' : '#fff'};text-align:left;cursor:pointer">`
+    + `<span style="font-size:12px;color:#8a99ab;width:12px">${open ? '▾' : '▸'}</span>`
+    + `<span style="flex:1;min-width:0;font-size:13px;font-weight:800">Paste a round list</span>`
+    + `<span style="font-size:11px;font-weight:700;color:#5f7189">re-cut the rounds</span></button>`);
+  hd.onclick = () => { state.teamFold = { ...(state.teamFold || {}), rounds: !open }; save(); render(); };
+  panel.appendChild(hd);
+  if (open) {
+    const inner = el('<div style="padding:10px 12px 12px"></div>');
+    inner.appendChild(el(`<div style="font-size:11px;color:#5f7189;font-weight:700;line-height:1.6">`
+      + `One line per round — <b>name: rooms</b>. Two names either side of a <b>+</b> means one `
+      + `round worked by both, the first answering for it. Sets who each room goes back to `
+      + `every week, which is what the days ahead are laid out from; rooms not on the list `
+      + `are left alone.</div>`));
+    const ta = el(`<textarea id="roundlist" rows="6" placeholder="Abdullahi Mohamed Abdi: 105, 201, 203, 204, 205&#10;Abukar Daud Osman + Mahamed Abdi Abiker: 802, 803, 804, 903, 1102" `
+      + `style="width:100%;margin-top:8px;font-family:ui-monospace,Menlo,monospace;font-size:12px;`
+      + `padding:9px;border:1px solid #d8e0ea;border-radius:8px;line-height:1.7"></textarea>`);
+    ta.value = state.roundListDraft || '';
+    ta.oninput = (e) => { state.roundListDraft = e.target.value; };
+    inner.appendChild(ta);
+
+    const out = el('<div style="margin-top:8px"></div>');
+    const show = () => {
+      out.innerHTML = '';
+      const parsed = parseRoundList(ta.value);
+      parsed.problems.forEach((msg) => out.appendChild(
+        el(`<div style="font-size:12px;font-weight:600;color:#b45309">⚠ ${esc(msg)}</div>`)));
+      const moves = roundListChanges(parsed);
+      if (!parsed.rounds.length) {
+        if (!parsed.problems.length) out.appendChild(el(`<div style="font-size:12px;color:#5f7189">Nothing to read yet.</div>`));
+        return;
+      }
+      if (!moves.length) {
+        out.appendChild(el(`<div style="font-size:12px;font-weight:600;color:#15803d">`
+          + `Every room on that list is already where it says. Nothing to change.</div>`));
+        return;
+      }
+      out.appendChild(el(`<div style="font-size:11px;color:#5f7189;font-weight:700;margin-bottom:5px">`
+        + `${moves.length} room${moves.length === 1 ? '' : 's'} would change hands</div>`));
+      moves.forEach((m) => out.appendChild(el(
+        `<div style="font-size:12px;font-weight:600;display:flex;gap:8px">`
+        + `<span style="flex:0 0 46px;font-family:ui-monospace,Menlo,monospace">${esc(m.unit)}</span>`
+        + `<span style="flex:1;min-width:0;color:#5f7189">${esc(m.from)} → <b style="color:#12243d">${esc(m.to)}</b></span></div>`)));
+      // Refuses while anything is unreadable. A list half applied is worse than one not
+      // applied: the half that failed is the half nobody knows about.
+      const go = el(`<button class="freqpick" style="margin-top:10px;width:100%"`
+        + `${parsed.problems.length ? ' disabled style="opacity:0.5"' : ''}>`
+        + (parsed.problems.length ? 'Fix the lines above first' : 'Apply this round list') + `</button>`);
+      if (!parsed.problems.length) {
+        go.onclick = () => {
+          if (!confirm('Move ' + moves.length + ' room' + (moves.length === 1 ? '' : 's') + '?\n\n'
+            + 'This changes who they go back to every week. The days ahead are laid out from '
+            + 'it the next time the app opens.')) return;
+          applyRoundList(parsed);
+        };
+      }
+      out.appendChild(go);
+    };
+    const look = el(`<button class="freqmini" style="margin-top:8px;width:100%;padding:8px">Read the list</button>`);
+    look.onclick = show;
+    inner.appendChild(look);
+    inner.appendChild(out);
+    panel.appendChild(inner);
+  }
+  wrap.appendChild(panel);
+}
+
 // Render staff grouped by team, using editable cards
 function employeeGroups(wrap) {
   if (!STAFF.length) {
@@ -12367,86 +12448,6 @@ function employeeGroups(wrap) {
     if (open) {
       const inner = el('<div style="padding:10px 12px 12px"></div>');
       inner.appendChild(box);
-      panel.appendChild(inner);
-    }
-    wrap.appendChild(panel);
-  }
-  // RE-CUTTING THE ROUNDS IS A LIST, SO LET IT BE A LIST. Changing who keeps which room
-  // is one room card at a time — twenty-three rooms is well over a hundred taps, done
-  // standing up at eight in the morning, reading off a sheet somebody wrote out. Every
-  // tap is a chance to put 704 on the wrong name and nothing afterwards says you did.
-  // Paste the sheet instead; it says what it will change before it changes anything.
-  {
-    // OPEN UNTIL IT IS SHUT, not shut until it is found. Folded, this reads as a heading
-    // rather than a thing you can use — a thin grey bar between the floor map and the
-    // first team, which is exactly where the eye skips. Somebody looking for it on a
-    // phone at nine at night went past it three times. The box is a few lines tall and
-    // the page it sits on is long; costing a little room at the top is nothing against
-    // not being found at all. Shut it and it stays shut.
-    const open = !(state.teamFold && state.teamFold.rounds === false);
-    const panel = el('<div style="margin-bottom:14px;border:1px solid #d8e0ea;border-radius:10px;overflow:hidden"></div>');
-    const hd = el(`<button style="display:flex;align-items:center;gap:8px;width:100%;padding:12px;`
-      + `border:0;background:${open ? '#f2f6fb' : '#fff'};text-align:left;cursor:pointer">`
-      + `<span style="font-size:12px;color:#8a99ab;width:12px">${open ? '▾' : '▸'}</span>`
-      + `<span style="flex:1;min-width:0;font-size:13px;font-weight:800">Paste a round list</span>`
-      + `<span style="font-size:11px;font-weight:700;color:#5f7189">re-cut the rounds</span></button>`);
-    hd.onclick = () => { state.teamFold = { ...(state.teamFold || {}), rounds: !open }; save(); render(); };
-    panel.appendChild(hd);
-    if (open) {
-      const inner = el('<div style="padding:10px 12px 12px"></div>');
-      inner.appendChild(el(`<div style="font-size:11px;color:#5f7189;font-weight:700;line-height:1.6">`
-        + `One line per round — <b>name: rooms</b>. Two names either side of a <b>+</b> means one `
-        + `round worked by both, the first answering for it. Sets who each room goes back to `
-        + `every week, which is what the days ahead are laid out from; rooms not on the list `
-        + `are left alone.</div>`));
-      const ta = el(`<textarea id="roundlist" rows="6" placeholder="Abdullahi Mohamed Abdi: 105, 201, 203, 204, 205&#10;Abukar Daud Osman + Mahamed Abdi Abiker: 802, 803, 804, 903, 1102" `
-        + `style="width:100%;margin-top:8px;font-family:ui-monospace,Menlo,monospace;font-size:12px;`
-        + `padding:9px;border:1px solid #d8e0ea;border-radius:8px;line-height:1.7"></textarea>`);
-      ta.value = state.roundListDraft || '';
-      ta.oninput = (e) => { state.roundListDraft = e.target.value; };
-      inner.appendChild(ta);
-
-      const out = el('<div style="margin-top:8px"></div>');
-      const show = () => {
-        out.innerHTML = '';
-        const parsed = parseRoundList(ta.value);
-        parsed.problems.forEach((msg) => out.appendChild(
-          el(`<div style="font-size:12px;font-weight:600;color:#b45309">⚠ ${esc(msg)}</div>`)));
-        const moves = roundListChanges(parsed);
-        if (!parsed.rounds.length) {
-          if (!parsed.problems.length) out.appendChild(el(`<div style="font-size:12px;color:#5f7189">Nothing to read yet.</div>`));
-          return;
-        }
-        if (!moves.length) {
-          out.appendChild(el(`<div style="font-size:12px;font-weight:600;color:#15803d">`
-            + `Every room on that list is already where it says. Nothing to change.</div>`));
-          return;
-        }
-        out.appendChild(el(`<div style="font-size:11px;color:#5f7189;font-weight:700;margin-bottom:5px">`
-          + `${moves.length} room${moves.length === 1 ? '' : 's'} would change hands</div>`));
-        moves.forEach((m) => out.appendChild(el(
-          `<div style="font-size:12px;font-weight:600;display:flex;gap:8px">`
-          + `<span style="flex:0 0 46px;font-family:ui-monospace,Menlo,monospace">${esc(m.unit)}</span>`
-          + `<span style="flex:1;min-width:0;color:#5f7189">${esc(m.from)} → <b style="color:#12243d">${esc(m.to)}</b></span></div>`)));
-        // Refuses while anything is unreadable. A list half applied is worse than one not
-        // applied: the half that failed is the half nobody knows about.
-        const go = el(`<button class="freqpick" style="margin-top:10px;width:100%"`
-          + `${parsed.problems.length ? ' disabled style="opacity:0.5"' : ''}>`
-          + (parsed.problems.length ? 'Fix the lines above first' : 'Apply this round list') + `</button>`);
-        if (!parsed.problems.length) {
-          go.onclick = () => {
-            if (!confirm('Move ' + moves.length + ' room' + (moves.length === 1 ? '' : 's') + '?\n\n'
-              + 'This changes who they go back to every week. The days ahead are laid out from '
-              + 'it the next time the app opens.')) return;
-            applyRoundList(parsed);
-          };
-        }
-        out.appendChild(go);
-      };
-      const look = el(`<button class="freqmini" style="margin-top:8px;width:100%;padding:8px">Read the list</button>`);
-      look.onclick = show;
-      inner.appendChild(look);
-      inner.appendChild(out);
       panel.appendChild(inner);
     }
     wrap.appendChild(panel);
@@ -12592,6 +12593,11 @@ function viewTeam() {
     wrap.appendChild(seg);
   }
 
+  // FIRST ON THE PAGE, ABOVE THE FLOOR LIST. It went in beside the team groups, which
+  // put it under eleven floor rows and the Friday rota — below the fold on a phone, and
+  // below the fold is the same as not existing. Somebody stood with the list in their
+  // hand and could not find the box to paste it into.
+  if (cleaners) roundListPanel(wrap);
   if (cleaners) wrap.appendChild(floorAllocationBox());
 
   // SHARE OUT THE REST DAY — the Friday off alternates, so half the crew is in one
