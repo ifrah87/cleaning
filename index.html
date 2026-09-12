@@ -13297,6 +13297,87 @@ function countJobs(cols) {
 // laid out, not worked, so nothing on it is ticked.
 let tvDayOffset = 0;              // 0 = today's live board
 let tvDayTouched = 0;             // when somebody last pressed a key
+// THE STANDING ROUNDS, ON THE WALL. Every page this board has shown is about a DAY —
+// today's hand-out, tomorrow's plan, the month's shape. None of them answers the question
+// the crew actually asks between mornings: whose room is 704? The answer lives in the
+// pins, is edited one room card at a time on a phone, and has never been visible from the
+// floor at all — so a round could drift for weeks and the only symptom was somebody
+// standing in a corridor asking whether it was theirs.
+//
+// Read from usualTo, which is where a room goes back to every week, NOT from whoever is
+// holding it this morning. That is the difference between this page and the board beside
+// it: one is the arrangement, the other is today.
+function tvRounds() {
+  const staffById = {}; (state.staff || []).forEach((p) => { staffById[p.id] = p; });
+  const by = {}, loose = [];
+  (state.servicedUnits || []).forEach((u) => {
+    if (u.paused || !onRollCall(u)) return;
+    if (!u.usualTo || !staffById[u.usualTo]) { loose.push(u); return; }
+    (by[u.usualTo] = by[u.usualTo] || []).push(u);
+  });
+  const rounds = Object.keys(by).map((id) => {
+    const rooms = by[id].slice().sort((a, b) =>
+      String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }));
+    // Somebody named alongside on every one of these rooms is on this round, not helping
+    // with a bit of it — the same rule the board uses to draw a pair as one card, asked of
+    // the arrangement rather than of this morning.
+    const counts = {};
+    rooms.forEach((u) => roomHelpers(u).forEach((h) => { counts[h.id] = (counts[h.id] || 0) + 1; }));
+    const mates = Object.keys(counts).filter((k) => counts[k] === rooms.length && k !== id)
+      .map((k) => staffById[k]).filter(Boolean);
+    const floors = [...new Set(rooms.map((u) => floorOfUnit(u.unit)).filter(Boolean))]
+      .sort((a, b) => a - b);
+    return { id: id, person: staffById[id], mates: mates, rooms: rooms, floors: floors };
+  });
+  // In building order, by the lowest floor each round touches: the wall is read by people
+  // who walk the tower, and the tower goes upwards.
+  rounds.sort((a, b) => (a.floors[0] || 99) - (b.floors[0] || 99)
+    || String(a.person.name).localeCompare(String(b.person.name)));
+  return { rounds: rounds, loose: loose.sort((a, b) =>
+    String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true })) };
+}
+function tvRoundsPage() {
+  const data = tvRounds();
+  const cards = data.rounds.length + (data.loose.length ? 1 : 0);
+  const grid = el(`<div class="tv-cols"></div>`);
+  const g = tvGrid(Math.max(1, cards));
+  grid.style.gridTemplateColumns = 'repeat(' + g.across + ', minmax(0, 1fr))';
+  grid.style.setProperty('--tvs', String(g.scale));
+  const card = (name, sub, n, rooms, none) => {
+    const col = el(`<div class="tv-col${none ? ' none' : ''}"></div>`);
+    const hd = el(`<div class="tv-col-hd"></div>`);
+    const row = el(`<div class="tv-hd-row"></div>`);
+    row.appendChild(el(`<div class="tv-who">${esc(name)}</div>`));
+    row.appendChild(el(`<div class="tv-count">${n}</div>`));
+    hd.appendChild(row);
+    if (sub) hd.appendChild(el(`<div class="tv-team">${esc(sub)}</div>`));
+    col.appendChild(hd);
+    const body = el(`<div class="tv-body"></div>`);
+    const list = el(`<div class="tv-jobs"></div>`);
+    rooms.forEach((u) => {
+      // The one thing about a room that is true every day it comes up, and the one the
+      // crew plans their morning around. Same sunrise the board uses, same meaning.
+      const early = timeSlot(u) === 'early';
+      list.appendChild(el(`<div class="tv-job ${none ? 'cover' : early ? 'early' : ''}">`
+        + `${early ? '🌅 ' : ''}${esc(u.unit)}</div>`));
+    });
+    body.appendChild(list);
+    col.appendChild(body);
+    grid.appendChild(col);
+  };
+  if (data.loose.length) {
+    card('NOBODY KEEPS THESE', 'no usual cleaner', data.loose.length, data.loose, true);
+  }
+  data.rounds.forEach((r) => {
+    const name = [r.person].concat(r.mates).map((p) => tvName(p)).join(' / ');
+    const sub = r.floors.length
+      ? (r.floors.length === 1 ? 'Floor ' + r.floors[0] : 'Floors ' + r.floors.join(', '))
+      : '';
+    card(name, sub, r.rooms.length, r.rooms, false);
+  });
+  if (!cards) grid.appendChild(el(`<div class="tv-empty">No rooms are pinned to anybody yet</div>`));
+  return grid;
+}
 function tvColumnsForDay(day) {
   const plan = (state.plans || {})[day] || {};
   const byId = {}; (state.staff || []).forEach((p) => { byId[p.id] = p; });
@@ -13823,10 +13904,13 @@ function renderTV() {
   const boardPages = Math.max(1, Math.ceil(cols.length / TV_COLS_PER_PAGE));
   // The month is always the last page, so its position does not move about as the crew
   // grows and the board gains or loses a page under it.
-  const tvPages = boardPages + (air.length ? 1 : 0) + 1;
+  // The month is last and the rounds sit just before it, so neither moves about as the
+  // crew grows and the board gains or loses a page underneath them.
+  const tvPages = boardPages + (air.length ? 1 : 0) + 2;
   if (tvPage >= tvPages) tvPage = 0;
   const onCal = tvPage === tvPages - 1;
-  const onAir = !onCal && air.length > 0 && tvPage === tvPages - 2;
+  const onRounds = tvPage === tvPages - 2;
+  const onAir = !onCal && !onRounds && air.length > 0 && tvPage === tvPages - 3;
 
   // Every number at the top counts the page you are actually looking at, or the
   // Airbnb page would sit under the offices' progress and read as its own.
@@ -13839,6 +13923,7 @@ function renderTV() {
   const top = el(`<div class="tv-top"></div>`);
   const left = el(`<div></div>`);
   left.appendChild(el(`<div class="tv-brand">${onCal ? 'THE MONTH AHEAD'
+    : onRounds ? 'THE ROUNDS'
     : onAir ? esc(tvAirTitle(air)) : 'CLEANING BOARD'}</div>`));
   // THE DAY THE BOARD IS ABOUT, NOT THE DAY THE CLOCK IS ON.
   // The work day rolls at 3am — a round that runs past midnight belongs to the morning
@@ -13875,6 +13960,17 @@ function renderTV() {
     t.appendChild(num); t.appendChild(cap);
     return t;
   };
+  // THE ROUNDS PAGE IS NOT ABOUT A DAY, so it does not borrow the day's numbers. DONE
+  // over an arrangement would read as "none of this has been cleaned", which is not what
+  // the page is saying at all.
+  if (onRounds) {
+    const rd = tvRounds();
+    const kept = rd.rounds.reduce((n, r) => n + r.rooms.length, 0);
+    mid.appendChild(tile(kept, kept === 1 ? 'ROOM' : 'ROOMS', null));
+    mid.appendChild(tile(rd.rounds.length, rd.rounds.length === 1 ? 'ROUND' : 'ROUNDS', null));
+    if (rd.loose.length) mid.appendChild(tile(rd.loose.length, 'NOBODY KEEPS', '#f59e0b'));
+    top.appendChild(mid);
+  } else {
   mid.appendChild(tile(done, 'DONE', '#22c55e'));
   mid.appendChild(tile(jobs, onAir ? (jobs === 1 ? 'ROOM TODAY' : 'ROOMS TODAY')
                                    : (jobs === 1 ? 'JOB TODAY' : 'JOBS TODAY'), null));
@@ -13889,6 +13985,7 @@ function renderTV() {
     .reduce((n, c) => n + c.jobs.filter((j) => !j.done && !j.air).length, 0);
   if (cover && !onAir) mid.appendChild(tile(cover, 'NEED COVER', '#f59e0b'));
   top.appendChild(mid);
+  }
 
   const right = el(`<div></div>`);
   right.appendChild(el(`<div class="tv-clock">${esc(now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }))}</div>`));
@@ -13922,7 +14019,7 @@ function renderTV() {
   // brim: six people is 3+3, not 5 then a lonely 1, and the column width stops
   // jumping about every time the board turns over.
   const perPage = Math.max(1, Math.ceil(cols.length / boardPages));
-  const shown = (onAir || onCal) ? [] : cols.slice(tvPage * perPage, tvPage * perPage + perPage);
+  const shown = (onAir || onCal || onRounds) ? [] : cols.slice(tvPage * perPage, tvPage * perPage + perPage);
 
   const grid = el(`<div class="tv-cols"></div>`);
   // NOBODY YET TAKES TWO COLUMNS WHEN IT IS THE BIGGEST CARD ON THE WALL. Every card
@@ -14029,7 +14126,9 @@ function renderTV() {
     col.appendChild(body);
     grid.appendChild(col);
   });
-  wrap.appendChild(onCal ? tvCalendarPage(shownDay) : onAir ? tvAirGrid(air) : grid);
+  const roundsGrid = onRounds ? tvRoundsPage() : null;
+  wrap.appendChild(onCal ? tvCalendarPage(shownDay)
+    : onRounds ? roundsGrid : onAir ? tvAirGrid(air) : grid);
 
   // THE REMOTE, SPELLED OUT. Left and right walk the pages, up and down walk the days —
   // true since the pages went in, and said out loud only at the bottom of the month.
@@ -14049,14 +14148,15 @@ function renderTV() {
 
     const pgs = el(`<div class="tv-navgrp"></div>`);
     pgs.appendChild(el(`<div class="tv-navk">◀▶</div>`));
-    pgs.appendChild(el(`<div class="tv-navl${!onCal ? ' on' : ''}">BOARD</div>`));
+    pgs.appendChild(el(`<div class="tv-navl${!onCal && !onRounds ? ' on' : ''}">BOARD</div>`));
     if (boardPages > 1) {
       const dots = el(`<div class="tv-pager"></div>`);
       for (let i = 0; i < boardPages; i += 1) {
-        dots.appendChild(el(`<div class="tv-dot${!onCal && i === tvPage ? ' on' : ''}"></div>`));
+        dots.appendChild(el(`<div class="tv-dot${!onCal && !onRounds && i === tvPage ? ' on' : ''}"></div>`));
       }
       pgs.appendChild(dots);
     }
+    pgs.appendChild(el(`<div class="tv-navl${onRounds ? ' on' : ''}">ROUNDS</div>`));
     pgs.appendChild(el(`<div class="tv-navl${onCal ? ' on' : ''}">MONTH</div>`));
     nav.appendChild(pgs);
 
@@ -14066,7 +14166,9 @@ function renderTV() {
   app.appendChild(wrap);
   // Measured only once it is on the page — a card's height is not knowable before it
   // has been laid out, which is the whole reason the row-count guess could be wrong.
-  tvFitColumns(grid);
+  // The rounds page is the same kind of grid and gets the same treatment: shrunk to fit,
+  // and told to say so when a card still cannot show everything it holds.
+  tvFitColumns(roundsGrid || grid);
 }
 
 // No hands on this screen, so the board has to keep itself alive: redraw on a
@@ -14217,7 +14319,9 @@ function startTVLoop() {
   // already did: this added a page for the off-roll-call flats while renderTV has held
   // that list empty since they moved into the columns, so on a board with guest rooms
   // the remote had one more page to walk than there were pages to see.
-  const pages = () => Math.max(1, Math.ceil(tvColumns().length / TV_COLS_PER_PAGE)) + 1;
+  // ...+ 2: the rounds and the month, both always drawn. Counted the same way renderTV
+  // counts them, or an arrow walks onto a page the board will not draw.
+  const pages = () => Math.max(1, Math.ceil(tvColumns().length / TV_COLS_PER_PAGE)) + 2;
   // PICK UP NEW CODE WITHOUT ANYBODY WALKING TO THE TV. The board pulls fresh DATA
   // all day, but the JavaScript it is running is whatever it downloaded when the page
   // was opened — and this screen is opened once and left for weeks. Every fix shipped
