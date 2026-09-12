@@ -129,6 +129,8 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
     cols.some((c) => /Abukar/.test(c.name)
       && ['804', '903', '1102'].every((u) => c.rooms.some((l) => new RegExp('\\b' + u + '\\b').test(String(l))))),
     JSON.stringify(cols));
+  check('...named as the pair they are, on a day that has not happened yet',
+    cols.some((c) => /Abukar Daud Osman \/ Mahamed Abdi Abiker/.test(c.name)), JSON.stringify(cols));
   check('...and the leader is not carrying them as well',
     !cols.some((c) => /Abdullahi/.test(c.name) && c.rooms.some((l) => /^(804|903|1102)/.test(l))),
     JSON.stringify(cols));

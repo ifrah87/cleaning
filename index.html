@@ -13434,7 +13434,25 @@ function tvColumnsForDay(day) {
       || buckets[b].length - buckets[a].length)
     .map((k) => {
       const p = byId[k];
-      return { key: k, name: p ? tvName(p) : 'NOBODY YET', jobs: buckets[k],
+      // TWO PEOPLE ON ONE ROUND ARE ONE NAME, ON ANY DAY. The live board merges a pair
+      // into a single card off who is actually in; a day that has not happened has no
+      // badge-ins to ask, so this column printed the room's owner alone and Mahamed Abdi
+      // Abiker was nowhere on tomorrow at all — on rooms he is named on, with the office
+      // reading it as the pairing not having saved. The arrangement is knowable without
+      // anybody being in the building: somebody named alongside on EVERY room of a round
+      // is on that round, which is the same rule tvRounds asks of the pins.
+      const mates = (() => {
+        if (!p) return [];
+        const rooms = buckets[k].filter((j) => !j.area)
+          .map((j) => uById[j.id]).filter(Boolean);
+        if (!rooms.length) return [];
+        const n = {};
+        rooms.forEach((u) => roomHelpers(u).forEach((h) => { n[h.id] = (n[h.id] || 0) + 1; }));
+        return Object.keys(n).filter((id) => n[id] === rooms.length && id !== p.id)
+          .map((id) => byId[id]).filter(Boolean);
+      })();
+      return { key: k, name: p ? [p].concat(mates).map((x) => tvName(x)).join(' / ') : 'NOBODY YET',
+        jobs: buckets[k],
         none: !p, out: false, status: null, with: '',
         // ANOTHER DAY'S BOARD KNOWS WHERE PEOPLE WILL BE. The badge times cannot be known
         // for a day that has not happened, but the site rota is a schedule — so stepping
