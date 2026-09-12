@@ -1012,7 +1012,11 @@ const takesRooms = (p) => !!p && !noAuto(p);
 //
 // Handing a room to somebody BY HAND is not this function's business: a person deciding
 // outranks all of it, and setUnitAssignee is where that happens.
-function mayGiveRoomTo(u, toId) {
+// `day` is optional and defaults to today, because most callers are asking about this
+// morning. The plan-a-day passes hand it the day they are planning: where somebody is
+// changes from one day to the next, and a man at 2 Dhagax on Tuesday is available for
+// this tower on Wednesday.
+function mayGiveRoomTo(u, toId, day) {
   if (!u || !toId) return false;
   // A TIE SAYS WHOSE ROOM IT NORMALLY IS, NOT THAT NOBODY MAY CLEAN IT WHILE THEY ARE
   // AT HOME. This refused outright, so every room tied to somebody off sick was stranded:
@@ -1033,6 +1037,18 @@ function mayGiveRoomTo(u, toId) {
   if (!p) return false;                                   // not on the roster
   if (!p.isCleaner) return false;                         // not on the cleaning crew
   if (noAuto(p)) return false;                            // rooms by hand only
+  // SOMEBODY AT ANOTHER BUILDING CANNOT BE GIVEN A ROOM IN THIS ONE. The hand-out asked
+  // whether a person was on the roster, on the crew, off the auto-deal and cleared for
+  // the kind of room — four questions, none of them "where is he". So a cleaner sent to
+  // M.Xarbi or 2 Dhagax for the day went on being dealt rooms in the tower, and the only
+  // way the office had to stop it was to untick Cleaner on his card, which takes him off
+  // the crew entirely and hides everything else about him. Hassan Mohamed Elmi on 12 Sep
+  // is the case: offsite, and still holding 1002.
+  //
+  // A site rota says where a man IS. It is not a status and not a day off — he is at
+  // work, at another property — so it belongs here with the other four questions rather
+  // than as an absence somewhere else.
+  if (siteFor(p, day || workToday())) return false;       // at another building that day
   return canCleanUnit(p, u);                              // cleared for this kind of room
 }
 function buildUnits() {
@@ -7213,7 +7229,7 @@ function autoPlanDay(day) {
   const EARLY_CAP = earlyCap();
   const overEarly = (u, id) => timeSlot(u) === 'early' && (slotLoad.early[id] || 0) >= EARLY_CAP;
   const ableFor = (u) => {
-    const all = order.filter((id) => mayGiveRoomTo(u, id) && !overEarly(u, id));
+    const all = order.filter((id) => mayGiveRoomTo(u, id, day) && !overEarly(u, id));
     const spare = all.filter(underCap);
     return spare.length ? spare : all;
   };
@@ -7256,7 +7272,7 @@ function autoPlanDay(day) {
   keys.forEach((k) => {
     const u = roomOf(k);
     if (!u || !u.usualTo || plan[k].assignedTo) return;
-    if (!staffById[u.usualTo] || !mayGiveRoomTo(u, u.usualTo)) return;
+    if (!staffById[u.usualTo] || !mayGiveRoomTo(u, u.usualTo, day)) return;
     plan[k].assignedTo = u.usualTo;
     load[u.usualTo] += 1;
     const sl = timeSlot(u);
@@ -7294,7 +7310,7 @@ function autoPlanDay(day) {
     if (!u) return;
     const owner = ownerOfFloor(floorOfUnit(u.unit));
     if (!owner || !staffById[owner.id]) return;                 // not rostered on today
-    if (!mayGiveRoomTo(u, owner.id) || !underCap(owner.id)) return;
+    if (!mayGiveRoomTo(u, owner.id, day) || !underCap(owner.id)) return;
     const sl = timeSlot(u);
     if (sl === 'early' && slotLoad.early[owner.id] >= EARLY_CAP) return;
     plan[k].assignedTo = owner.id; load[owner.id] += 1; onFloor += 1;
@@ -7388,7 +7404,7 @@ function autoPlanDay(day) {
         if (load[hi] - load[lo] <= 1) break;
         if (pass === movableFromFloor && load[lo] !== 0) continue;   // empty hands only
         const cands = keys.filter((k) => plan[k].assignedTo === hi && pass(k)
-          && mayGiveRoomTo(roomOf(k), lo) && canTake(lo, k));
+          && mayGiveRoomTo(roomOf(k), lo, day) && canTake(lo, k));
         const move = cands.find((k) => !repeats(lo, roomOf(k))) || cands[0];
         if (!move) continue;
         const ms = timeSlot(roomOf(move));
@@ -7767,7 +7783,7 @@ function resyncPlanDay(day, addOnly) {
     // Marking somebody sick has to mean the same thing to every pass, or it means
     // nothing. Same four questions the other two passes already ask.
     if (j.byHand) return;                                  // a person decided; a pin does not outrank that
-    if (!mayGiveRoomTo(u, u.usualTo)) return;              // archived, off the hand-out, not cleared for it
+    if (!mayGiveRoomTo(u, u.usualTo, day)) return;         // archived, off the hand-out, elsewhere, not cleared
     const owner = (state.staff || []).find((x) => x.id === u.usualTo);
     if (!owner || !worksOnDay(owner, day)) return;         // the rota does not have them in on this day
     if (day === todayKey() && isAway(u.usualTo)) return;   // sick, off, or a no-show today
@@ -7865,14 +7881,14 @@ function assignNewPlanJobs(day, keys, skip) {
     //
     // If their person is not rostered that day the room still has to be cleaned, so it
     // falls through to the count below, exactly as autoPlanDay lets it.
-    if (u.usualTo && staffById[u.usualTo] && mayGiveRoomTo(u, u.usualTo)) {
+    if (u.usualTo && staffById[u.usualTo] && mayGiveRoomTo(u, u.usualTo, day)) {
       plan[k].assignedTo = u.usualTo;
       load[u.usualTo] += 1;
       if (slot !== 'any') slotLoad[slot][u.usualTo] += 1;
       return true;
     }
     const pick = order
-      .filter((id) => mayGiveRoomTo(u, id))
+      .filter((id) => mayGiveRoomTo(u, id, day))
       .sort((a, b) => (slot !== 'any' ? slotLoad[slot][a] - slotLoad[slot][b] : 0)
         || (load[a] - load[b])
         || ((u.lastCleanedBy === a ? 1 : 0) - (u.lastCleanedBy === b ? 1 : 0))
