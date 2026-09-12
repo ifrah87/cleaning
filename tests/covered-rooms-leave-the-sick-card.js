@@ -38,6 +38,9 @@ const APP_STATE = {
     // The pair who actually went to his rooms, drawn from two different teams.
     { id: 'pAbu', name: 'Abukar Daud Osman', crew: 'Team H', isCleaner: true, floors: [8], hikPersonId: 'h2' },
     { id: 'pAbi', name: 'Mahamed Abdi Abiker', crew: 'Team H', isCleaner: true, hikPersonId: 'h3' },
+    // On the sick man's team, holding nothing of his own: named under his leader while
+    // that leader is in, and standing on a card of his own once he is not.
+    { id: 'pAdan', name: 'Adan Abdullahi Nur', crew: 'Team D', isCleaner: true, hikPersonId: 'h4' },
   ],
   servicedUnits: [
     // Covered: named on Sadaaq, walked by the pair.
@@ -61,6 +64,7 @@ const EVENTS = [
   { person_name: 'Sadaaq Ali Abdi', person_code: '1', event_time: WORK_TODAY + ' 06:34:00' },
   { person_name: 'Abukar Daud Osman', person_code: '2', event_time: WORK_TODAY + ' 05:51:00' },
   { person_name: 'Mahamed Abdi Abiker', person_code: '3', event_time: WORK_TODAY + ' 05:51:00' },
+  { person_name: 'Adan Abdullahi Nur', person_code: '4', event_time: WORK_TODAY + ' 06:46:00' },
 ];
 
 function serve() {
@@ -154,6 +158,24 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
   const drawn = cols.reduce((n, c) => n + c.jobs.length, 0);
   check('JOBS TODAY agrees with what is drawn on the cards',
     all === drawn && all === 5, 'total ' + all + ' vs ' + drawn + ' drawn');
+
+  // ONE PERSON, ONE PLACE ON THE BOARD. Adan holds nothing of his own, so he stands on
+  // a card of his own the moment his leader is off — and must not also be printed under
+  // that leader, which is the same man on the wall twice.
+  const withCols = await page.evaluate(() => tvColumns().map((c) => ({ name: c.name, with: c.with || '' })));
+  check('the man with no rooms of his own gets a card while his leader is off',
+    withCols.some((c) => /Adan/.test(c.name)), JSON.stringify(withCols));
+  check('...and the sick leader’s card no longer names him as well',
+    !withCols.some((c) => /Adan/.test(c.with)), JSON.stringify(withCols));
+
+  // ...and the rule still works the other way: a leader who IS in keeps his name.
+  const backIn = await page.evaluate(() => {
+    state.attendance.pSad = 'present'; render();
+    return tvColumns().map((c) => ({ name: c.name, with: c.with || '' }));
+  });
+  check('a leader who is in still has his man named under him',
+    backIn.some((c) => /Sadaaq/.test(c.name) && /Adan/.test(c.with))
+      && !backIn.some((c) => /^Adan/.test(c.name)), JSON.stringify(backIn));
 
   check('no console errors', errs.length === 0, errs.join('\n       '));
 

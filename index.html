@@ -12783,6 +12783,14 @@ function tvLeft(p) {
 // an empty column on a board full of work reads as somebody with nothing to do.
 // This is the rule the hand-out sheet has always used; the TV simply never had it.
 function tvWithLabel(p, spare) {
+  // ...AND A LEADER WHO IS NOT IN NAMES NOBODY. The rule above is enforced from one end
+  // only: tvNamedElsewhere withholds an assistant's column while their leader is here,
+  // so when the leader is off the assistant correctly gets a card of their own — and
+  // this line went on printing them under the leader as well. Adan Abdullahi Nur stood
+  // on the wall twice on 12 Sep, named under a sick Sadaaq Ali Abdi and again as an
+  // empty column of his own, which is exactly the two-places-at-once this function was
+  // written to stop. Both ends ask the same question now.
+  if (!tvHere(p)) return '';
   const a = assistantsFor(p, (x) => tvHere(x) && spare(x));
   // A NAME HERE IS A PROMISE THAT SOMEBODY IS ON THE FLOOR. tvHere() only asks the
   // attendance status, and finalizeState defaults every person on the roster to
