@@ -12156,6 +12156,130 @@ function applyFloorProposal() {
   save(); render();
 }
 
+// A WHOLE ROUND LIST, PASTED IN ONE GO. Re-cutting the rounds means changing the usual
+// cleaner on every room in the building, one room card at a time — twenty-three rooms is
+// well over a hundred taps on a phone, and the office does it standing up, at eight in the
+// morning, reading from a list somebody wrote out. Every one of those taps is a chance to
+// put 704 on the wrong name, and nothing afterwards says you did.
+//
+// So the list itself can be the input. One line per round:
+//
+//   Abdullahi Mohamed Abdi: 105, 201, 203, 204, 205
+//   Abukar Daud Osman + Mahamed Abdi Abiker: 802, 803, 804, 903, 1102
+//
+// A "+" means two people on one round: the first answers for the rooms, the rest are named
+// alongside — the same thing the room card's share button does, which is what draws them as
+// one card on the wall.
+//
+// It sets the PIN, not today's board. The pin is where a room goes back to every week and
+// what the plan-ahead reads, so pasting a list is what makes a round hold for the days
+// after this one; today follows on the next sync. Rooms the list does not mention are left
+// exactly as they are.
+const normName = (s) => String(s || '').toLowerCase().replace(/[^a-z ]/g, ' ').replace(/\s+/g, ' ').trim();
+// Names in this building are spelled more than one way — Mahamed and Mohamed, Abiker and
+// Amin — so an exact match alone would reject half the list. Exact first, then a unique
+// match on any two name-parts, which is enough to tell thirteen people apart and not enough
+// to guess between two of them: an ambiguous name is reported, never picked.
+function matchStaffByName(raw) {
+  const want = normName(raw);
+  if (!want) return { error: 'no name' };
+  const staff = (state.staff || []);
+  const exact = staff.filter((p) => normName(p.name) === want);
+  if (exact.length === 1) return { person: exact[0] };
+  const parts = want.split(' ').filter(Boolean);
+  // Mahamed and Mohamed are one letter apart and the same man, and so are Abiker and
+  // Abikar. Counting only exact name-parts made those two spellings score the same as an
+  // unrelated colleague who happens to share two of them — Mohamed Abdi Abiker tied with
+  // Abdullahi Mohamed Abdi on two apiece and the list was refused as ambiguous. A part
+  // within one letter still counts, which separates them cleanly: three against two.
+  const near = (a, b) => {
+    if (a === b) return true;
+    if (a.length < 4 || b.length < 4 || Math.abs(a.length - b.length) > 1) return false;
+    let i = 0, j = 0, slips = 0;
+    while (i < a.length && j < b.length) {
+      if (a[i] === b[j]) { i += 1; j += 1; continue; }
+      if (++slips > 1) return false;
+      if (a.length > b.length) i += 1; else if (b.length > a.length) j += 1; else { i += 1; j += 1; }
+    }
+    return slips + (a.length - i) + (b.length - j) <= 1;
+  };
+  const score = (p) => {
+    const his = normName(p.name).split(' ').filter(Boolean);
+    return parts.filter((x) => his.some((y) => near(x, y))).length;
+  };
+  const best = staff.map((p) => ({ p: p, n: score(p) })).filter((x) => x.n >= 2)
+    .sort((a, b) => b.n - a.n);
+  // One name-part on its own is never enough to place somebody — "Mahad" is two men here
+  // — and saying so is more use than saying nobody is called that.
+  if (!best.length) return { error: parts.length < 2 ? 'needs more than one name to place him'
+    : 'nobody on the roster called that' };
+  if (best.length > 1 && best[1].n === best[0].n) return { error: 'could be more than one person' };
+  return { person: best[0].p };
+}
+function parseRoundList(text) {
+  const rounds = [], problems = [];
+  String(text || '').split(/\n+/).forEach((line) => {
+    const raw = line.trim();
+    if (!raw || raw.indexOf(':') < 0) { if (raw) problems.push(raw + ' — no colon, so no rooms'); return; }
+    const at = raw.indexOf(':');
+    const who = raw.slice(0, at), roomsRaw = raw.slice(at + 1);
+    const names = who.split('+').map((x) => x.trim()).filter(Boolean);
+    const people = [];
+    let bad = false;
+    names.forEach((n) => {
+      const m = matchStaffByName(n);
+      if (m.error) { problems.push(n.trim() + ' — ' + m.error); bad = true; } else people.push(m.person);
+    });
+    const units = [], rooms = [];
+    roomsRaw.split(/[ ,;]+/).map((x) => x.trim()).filter(Boolean).forEach((num) => {
+      const u = (state.servicedUnits || []).find((x) => String(x.unit).trim() === num);
+      if (!u) { problems.push(num + ' — no room with that number'); bad = true; return; }
+      if (units.indexOf(u.id) >= 0) return;
+      units.push(u.id); rooms.push(u);
+    });
+    if (bad || !people.length || !rooms.length) return;
+    rounds.push({ people: people, rooms: rooms });
+  });
+  // The same room on two rounds is the one mistake a list can make that the app cannot
+  // resolve, and silently letting the last line win is how it would go unnoticed.
+  const seen = {};
+  rounds.forEach((r) => r.rooms.forEach((u) => {
+    if (seen[u.id]) problems.push(u.unit + ' — on two rounds at once');
+    seen[u.id] = true;
+  }));
+  return { rounds: rounds, problems: problems };
+}
+// What it would change, before it changes anything. Only rooms whose pin or shared names
+// actually move are listed: a list that mostly matches the building should read as a short
+// set of moves, not twenty-three lines of no-change.
+function roundListChanges(parsed) {
+  const out = [];
+  parsed.rounds.forEach((r) => {
+    const owner = r.people[0], mates = r.people.slice(1);
+    r.rooms.forEach((u) => {
+      const wasWith = (Array.isArray(u.assignedWith) ? u.assignedWith : []).slice().sort().join(',');
+      const nowWith = mates.map((p) => p.id).sort().join(',');
+      if (u.usualTo === owner.id && wasWith === nowWith) return;
+      const before = (state.staff || []).find((x) => x.id === u.usualTo);
+      out.push({ unit: u.unit, id: u.id,
+        from: before ? tvName(before) : 'nobody',
+        to: [owner].concat(mates).map((p) => tvName(p)).join(' / ') });
+    });
+  });
+  return out;
+}
+function applyRoundList(parsed) {
+  parsed.rounds.forEach((r) => {
+    const owner = r.people[0], mates = r.people.slice(1).map((p) => p.id);
+    r.rooms.forEach((u) => {
+      u.usualTo = owner.id;
+      u.assignedWith = mates.length ? mates : null;
+      stampUnitEdit(u);
+    });
+  });
+  save(); render();
+}
+
 // Render staff grouped by team, using editable cards
 function employeeGroups(wrap) {
   if (!STAFF.length) {
@@ -12243,6 +12367,80 @@ function employeeGroups(wrap) {
     if (open) {
       const inner = el('<div style="padding:10px 12px 12px"></div>');
       inner.appendChild(box);
+      panel.appendChild(inner);
+    }
+    wrap.appendChild(panel);
+  }
+  // RE-CUTTING THE ROUNDS IS A LIST, SO LET IT BE A LIST. Changing who keeps which room
+  // is one room card at a time — twenty-three rooms is well over a hundred taps, done
+  // standing up at eight in the morning, reading off a sheet somebody wrote out. Every
+  // tap is a chance to put 704 on the wrong name and nothing afterwards says you did.
+  // Paste the sheet instead; it says what it will change before it changes anything.
+  {
+    const open = !!(state.teamFold && state.teamFold.rounds);
+    const panel = el('<div style="margin-bottom:14px;border:1px solid #d8e0ea;border-radius:10px;overflow:hidden"></div>');
+    const hd = el(`<button style="display:flex;align-items:center;gap:8px;width:100%;padding:12px;`
+      + `border:0;background:${open ? '#f2f6fb' : '#fff'};text-align:left;cursor:pointer">`
+      + `<span style="font-size:12px;color:#8a99ab;width:12px">${open ? '▾' : '▸'}</span>`
+      + `<span style="flex:1;min-width:0;font-size:13px;font-weight:800">Paste a round list</span>`
+      + `<span style="font-size:11px;font-weight:700;color:#5f7189">re-cut the rounds</span></button>`);
+    hd.onclick = () => { state.teamFold = { ...(state.teamFold || {}), rounds: !open }; save(); render(); };
+    panel.appendChild(hd);
+    if (open) {
+      const inner = el('<div style="padding:10px 12px 12px"></div>');
+      inner.appendChild(el(`<div style="font-size:11px;color:#5f7189;font-weight:700;line-height:1.6">`
+        + `One line per round — <b>name: rooms</b>. Two names either side of a <b>+</b> means one `
+        + `round worked by both, the first answering for it. Sets who each room goes back to `
+        + `every week, which is what the days ahead are laid out from; rooms not on the list `
+        + `are left alone.</div>`));
+      const ta = el(`<textarea id="roundlist" rows="6" placeholder="Abdullahi Mohamed Abdi: 105, 201, 203, 204, 205&#10;Abukar Daud Osman + Mahamed Abdi Abiker: 802, 803, 804, 903, 1102" `
+        + `style="width:100%;margin-top:8px;font-family:ui-monospace,Menlo,monospace;font-size:12px;`
+        + `padding:9px;border:1px solid #d8e0ea;border-radius:8px;line-height:1.7"></textarea>`);
+      ta.value = state.roundListDraft || '';
+      ta.oninput = (e) => { state.roundListDraft = e.target.value; };
+      inner.appendChild(ta);
+
+      const out = el('<div style="margin-top:8px"></div>');
+      const show = () => {
+        out.innerHTML = '';
+        const parsed = parseRoundList(ta.value);
+        parsed.problems.forEach((msg) => out.appendChild(
+          el(`<div style="font-size:12px;font-weight:600;color:#b45309">⚠ ${esc(msg)}</div>`)));
+        const moves = roundListChanges(parsed);
+        if (!parsed.rounds.length) {
+          if (!parsed.problems.length) out.appendChild(el(`<div style="font-size:12px;color:#5f7189">Nothing to read yet.</div>`));
+          return;
+        }
+        if (!moves.length) {
+          out.appendChild(el(`<div style="font-size:12px;font-weight:600;color:#15803d">`
+            + `Every room on that list is already where it says. Nothing to change.</div>`));
+          return;
+        }
+        out.appendChild(el(`<div style="font-size:11px;color:#5f7189;font-weight:700;margin-bottom:5px">`
+          + `${moves.length} room${moves.length === 1 ? '' : 's'} would change hands</div>`));
+        moves.forEach((m) => out.appendChild(el(
+          `<div style="font-size:12px;font-weight:600;display:flex;gap:8px">`
+          + `<span style="flex:0 0 46px;font-family:ui-monospace,Menlo,monospace">${esc(m.unit)}</span>`
+          + `<span style="flex:1;min-width:0;color:#5f7189">${esc(m.from)} → <b style="color:#12243d">${esc(m.to)}</b></span></div>`)));
+        // Refuses while anything is unreadable. A list half applied is worse than one not
+        // applied: the half that failed is the half nobody knows about.
+        const go = el(`<button class="freqpick" style="margin-top:10px;width:100%"`
+          + `${parsed.problems.length ? ' disabled style="opacity:0.5"' : ''}>`
+          + (parsed.problems.length ? 'Fix the lines above first' : 'Apply this round list') + `</button>`);
+        if (!parsed.problems.length) {
+          go.onclick = () => {
+            if (!confirm('Move ' + moves.length + ' room' + (moves.length === 1 ? '' : 's') + '?\n\n'
+              + 'This changes who they go back to every week. The days ahead are laid out from '
+              + 'it the next time the app opens.')) return;
+            applyRoundList(parsed);
+          };
+        }
+        out.appendChild(go);
+      };
+      const look = el(`<button class="freqmini" style="margin-top:8px;width:100%;padding:8px">Read the list</button>`);
+      look.onclick = show;
+      inner.appendChild(look);
+      inner.appendChild(out);
       panel.appendChild(inner);
     }
     wrap.appendChild(panel);
