@@ -5712,6 +5712,33 @@ const servicedDone = (id) => !!state.completions['su:' + id + '::' + workToday()
 // A room kept off the roll call by its kind is also given rollCallOn, so it lands on the
 // morning list and in its cleaner's column on the TV rather than on the Airbnb page. It
 // is part of today's round now — that is the whole reason for adding it.
+// A ROOM THE OFFICE IS NOT CLEANING, WITHOUT LOSING WHAT IT KNOWS ABOUT IT. `paused` is
+// read in a dozen places — the roll call, today's list, the plan, the hand-out, the floor
+// map, the levelling — and every one of them honours it. Nothing in the app ever SET it.
+// The field arrived with 906 going on a long lease and has been carried through the merge
+// ever since, reachable only by editing the data directly, which is no use to the office
+// at eight in the morning when 801 says it is not taking cleaning this month.
+//
+// Not Remove: removing forgets the room's days, its frequency, its usual cleaner and its
+// history, and a suite that comes back in three weeks has to be rebuilt from nothing. A
+// paused room keeps all of it and simply stops being asked for. Everything it is holding
+// today goes with it — a room nobody is cleaning must not sit in somebody's column being
+// counted, and must not sit in NOBODY YET reading as work that has fallen through.
+function toggleUnitPaused(id) {
+  const u = (state.servicedUnits || []).find((x) => x.id === id);
+  if (!u) return;
+  if (u.paused) {
+    delete u.paused;
+  } else {
+    u.paused = true;
+    delete u.alsoCleanOn;                 // an extra clean asked for today is off too
+    delete u.rollCallOn;
+    u.assignedTo = null;                  // off the board, not stranded on a name
+    u.assignedWith = null;
+  }
+  stampUnitEdit(u);
+  save(); render();
+}
 function toggleRoomOnToday(id) {
   const u = (state.servicedUnits || []).find((x) => x.id === id);
   if (!u) return;
@@ -10328,6 +10355,19 @@ function servicedCard(u, isDue) {
   const late = el(`<button class="freqmini ${u.preferLate?'on':''}" title="Customer would rather this was left until the afternoon">${u.preferLate?'🌇 Afternoon':'🌇 Prefers afternoon'}</button>`);
   late.onclick = () => setUnitPreferLate(u.id, !u.preferLate);
   ctl.appendChild(late);
+  // Between the preferences and Remove, because that is what it is: a standing fact about
+  // the room, and the thing to reach for instead of Remove when a suite stops taking
+  // cleaning. Says what it does in the office's own words rather than "paused".
+  const pause = el(`<button class="freqmini ${u.paused ? 'on' : ''}" `
+    + `title="${u.paused ? 'Put it back on the rota' : 'Not taking cleaning — keep the room and its schedule, just stop asking for it'}">`
+    + `${u.paused ? '⏸ Not cleaning' : '⏸ Pause'}</button>`);
+  pause.onclick = () => {
+    if (!u.paused && !confirm('Take ' + u.unit + ' off the rota until further notice?\n\n'
+      + 'It keeps its days, its cleaner and its history, and stops appearing on the roll '
+      + 'call, the board and the plan. Anything it is holding today comes off with it.')) return;
+    toggleUnitPaused(u.id);
+  };
+  ctl.appendChild(pause);
   const edit = el(`<button class="su-edit">Edit</button>`);
   edit.onclick = () => startEditUnit(u.id);
   ctl.appendChild(edit);
