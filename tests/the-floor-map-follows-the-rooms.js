@@ -159,6 +159,42 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
     .filter((r) => String((r.now || {}).id || '') !== String((r.next || {}).id || '')).length);
   check('a second rebuild changes nothing', settled === 0, 'drift = ' + settled);
 
+  // A SCREEN THAT ANSWERS "WHO HAS FLOOR 7". Until this panel a person's floors could
+  // only be seen by opening that person and putting them into edit, so the question took
+  // a walk through the whole crew and "which floors has nobody got" could not be asked
+  // at all. Every floor is listed, owned or not, whether or not anything is wrong.
+  // Opening it re-renders the page, so the panel has to be read from the NEW document
+  // rather than through a handle into the one that has just been thrown away.
+  const opened = await page.evaluate(() => {
+    setTab('team');
+    const hd = [].slice.call(document.querySelectorAll('button'))
+      .find((b) => /Floor map/.test(b.textContent));
+    if (!hd) return false;
+    hd.click();
+    return true;
+  });
+  await page.waitForTimeout(400);
+  const panel = await page.evaluate((found) => {
+    const hd = [].slice.call(document.querySelectorAll('button'))
+      .find((b) => /Floor map/.test(b.textContent));
+    return { found: found && !!hd, text: hd ? hd.parentElement.textContent : '' };
+  }, opened);
+  check('the team page has a floor map to open at all', panel.found, JSON.stringify(panel));
+  check('...listing every floor in the building, owned or not',
+    panel.found && [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].every((f) => panel.text.indexOf('Floor ' + f) >= 0),
+    panel.text);
+  check('...naming who holds each one, and saying so when nobody does',
+    panel.found && /Floor 3[^F]*Mahad/.test(panel.text) && /Floor 5[^F]*nobody/.test(panel.text),
+    panel.text);
+  check('...and showing the rooms actually pinned to each floor',
+    panel.found && /Floor 7[^F]*702, 704, 705/.test(panel.text), panel.text);
+
+  // The map was rebuilt above, so nothing is left to fix and the header says so rather
+  // than showing a button with no work behind it.
+  check('...and says it is in step once there is nothing to fix',
+    panel.found && /in step/.test(panel.text)
+      && !/Rebuild the floor map/.test(panel.text), panel.text);
+
   check('no console errors', errs.length === 0, errs.join('\n       '));
 
   await browser.close(); s.close();

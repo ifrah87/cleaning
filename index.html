@@ -12081,33 +12081,48 @@ function employeeGroups(wrap) {
     wrap.appendChild(el(`<div class="empty" style="text-align:center;padding:24px 0">No cleaners tagged yet. Switch to "All staff" and tap <b>+ Cleaner</b> on the cleaners.</div>`));
     return;
   }
-  // THE FLOOR MAP, AGAINST THE ROOMS IT CLAIMS TO DESCRIBE. Folded shut unless the two
-  // disagree: on a building where they match this is a row nobody needs to read, and on
-  // one where they do not it is the answer to "why does the board say Floors 1-2 over a
-  // man holding 1002". Nothing moves until it is tapped, and it says what will move.
+  // THE WHOLE FLOOR MAP, ON ONE SCREEN. Until now a person's floors could only be seen
+  // by opening that person and putting them into edit — so "who has floor 7" meant
+  // tapping through the entire crew, and "which floors has nobody got" could not be
+  // answered at all. The board prints "Floors 8-9" under a name all day and there was
+  // nowhere to go and check it. Every floor, its owner, and the rooms actually pinned
+  // to it, in the order somebody walks the building.
+  //
+  // It also carries the disagreement, because the two questions are the same question:
+  // a floor whose owner keeps none of its rooms is why the board says Floors 1-2 over a
+  // man holding 1002. Nothing moves until the button is tapped, and it says what will.
   {
     const plan = floorOwnerProposal();
-    const naming = (r) => (r.now ? tvName(r.now) : 'nobody') + ' → ' + (r.next ? tvName(r.next) : 'nobody');
     const drift = plan.filter((r) => String((r.now || {}).id || '') !== String((r.next || {}).id || ''));
+    const roomsOn = (f, who) => (state.servicedUnits || [])
+      .filter((u) => !u.paused && u.usualTo && floorOfUnit(u.unit) === f && (!who || u.usualTo === who))
+      .map((u) => u.unit).sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
+    const box = el('<div></div>');
+    box.appendChild(el(`<div style="font-size:11px;color:#5f7189;font-weight:700;line-height:1.6">`
+      + (drift.length
+        ? `The floors printed on the board and the rooms people actually keep disagree on `
+          + `${drift.length} floor${drift.length === 1 ? '' : 's'}, marked below. Read from each `
+          + `room's usual cleaner, not from today's hand-out.`
+        : `Every floor is owned by the team that keeps its rooms.`)
+      + `</div>`));
+    const rows = el('<div style="margin-top:8px;display:flex;flex-direction:column;gap:5px"></div>');
+    plan.forEach((r) => {
+      const moves = drift.indexOf(r) >= 0;
+      const units = roomsOn(r.floor, null);
+      const owner = r.now ? tvName(r.now) : 'nobody';
+      rows.appendChild(el(`<div style="font-size:12px;font-weight:600;display:flex;gap:8px;align-items:baseline">`
+        + `<span style="flex:0 0 54px;color:${moves ? '#b45309' : '#5f7189'}">Floor ${r.floor}</span>`
+        + `<span style="flex:1;min-width:0">`
+        + `<span style="${r.now ? '' : 'color:#b45309'}">${esc(owner)}</span>`
+        // Only where it would change, and only then: a column of arrows pointing at the
+        // name already there is noise over the one line that is telling you something.
+        + (moves ? `<span style="color:#b45309"> → ${esc(r.next ? tvName(r.next) : 'nobody')}</span>` : '')
+        + (units.length ? `<span style="color:#5f7189;font-weight:500"> · ${esc(units.join(', '))}</span>`
+                        : `<span style="color:#8a99ab;font-weight:500"> · no rooms pinned</span>`)
+        + `</span></div>`));
+    });
+    box.appendChild(rows);
     if (drift.length) {
-      const box = el('<div></div>');
-      box.appendChild(el(`<div style="font-size:11px;color:#5f7189;font-weight:700;line-height:1.6">`
-        + `The floors printed on the board and the rooms people actually keep have drifted `
-        + `apart on ${drift.length} floor${drift.length === 1 ? '' : 's'}. Read from each room's `
-        + `usual cleaner, not from today's hand-out.</div>`));
-      const rows = el('<div style="margin-top:8px;display:flex;flex-direction:column;gap:4px"></div>');
-      drift.forEach((r) => {
-        const units = (state.servicedUnits || []).filter((u) => !u.paused && u.usualTo
-          && floorOfUnit(u.unit) === r.floor && r.next && u.usualTo === r.next.id)
-          .map((u) => u.unit).sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
-        rows.appendChild(el(`<div style="font-size:12px;font-weight:600;display:flex;gap:8px;align-items:baseline">`
-          + `<span style="flex:0 0 54px;color:#b45309">Floor ${r.floor}</span>`
-          + `<span style="flex:1;min-width:0">${esc(naming(r))}`
-          + (units.length ? `<span style="color:#5f7189;font-weight:500"> · ${esc(units.join(', '))}</span>`
-                          : `<span style="color:#5f7189;font-weight:500"> · no rooms pinned here</span>`)
-          + `</span></div>`));
-      });
-      box.appendChild(rows);
       const go = el(`<button class="freqpick" style="margin-top:10px;width:100%">`
         + `Rebuild the floor map from the rooms</button>`);
       // Asked before it happens, and told what it costs: every floor is cleared and
@@ -12119,28 +12134,29 @@ function employeeGroups(wrap) {
         applyFloorProposal();
       };
       box.appendChild(go);
-      // Its own collapsible rather than the roll call's fold(), which is local to that
-      // view and drawn for the dark board. Shut by default: this is a thing to go and
-      // look at, not a thing to read past every time the team page is opened.
-      const open = !!(state.teamFold && state.teamFold.floormap);
-      const panel = el('<div style="margin-bottom:14px;border:1px solid #d8e0ea;border-radius:10px;overflow:hidden"></div>');
-      const hd = el(`<button style="display:flex;align-items:center;gap:8px;width:100%;padding:12px;`
-        + `border:0;background:${open ? '#f2f6fb' : '#fff'};text-align:left;cursor:pointer">`
-        + `<span style="font-size:12px;color:#8a99ab;width:12px">${open ? '▾' : '▸'}</span>`
-        + `<span style="flex:1;min-width:0;font-size:13px;font-weight:800">Floor map vs rooms</span>`
-        + `<span style="font-size:11px;font-weight:700;color:#b45309">${drift.length}</span></button>`);
-      hd.onclick = () => {
-        state.teamFold = { ...(state.teamFold || {}), floormap: !open };
-        save(); render();
-      };
-      panel.appendChild(hd);
-      if (open) {
-        const inner = el('<div style="padding:10px 12px 12px"></div>');
-        inner.appendChild(box);
-        panel.appendChild(inner);
-      }
-      wrap.appendChild(panel);
     }
+    // Its own collapsible rather than the roll call's fold(), which is local to that
+    // view and drawn for the dark board. Shut by default: this is a thing to go and look
+    // at, not a thing to read past every time the team page is opened.
+    const open = !!(state.teamFold && state.teamFold.floormap);
+    const panel = el('<div style="margin-bottom:14px;border:1px solid #d8e0ea;border-radius:10px;overflow:hidden"></div>');
+    const hd = el(`<button style="display:flex;align-items:center;gap:8px;width:100%;padding:12px;`
+      + `border:0;background:${open ? '#f2f6fb' : '#fff'};text-align:left;cursor:pointer">`
+      + `<span style="font-size:12px;color:#8a99ab;width:12px">${open ? '▾' : '▸'}</span>`
+      + `<span style="flex:1;min-width:0;font-size:13px;font-weight:800">Floor map</span>`
+      + `<span style="font-size:11px;font-weight:700;color:${drift.length ? '#b45309' : '#5f7189'}">`
+      + `${drift.length ? drift.length + ' to fix' : 'in step'}</span></button>`);
+    hd.onclick = () => {
+      state.teamFold = { ...(state.teamFold || {}), floormap: !open };
+      save(); render();
+    };
+    panel.appendChild(hd);
+    if (open) {
+      const inner = el('<div style="padding:10px 12px 12px"></div>');
+      inner.appendChild(box);
+      panel.appendChild(inner);
+    }
+    wrap.appendChild(panel);
   }
   const crews = [...new Set(list.map(p => p.crew))]
     .sort((a, b) => String(a || '').localeCompare(String(b || ''), undefined, { numeric: true, sensitivity: 'base' }));
