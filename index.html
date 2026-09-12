@@ -737,6 +737,31 @@
      column with ten rooms in it must clip inside its own card rather than spill
      down the screen and take the row below with it. */
   .tv-col { background: var(--tv-card); border-radius: 1vw; padding: calc(1.4vh * var(--tvs)) calc(1vw * var(--tvs)); display: flex; flex-direction: column; gap: calc(0.8vh * var(--tvs)); min-width: 0; min-height: 0; overflow: hidden; }
+  /* THE BOX THAT HOLDS THE WORK CLIPS; THE LINE THAT ADMITS IT DOES NOT. The whole
+     card used to be the clipping box, so anything appended to say "there is more" was
+     itself below the fold and never seen. The lists live in here and this is what gets
+     cut off — the marker sits after it, outside the clip, and is always on the wall. */
+  .tv-body { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column;
+             gap: calc(0.8vh * var(--tvs)); }
+  /* Amber and last, in the one place the eye finishes a column. It is not work; it is
+     the card admitting it is not showing all of it. */
+  /* A FIXED HEIGHT, WHATEVER IT SAYS. The line sits above the box it is reporting on, so
+     its own height moves the very edge the count is measured against: write "+219 MORE"
+     into it and two more chips drop below the fold, making the number it is showing
+     wrong. Height and line-height are pinned and the text never wraps, so putting the
+     answer in cannot change the answer. */
+  .tv-more { flex: 0 0 auto; margin-top: calc(0.5vh * var(--tvs)); font-size: calc(1.1vw * var(--tvs));
+             height: calc(1.5vw * var(--tvs)); line-height: calc(1.5vw * var(--tvs));
+             white-space: nowrap; overflow: hidden;
+             font-weight: 800; letter-spacing: 0.04em; color: var(--tv-none-fg); }
+  /* ROOM TO LAY OUT BEFORE ANYTHING IS CUT. NOBODY YET carries whatever nobody has been
+     given, so on a bad morning it is several times the size of any other card — and the
+     board's answer was to shrink EVERY name on the wall until the biggest card fitted.
+     Given two columns of width its chips lay out sideways instead of stacking, which is
+     the phone's rule (.bd-col.wide2) arriving on the television at last. Only where
+     there are three columns to take it from; the cell is counted in tvGrid, or spanning
+     would silently push the last card onto a row of its own. */
+  .tv-cols > .tv-col.span2 { grid-column: span 2; }
   .tv-col-hd { border-bottom: 0.15vw solid var(--tv-line); padding-bottom: 0.9vh; }
   .tv-hd-row { display: flex; align-items: baseline; justify-content: space-between; gap: 0.6vw; }
   /* Wraps rather than clips: a name cut off at the column edge is the same failure
@@ -13474,15 +13499,27 @@ function renderTV() {
   const shown = (onAir || onCal) ? [] : cols.slice(tvPage * perPage, tvPage * perPage + perPage);
 
   const grid = el(`<div class="tv-cols"></div>`);
-  const g = tvGrid(shown.length);
+  // NOBODY YET TAKES TWO COLUMNS WHEN IT IS THE BIGGEST CARD ON THE WALL. Every card
+  // gets one equal cell, so the box holding work nobody has been given — which on a bad
+  // morning is most of the morning — was the card that decided how small every NAME on
+  // the board had to be, and then got cut off anyway once tvFitColumns hit its floor.
+  // Width is the thing it actually needs: chips lay out sideways instead of stacking.
+  // The extra cell is counted here, or the last card would be pushed onto a row of its
+  // own; and it is only taken where there are three columns to take it from, because
+  // spanning two of two is not a wider card, it is a board split in half.
+  const noneCol = shown.find((c) => c.none);
+  const biggestRound = shown.reduce((n, c) => (c.none ? n : Math.max(n, c.jobs.length)), 0);
+  let span2 = !!noneCol && noneCol.jobs.length > biggestRound;
+  let g = tvGrid(shown.length + (span2 ? 1 : 0));
+  if (span2 && g.across < 3) { span2 = false; g = tvGrid(shown.length); }
   grid.style.gridTemplateColumns = 'repeat(' + g.across + ', minmax(0, 1fr))';
   grid.style.setProperty('--tvs', String(g.scale));
   if (!cols.length) {
     grid.appendChild(el(`<div class="tv-empty">Nothing on today's board yet</div>`));
   }
   shown.forEach((c) => {
-    const col = el(`<div class="tv-col${c.none ? ' none' : ''}${c.out ? ' out' : ''}`
-      + `${c.status === 'off' ? ' off' : ''}"></div>`);
+    const col = el(`<div class="tv-col${c.none ? ' none' : ''}${c.none && span2 ? ' span2' : ''}`
+      + `${c.out ? ' out' : ''}${c.status === 'off' ? ' off' : ''}"></div>`);
     const hd = el(`<div class="tv-col-hd"></div>`);
     const row = el(`<div class="tv-hd-row"></div>`);
     row.appendChild(el(`<div class="tv-who">${esc(c.name)}</div>`));
@@ -13543,22 +13580,27 @@ function renderTV() {
     };
     const rooms = c.jobs.filter((j) => !j.area);
     const areas = c.jobs.filter((j) => j.area);
+    // The lists go in a box of their own, and THAT is what gets cut off when a card
+    // holds more than its share of the screen. The card used to be the clipping box, so
+    // there was nowhere to put a line saying work had been hidden — see tvFitColumns.
+    const body = el(`<div class="tv-body"></div>`);
     if (!c.jobs.length) {
       const list = el(`<div class="tv-jobs"></div>`);
       list.appendChild(el(`<div class="tv-empty">—</div>`));
-      col.appendChild(list);
+      body.appendChild(list);
     }
     // Only headed when there is something to tell apart: one group on its own needs
     // no label, and a heading over a single list is noise on a wall.
     const group = (items, label) => {
       if (!items.length) return;
-      if (rooms.length && areas.length) col.appendChild(el(`<div class="tv-group">${esc(label)}</div>`));
+      if (rooms.length && areas.length) body.appendChild(el(`<div class="tv-group">${esc(label)}</div>`));
       const list = el(`<div class="tv-jobs"></div>`);
       items.forEach((j) => list.appendChild(chip(j)));
-      col.appendChild(list);
+      body.appendChild(list);
     };
     group(rooms, 'OFFICES');
     group(areas, 'COMMUNAL');
+    col.appendChild(body);
     grid.appendChild(col);
   });
   wrap.appendChild(onCal ? tvCalendarPage(shownDay) : onAir ? tvAirGrid(air) : grid);
@@ -13665,13 +13707,81 @@ function tvFitColumns(grid) {
   if (!grid) return;
   const cols = [].slice.call(grid.querySelectorAll('.tv-col'));
   if (!cols.length) return;
-  const clipped = () => cols.some((c) => c.scrollHeight > c.clientHeight + 1);
+  // The card is no longer the clipping box — .tv-body is — so ask the box that actually
+  // gets cut off. Asking the card said "nothing is clipped" however much was hidden.
+  const boxOf = (c) => c.querySelector('.tv-body') || c;
+  const over = (c) => boxOf(c).scrollHeight > boxOf(c).clientHeight + 1;
+  const clipped = () => cols.some(over);
   let s = parseFloat(grid.style.getPropertyValue('--tvs')) || 1;
   // Floor of 0.28: past that a name stops reading from the far side of the office, and
   // a board nobody can read is not an improvement on one that is cut off.
   for (let i = 0; i < 16 && s > 0.28 && clipped(); i += 1) {
     s = Math.round((s - 0.04) * 100) / 100;
     grid.style.setProperty('--tvs', String(s));
+  }
+  // A BOARD THAT HIDES WORK MUST SAY SO. Everything above is an attempt to make the
+  // whole morning fit; the floor is where that attempt gives up. Past it the card simply
+  // cut itself off — no mark, no count, nothing — and the box most likely to overflow is
+  // NOBODY YET, the one box on this wall whose entire job is to show work that nobody is
+  // doing. Rooms fell off the bottom of the television and the board looked complete.
+  //
+  // COUNTED UNTIL THE NUMBER STOPS MOVING. The marker takes room of its own, so writing
+  // it into the card pushes another chip or two below the fold and makes the number it
+  // is showing wrong — a wall that says "+225 MORE" while hiding 219 is a different way
+  // of lying about the same thing. Measure, write, measure again, and stop when the
+  // answer repeats. It settles in two or three turns; the cap is only there so a freak
+  // layout cannot spin.
+  // ...AND COUNTED IN THE NEXT FRAME, NOT THIS ONE. Sixteen scale changes and a line
+  // appended to a card all happen in one go here, and rectangles read straight after
+  // them come back from a layout the browser has not finished settling: the same count,
+  // taken twice in this block, gave 225 both times against a true 219. A frame later
+  // the geometry is the one on the wall, and the number is the one the crew can check
+  // by looking. The fit itself stays synchronous — a board that visibly resizes after
+  // it has been drawn is worse than one drawn small.
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => tvMarkHidden(cols, boxOf, over, 0));
+  else tvMarkHidden(cols, boxOf, over, 0);
+}
+
+// WHAT A CARD COULD NOT FIT, SAID ON THE CARD. tvFitColumns shrinks the whole board
+// until the tallest column fits and gives up at a floor, because past it no name on the
+// wall can be read from across the office. Everything below that floor used to be cut
+// off in silence — and the column most likely to overflow is NOBODY YET, whose entire
+// job is to show work nobody has been given. Rooms went off the bottom of the
+// television and the board looked complete.
+// IT CHECKS ITS OWN ANSWER. Sixteen scale changes and a line appended to a card all
+// land in one go, and rectangles read after them come back from a layout the browser
+// has not settled — the same count, taken twice in that block and again a frame later,
+// said 225 against a true 219. Rather than guess how many frames are enough, this
+// writes what it measured and then looks again: if the second look disagrees it
+// corrects itself and looks once more, until the number stops moving. A handful of
+// turns at most, and the cap is only there so a freak layout cannot spin for ever.
+function tvMarkHidden(cols, boxOf, over, tries) {
+  let moved = false;
+  cols.forEach((c) => {
+    const box = boxOf(c);
+    if (box === c || !c.isConnected) return;
+    const had = c.querySelector('.tv-more');
+    if (!over(c)) { if (had) { had.remove(); moved = true; } return; }
+    // The line goes in FIRST and is a fixed height whatever it ends up saying, so the
+    // layout the count is taken against is the layout the crew is looking at.
+    const mark = had || c.appendChild(el(`<div class="tv-more"></div>`));
+    // NO NUMBER. The obvious version of this counts the chips below the cut and says
+    // "+12 MORE", and it was written that way first — but the count has to be taken
+    // against a layout that is still settling after sixteen scale changes, and the same
+    // measurement taken from two places a moment apart disagreed by a whole row of
+    // rooms. A board that says "+225 MORE" while hiding 219 has replaced one lie with a
+    // more confident one.
+    //
+    // The number is not needed anyway: the corner of every card already carries its true
+    // total — 0/180 — read straight from the data and never in doubt. All this line has
+    // to add is the one fact the card cannot otherwise tell you, which is that what you
+    // are looking at is not all of it. Whether a box is cut off at all is a comparison
+    // of two heights, and that answer is the same wherever it is asked from.
+    if (mark.textContent !== '▾ MORE BELOW') { mark.textContent = '▾ MORE BELOW'; moved = true; }
+  });
+  const n = (tries || 0) + 1;
+  if (moved && n < 8 && typeof requestAnimationFrame === 'function') {
+    requestAnimationFrame(() => tvMarkHidden(cols, boxOf, over, n));
   }
 }
 
