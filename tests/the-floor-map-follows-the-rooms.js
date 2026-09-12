@@ -195,6 +195,48 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
     panel.found && /in step/.test(panel.text)
       && !/Rebuild the floor map/.test(panel.text), panel.text);
 
+  // MOVING A FLOOR MOVES A LABEL. The rooms on it stay pinned to whoever had them, so
+  // "put Abdullahi on the 2nd floor" gave him a line on the board reading Floor 2 and
+  // not one room on it — the drift the panel above reports, manufactured one tap at a
+  // time. The tap is when the office knows which of the two it meant, so it is when to
+  // ask; and never silently, because a pin is where a room goes back to every week.
+  const askedNo = await page.evaluate(() => {
+    // 803 and 903 are pinned to Abdullahi (pC), who owns floors 8-9. Hand floor 8 to
+    // somebody else and decline: the floor moves, the rooms do not.
+    const asked = [];
+    window.confirm = (m) => { asked.push(m); return false; };
+    toggleFloorFor('pH', 8);
+    return { asked, floors: (state.staff.find((x) => x.id === 'pH').floors || []),
+      u803: state.servicedUnits.find((u) => u.unit === '803').usualTo };
+  });
+  check('taking a floor with rooms on it asks about the rooms',
+    askedNo.asked.length === 1 && /803/.test(askedNo.asked[0]), JSON.stringify(askedNo));
+  check('...saying it changes where they go back every week, not just today',
+    /every week/.test(askedNo.asked[0] || ''), JSON.stringify(askedNo.asked));
+  check('...and saying no moves the floor and leaves the rooms alone',
+    askedNo.floors.indexOf(8) >= 0 && askedNo.u803 === 'pC', JSON.stringify(askedNo));
+
+  const askedYes = await page.evaluate(() => {
+    window.confirm = () => true;
+    toggleFloorFor('pH', 9);
+    return { floors: (state.staff.find((x) => x.id === 'pH').floors || []),
+      u903: state.servicedUnits.find((u) => u.unit === '903').usualTo,
+      stamped: !!state.servicedUnits.find((u) => u.unit === '903').editedAt };
+  });
+  check('...and saying yes brings the rooms with it',
+    askedYes.floors.indexOf(9) >= 0 && askedYes.u903 === 'pH', JSON.stringify(askedYes));
+  check('...stamped, so the next merge cannot undo it', askedYes.stamped, JSON.stringify(askedYes));
+
+  // Handing a floor BACK is not a reason to ask: nothing is being given to anybody.
+  const giveBack = await page.evaluate(() => {
+    let asked = 0;
+    window.confirm = () => { asked += 1; return true; };
+    toggleFloorFor('pH', 9);            // pH already has 9 — this takes it off again
+    return { asked, floors: (state.staff.find((x) => x.id === 'pH').floors || []) };
+  });
+  check('putting a floor down asks nothing and moves nothing',
+    giveBack.asked === 0 && giveBack.floors.indexOf(9) < 0, JSON.stringify(giveBack));
+
   check('no console errors', errs.length === 0, errs.join('\n       '));
 
   await browser.close(); s.close();

@@ -6229,6 +6229,12 @@ const allFloors = () => Array.from({ length: (state.floors || DEFAULT_FLOORS) },
 // the floors on 24 and 25 Aug, and why Ahmed Daahir came back on Team A: the array is
 // replaced wholesale, so a roster that had never heard of the floors won on arrival.
 function stampStaffEdit(p) { if (p) p.editedAt = new Date().toISOString(); }
+// The rooms on a floor, as pinned — not as handed out this morning. See the note above
+// floorOwnerProposal for why the pin is the durable answer and today's board is not.
+function roomsPinnedOnFloor(floor, notTo) {
+  return (state.servicedUnits || []).filter((u) => !u.paused && u.usualTo
+    && floorOfUnit(u.unit) === floor && (!notTo || u.usualTo !== notTo));
+}
 function toggleFloorFor(pid, floor) {
   const p = (state.staff || []).find((x) => x.id === pid);
   if (!p) return;
@@ -6240,6 +6246,21 @@ function toggleFloorFor(pid, floor) {
   });
   if (!mine) p.floors = (p.floors || []).concat(floor).sort((a, b) => a - b);
   stampStaffEdit(p);
+  // ...AND ASK WHETHER THE ROOMS ARE COMING WITH IT. Moving a floor moves a LABEL: the
+  // rooms on it stay pinned to whoever had them, so "put Abdullahi on the 2nd floor"
+  // gave him a line on the board saying Floor 2 and not one room on it. That is exactly
+  // the drift the floor map panel was built to report, manufactured one tap at a time —
+  // and the tap is the moment the office knows which of the two it meant, so it is the
+  // moment to ask. Never silently: the pin is where a room goes back to every week, and
+  // moving four of them is not a side effect of tapping a number.
+  const moving = mine ? [] : roomsPinnedOnFloor(floor, pid);
+  if (moving.length && confirm('Move floor ' + floor + "'s " + moving.length + ' room'
+      + (moving.length === 1 ? '' : 's') + ' to ' + p.name + ' as well?\n\n'
+      + moving.map((u) => u.unit).sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true })).join(', ')
+      + '\n\nThis changes who they go back to every week, not just today.'
+      + '\nCancel to move the floor on its own.')) {
+    moving.forEach((u) => { u.usualTo = pid; stampUnitEdit(u); });
+  }
   save(); render();
 }
 function setFloorOwner(floor, pid) {
