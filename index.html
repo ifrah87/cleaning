@@ -1051,6 +1051,28 @@ function mayGiveRoomTo(u, toId, day) {
   if (siteFor(p, day || workToday())) return false;       // at another building that day
   return canCleanUnit(p, u);                              // cleared for this kind of room
 }
+// A PIN OUTRANKS A RANK. The plan deals unpinned work to LEADERS only, and rightly so:
+// naming an assistant on a plan produces work nobody can carry. But that filter was also
+// the list every pass looked a PINNED owner up in — so a room tied to somebody who is not
+// a leader could not be given to them on their own round, and was quietly dealt to a
+// leader instead.
+//
+// Abukar Daud Osman and Mahamed Abdi Abiker walk floor 8 together and neither is a leader
+// — neither CAN be, because two people are only drawn as one card when neither of them is.
+// On 12 Sep their five rooms were pinned to Abukar and Sunday's plan handed 804, 903 and
+// 1102 to Abdullahi Mohamed Abdi, who was already carrying his own floor. The pair had no
+// column at all on a day they were both rostered in.
+//
+// Somebody the office has tied a room to is not a guess the deal is making; it is a
+// decision the office already made, and rank has nothing to say about it. The leaders-only
+// rule still governs everything nobody has been tied to.
+function pinnedOwnerFor(u, day) {
+  if (!u || !u.usualTo) return null;
+  const p = (state.staff || []).find((x) => x.id === u.usualTo);
+  if (!p || !takesRooms(p) || !worksOnDay(p, day)) return null;
+  if (day === todayKey() && isAway(p.id)) return null;
+  return mayGiveRoomTo(u, p.id, day) ? p : null;
+}
 function buildUnits() {
   const u = [];
   const floors = (state && state.floors) ? state.floors : DEFAULT_FLOORS;
@@ -7299,7 +7321,8 @@ function autoPlanDay(day) {
   keys.forEach((k) => {
     const u = roomOf(k);
     if (!u || !u.usualTo || plan[k].assignedTo) return;
-    if (!staffById[u.usualTo] || !mayGiveRoomTo(u, u.usualTo, day)) return;
+    // Looked up on the ROSTER, not in the leaders-only crew — see pinnedOwnerFor.
+    if (!pinnedOwnerFor(u, day)) return;
     plan[k].assignedTo = u.usualTo;
     load[u.usualTo] += 1;
     const sl = timeSlot(u);
@@ -7908,7 +7931,7 @@ function assignNewPlanJobs(day, keys, skip) {
     //
     // If their person is not rostered that day the room still has to be cleaned, so it
     // falls through to the count below, exactly as autoPlanDay lets it.
-    if (u.usualTo && staffById[u.usualTo] && mayGiveRoomTo(u, u.usualTo, day)) {
+    if (pinnedOwnerFor(u, day)) {
       plan[k].assignedTo = u.usualTo;
       load[u.usualTo] += 1;
       if (slot !== 'any') slotLoad[slot][u.usualTo] += 1;
