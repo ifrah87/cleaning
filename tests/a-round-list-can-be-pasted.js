@@ -163,11 +163,16 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
     'Abdullahi Mohamed Abdi: 105, 201\nAbukar Daud Osman + Mahamed Abdi Abiker: 803 804')).length);
   check('pasting the same list twice changes nothing the second time', again === 0, 'moves = ' + again);
 
-  const ui = await page.evaluate(() => {
-    setTab('team');
-    return [].slice.call(document.querySelectorAll('button')).some((b) => /Paste a round list/.test(b.textContent));
-  });
-  check('there is somewhere on the Team page to paste it', ui, 'no panel found');
+  await page.evaluate(() => setTab('team'));
+  await page.waitForTimeout(400);
+  const ui = await page.evaluate(() => ({
+    bar: [].slice.call(document.querySelectorAll('button')).some((b) => /Paste a round list/.test(b.textContent)),
+    // Folded, it reads as a heading rather than a thing you can use, and somebody
+    // looking for it on a phone went past it three times. Open until it is shut.
+    box: !!document.getElementById('roundlist'),
+  }));
+  check('there is somewhere on the Team page to paste it', ui.bar, JSON.stringify(ui));
+  check('...and the box is open, not hidden behind a grey bar', ui.box, JSON.stringify(ui));
 
   check('no console errors', errs.length === 0, errs.join('\n       '));
 

@@ -12377,7 +12377,13 @@ function employeeGroups(wrap) {
   // tap is a chance to put 704 on the wrong name and nothing afterwards says you did.
   // Paste the sheet instead; it says what it will change before it changes anything.
   {
-    const open = !!(state.teamFold && state.teamFold.rounds);
+    // OPEN UNTIL IT IS SHUT, not shut until it is found. Folded, this reads as a heading
+    // rather than a thing you can use — a thin grey bar between the floor map and the
+    // first team, which is exactly where the eye skips. Somebody looking for it on a
+    // phone at nine at night went past it three times. The box is a few lines tall and
+    // the page it sits on is long; costing a little room at the top is nothing against
+    // not being found at all. Shut it and it stays shut.
+    const open = !(state.teamFold && state.teamFold.rounds === false);
     const panel = el('<div style="margin-bottom:14px;border:1px solid #d8e0ea;border-radius:10px;overflow:hidden"></div>');
     const hd = el(`<button style="display:flex;align-items:center;gap:8px;width:100%;padding:12px;`
       + `border:0;background:${open ? '#f2f6fb' : '#fff'};text-align:left;cursor:pointer">`
