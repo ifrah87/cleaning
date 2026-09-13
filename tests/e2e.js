@@ -2044,13 +2044,56 @@ function serve() {
     JSON.stringify(afterDeal.who) + ' vs rostered ' + JSON.stringify(afterDeal.rostered));
 
   // Today still reads the door, since that is who is actually in.
-  await page.evaluate(() => { planDay = todayKey(); render(); });
-  await page.waitForTimeout(300);
+  // WAITED FOR, NOT GUESSED AT. Three hundred milliseconds and an `if` meant this check
+  // simply did not run about half the time: the run's own total moved between 292 and 293
+  // and nothing said which assertion had gone missing. The day above waits properly and
+  // asserts flat out, and there is no reason for this one to be softer — a Plan tab on
+  // today with no auto-assign on it would be worth hearing about.
+  // ...AND THE BUTTON ONLY EXISTS ON A DAY THAT HAS A PLAN — an empty day says "Nothing on
+  // this day yet" instead, which is right. So the precondition is set here rather than
+  // skipped over: plan today if it is not planned, ask the question, then put the day back
+  // as it was found so nothing downstream inherits a plan it did not make.
+  const todayPlanned = await page.evaluate(() => {
+    const d = todayKey();
+    const before = { plan: Object.keys(state.plans[d] || {}).length > 0, unit: null, lastCleaned: null };
+    ensureDayPlanned(d);
+    // ...AND BY THIS POINT IN THE RUN TODAY IS SOMETIMES ALL DONE. Earlier blocks tick
+    // rooms off, so planning today can come back empty and the button is rightly absent —
+    // which is how this check came to run on some mornings and not others. Put one room
+    // back so there is a day to ask about, and undo it below.
+    if (!Object.keys(getPlan(d) || {}).length) {
+      const u = (state.servicedUnits || []).find((x) => !x.paused);
+      if (u) {
+        before.unit = u.id;
+        before.lastCleaned = u.lastCleaned === undefined ? null : u.lastCleaned;
+        u.lastCleaned = null;                       // never cleaned, so due today
+        delete state.plans[d];
+        if (state.planSeeded) delete state.planSeeded[d];
+        ensureDayPlanned(d);
+      }
+    }
+    planDay = d; state.tab = 'plan'; render();
+    return before;
+  });
   const todayBtn = page.locator('button', { hasText: 'Auto-assign' }).first();
-  if (await todayBtn.count()) {
+  await todayBtn.waitFor({ state: 'attached', timeout: 10000 }).catch(() => {});
+  const hasTodayBtn = await todayBtn.count() > 0;
+  check('the Plan tab offers an auto-assign on today as well', hasTodayBtn,
+    'no auto-assign button with the plan on today');
+  if (hasTodayBtn) {
     contains('on today it still goes by who clocked in', await todayBtn.textContent(), "clocked in");
   }
-  await page.evaluate(() => { planDay = null; });
+  await page.evaluate((before) => {
+    if (!before.plan) {
+      delete state.plans[todayKey()];
+      if (state.planSeeded) delete state.planSeeded[todayKey()];
+    }
+    if (before.unit) {
+      const u = (state.servicedUnits || []).find((x) => x.id === before.unit);
+      if (u) u.lastCleaned = before.lastCleaned;
+    }
+    planDay = null;
+  }, todayPlanned);
 
   // ------------------------------------------------------- ONE BUTTON, A WEEK
   // Getting a week ready used to be level, then open each day, then check each was
@@ -2070,17 +2113,32 @@ function serve() {
       const d = shiftDay(workToday(), i);
       const plan = state.plans[d] || {};
       const rooms = Object.values(plan).filter((v) => v.kind === 'unit');
+      // WHAT KIND OF ROOM, AND WHO COULD HAVE TAKEN IT. A day with nothing handed out is
+      // only news if there was something dealable on it and somebody to deal it to. The
+      // flats are never dealt automatically, and the plan deals to leaders only — so a
+      // bare "0 assigned" was a failure message that could not tell a bug from the rules.
+      const uById = {}; (state.servicedUnits || []).forEach((u) => { uById[u.id] = u; });
+      const dealable = rooms.filter((v) => uById[v.refId] && !neverAutoDealt(uById[v.refId]));
       days.push({ day: d, jobs: Object.keys(plan).length, rooms: rooms.length,
+                  dealable: dealable.length,
+                  kinds: rooms.map((v) => uById[v.refId] ? unitType(uById[v.refId]) : '?'),
                   assigned: rooms.filter((v) => v.assignedTo).length,
+                  leaders: cleaningStaff().filter((p) => p.isLeader && takesRooms(p) && worksOnDay(p, d)).length,
                   rostered: cleaningStaff().filter((p) => worksOnDay(p, d)).length });
     }
     return { ran, days, levelled: pv.worthLevelling };
   });
   check('one tap lays out every day of the week', week.days.every((d) => d.jobs > 0),
     'empty days: ' + JSON.stringify(week.days.filter((d) => !d.jobs).map((d) => d.day)));
+  // DEALABLE rooms, and LEADERS to deal them to. This asked whether every day with any
+  // room on it and anybody rostered had something handed out, and failed about one run in
+  // two on a Saturday whose only room was an Airbnb flat — which nothing automatic ever
+  // deals, by design, because the flats are done after the offices by whoever is free.
+  // Three leaders were rostered and the right number of rooms was handed out: none. A
+  // test that fails on correct behaviour teaches the office to ignore it.
   check('and hands out the rooms on each of them',
-    week.days.every((d) => !d.rooms || !d.rostered || d.assigned > 0),
-    'unhanded days: ' + JSON.stringify(week.days.filter((d) => d.rooms && d.rostered && !d.assigned)));
+    week.days.every((d) => !d.dealable || !d.leaders || d.assigned > 0),
+    'unhanded days: ' + JSON.stringify(week.days.filter((d) => d.dealable && d.leaders && !d.assigned)));
   check('it reports what it actually did', week.ran.jobs > 0, 'reported ' + JSON.stringify(week.ran));
 
   // Pressing it twice must not double anything up or re-deal settled work.
@@ -2264,10 +2322,49 @@ function serve() {
 
   // 3. While dirty, a live update from another device must not overwrite the
   //    change this one is still holding.
+  // THE CLOCK, NOT THE RUN. Refusing an incoming copy is conditional on dirtyForMs()
+  // being under DEAF_LIMIT_MS — two minutes, because a device that cannot send must not
+  // go deaf for ever — and this file takes about that long to reach here. So the check
+  // measured how slow the run was as much as what the app does, and failed about one run
+  // in ten with the edit correctly merged away by a limit that had quietly expired.
+  // Re-stamp the clock: the device is still holding the same unsent change, it has simply
+  // not been holding it for two minutes.
+  await page.evaluate(() => { clearDirty(); markDirty(); });
   await page.evaluate(() => applyRemote({ ...state, servicedUnits: state.servicedUnits.map((u) => ({ ...u, priority: true })) }));
   await page.waitForTimeout(300);
-  eq('an unsent change is not clobbered by another device',
-    await page.evaluate(() => state.servicedUnits.find((u) => u.id === 'u101').priority), false);
+  const clobber = await page.evaluate(() => ({
+    priority: (state.servicedUnits.find((u) => u.id === 'u101') || {}).priority,
+    dirty: isDirty(), dirtyForMs: dirtyForMs(), deafLimit: DEAF_LIMIT_MS,
+  }));
+  // WITH THE DIRTY CLOCK IN THE MESSAGE. Refusing an incoming copy is conditional on
+  // dirtyForMs() being under DEAF_LIMIT_MS — a device may not go deaf for ever — so a
+  // bare "expected false" cannot tell a lost edit from the deafness limit expiring, and
+  // this run is long enough to reach two minutes.
+  check('an unsent change is not clobbered by another device', clobber.priority === false,
+    JSON.stringify(clobber));
+
+  // 3b. ...AND IT STOPS REFUSING AFTER TWO MINUTES, WHICH IS ALSO THE POINT. A phone that
+  //     cannot send must not sit on its own morning for ever, pushing it at everybody and
+  //     accepting nothing — so past the limit the incoming copy is taken and merged. That
+  //     is a deliberate trade and it costs a held scalar edit like this one; it is worth a
+  //     check of its own, so nobody meets it for the first time as a mystery on a Sunday.
+  await page.evaluate(() => {
+    localStorage.setItem(DIRTY_KEY + '_since', String(Date.now() - DEAF_LIMIT_MS - 5000));
+  });
+  const deaf = await page.evaluate(() => {
+    applyRemote({ ...state, servicedUnits: state.servicedUnits.map((u) => ({ ...u, priority: true })) });
+    return { priority: (state.servicedUnits.find((u) => u.id === 'u101') || {}).priority,
+             stillDirty: isDirty() };
+  });
+  check('past the deafness limit it takes the incoming copy instead of going deaf',
+    deaf.priority === true, JSON.stringify(deaf));
+  check('...and still owes what it was holding, so it pushes straight afterwards',
+    deaf.stillDirty === true, JSON.stringify(deaf));
+  // Put the held edit back, so what follows tests the recovery it means to test.
+  await page.evaluate(() => {
+    state.servicedUnits.find((u) => u.id === 'u101').priority = false;
+    clearDirty(); markDirty();
+  });
 
   // 4. When the connection comes back, the held change goes up by itself.
   failWrites = false;
