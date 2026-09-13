@@ -13520,9 +13520,27 @@ function tvColumns() {
   //
   // Somebody whose whole day is helper entries on ONE person's rooms is not running a
   // round; they are on that person's round. They belong in that card's name.
+  // ...AND A COMMUNAL WALK IS NOT A ROUND OF YOUR OWN. "Work of their own" counted every
+  // job in the bucket, areas included — so the moment the office put the bins on the
+  // second of a pair, the pair came apart. On 13 Sep Mahamed Abdi Abiker was holding
+  // Barxad/Jaranjaro and Trash/Recycling on top of Abukar Daud Osman's 804, 903 and 1102,
+  // and the wall drew them as two cards carrying the same three rooms — the twice-on-the-
+  // board this function exists to stop, and the office read it as the pairing being lost.
+  //
+  // A round is ROOMS. Somebody named alongside on every room they are down for is on that
+  // person's round whatever else they have been handed; the corridors do not make a man a
+  // second cleaner on floor 8. What they are holding comes with them onto the shared card
+  // (see the push below), so nothing leaves the board by being merged.
+  //
+  // NOT A LEADER, THOUGH. A leader has a round by definition — it is what the word means
+  // here, and it is why a pair is only ever drawn as one card when neither of them is one.
+  // Two leaders sharing the big room on 3 are two rounds that meet over one job, and
+  // putting the bins on the second of them must not fold his round under the first man's
+  // name. For a leader the old question stands: any work at all of his own is a round.
   const helperRoundOwner = (p) => {
-    const mine = grouped.buckets[p.id] || [];
-    if (!mine.length || mine.some((j) => !j.helper)) return null;   // has work of their own
+    const all = grouped.buckets[p.id] || [];
+    const mine = p.isLeader ? all : all.filter((j) => !j.area);
+    if (!mine.length || mine.some((j) => !j.helper)) return null;   // work of their own
     const owners = new Set();
     mine.forEach((j) => {
       const u = (state.servicedUnits || []).find((x) => x.id === j.id);
@@ -13590,7 +13608,15 @@ function tvColumns() {
       return;
     }
     cols.push({
-      key: p.id, name: sharedName(p), jobs: grouped.buckets[p.id] || [],
+      key: p.id, name: sharedName(p),
+      // EVERYTHING THE CARD IS NAMED FOR IS ON THE CARD. Folding somebody into this column
+      // used to cost nothing, because they were holding nothing but copies of these rooms.
+      // Now that a communal walk no longer costs them their place on the round, their bins
+      // are real work that lives only in their bucket — and dropping the bucket would take
+      // it off the wall. Deduped, so a room both of them are named on is still one job and
+      // the card cannot disagree with the tally at the top.
+      jobs: dedupeJobs((grouped.buckets[p.id] || [])
+        .concat(...(alongside[p.id] || []).map((x) => grouped.buckets[x.id] || []))),
       none: false, out: AWAY.indexOf(st) >= 0, status: st, with: tvWithLabel(p, spare),
       team: tvTeam(p), at: tvArrival(p), left: tvLeft(p), note: p.note || '', site: siteToday(p),
     });
