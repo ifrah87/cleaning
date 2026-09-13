@@ -13543,10 +13543,10 @@ function tvColumns() {
     if (owners.size !== 1) return null;          // spread over two rounds — not a pair
     const owner = (state.staff || []).find((x) => x.id === [...owners][0]);
     if (!owner || !onDutyToday(owner) || !tvHere(owner)) return null;
-    // A LEADER IS FOLDED IN BY A WHOLE ROUND, NOT BY A SHARED JOB. Rank is not the
-    // question — the day's hand-out is, the same as a pin outranking a rank — but a
-    // leader is somebody who normally carries a round, so the evidence has to be the
-    // round itself: his name on EVERY room of it, and a round of more than one room.
+    // A LEADER IS FOLDED IN BY A ROUND, NOT BY A SHARED JOB. Rank is not the question —
+    // the day's hand-out is, the same as a pin outranking a rank — but a leader is
+    // somebody who normally carries a round, so the evidence has to look like one: his
+    // name on TWO OR MORE of the other man's rooms.
     //
     // That is the difference between the two things this could be. Two leaders who both
     // turn up for the big room on 3 are two rounds meeting over ONE job, and they stay
@@ -13555,10 +13555,14 @@ function tvColumns() {
     // Team page says about either of them. Abiker is ticked a leader there and neither
     // man is one in the building, which is why the crew rule (pairMates, for a team with
     // no leader above it) could not draw them together and the wall stayed split.
-    if (p.isLeader) {
-      const his = (grouped.buckets[owner.id] || []).filter((j) => !j.area);
-      if (his.length < 2 || his.length !== mine.length) return null;
-    }
+    //
+    // TWO, AND NOT "ALL OF THEM". Asking for his name on every room of the round is the
+    // same answer on any ordinary morning and a trap on the others: the levelling moves a
+    // room, or the office taps Give Abukar more work, and a pair that has walked floor 8
+    // together for months comes apart over one room handed to one of them. A card that
+    // regroups itself on the back of the day's arithmetic is the drift this was meant to
+    // stop, arriving by a different door. Two rooms shared is a round shared.
+    if (p.isLeader && mine.length < 2) return null;
     return owner;
   };
   // ...and the other way round, so a card can name everybody on it.

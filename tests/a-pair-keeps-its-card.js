@@ -198,6 +198,23 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
     JSON.stringify(asLeader.jobs));
   check('...and still nothing counted twice', asLeader.total === 6, String(asLeader.total));
 
+  // ...AND IT HOLDS THROUGH AN ORDINARY MORNING. One extra room handed to the man who
+  // answers for the round — the levelling moving one, or somebody tapping Give Abukar more
+  // work — must not break a pair that has walked floor 8 together for months.
+  const extraRoom = await page.evaluate(() => {
+    state.servicedUnits.push({ id: 'u806', unit: '806', type: 'office', freq: 'daily',
+      lastCleaned: null, assignedTo: 'pAbukar' });
+    const cols = tvColumns();
+    return { names: cols.map((c) => c.name),
+      jobs: (cols.find((c) => /Abukar/.test(c.name)) || { jobs: [] }).jobs.map((j) => j.label) };
+  });
+  check('one extra room on his own does not break the pair',
+    extraRoom.names.filter((n) => /Abiker/.test(n)).length === 1
+    && extraRoom.names.some((n) => /Abukar Daud Osman \/ Mahamed Abdi Abiker/.test(n)),
+    JSON.stringify(extraRoom.names));
+  check('...and the extra room is on the card with the rest',
+    extraRoom.jobs.some((l) => /^806/.test(l)), JSON.stringify(extraRoom.jobs));
+
   check('no console errors', errs.length === 0, errs.join('\n       '));
 
   await browser.close(); s.close();
