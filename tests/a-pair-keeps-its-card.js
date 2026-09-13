@@ -179,6 +179,25 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
     JSON.stringify(offsitePattern.names));
   check('...and still nothing counted twice', offsitePattern.total === 6, String(offsitePattern.total));
 
+  // ...AND TICKED A LEADER ON THE TEAM PAGE. Neither of them is a leader in the building,
+  // but Abiker is ticked as one — which is what stopped the crew rule drawing them
+  // together in the first place. A whole round with both names on every room of it says
+  // more than the tick does.
+  const asLeader = await page.evaluate(() => {
+    state.staff.find((x) => /Abiker/.test(x.name)).isLeader = true;
+    const cols = tvColumns();
+    return { names: cols.map((c) => c.name), total: countJobs(cols).all,
+      jobs: (cols.find((c) => /Abukar/.test(c.name)) || { jobs: [] }).jobs.map((j) => j.label) };
+  });
+  check('a leader tick does not split the pair',
+    asLeader.names.filter((n) => /Abiker/.test(n)).length === 1
+    && asLeader.names.some((n) => /Abukar Daud Osman \/ Mahamed Abdi Abiker/.test(n)),
+    JSON.stringify(asLeader.names));
+  check('...and his walks are still on the card',
+    asLeader.jobs.some((l) => /Trash/.test(l)) && asLeader.jobs.some((l) => /Barxad/.test(l)),
+    JSON.stringify(asLeader.jobs));
+  check('...and still nothing counted twice', asLeader.total === 6, String(asLeader.total));
+
   check('no console errors', errs.length === 0, errs.join('\n       '));
 
   await browser.close(); s.close();
