@@ -841,6 +841,29 @@
   .tv-airtime { font-size: 1.5vw; font-weight: 800; color: var(--tv-cover-fg); margin-top: 0.6vh; font-variant-numeric: tabular-nums; }
   .tv-airdone { font-size: 1.1vw; font-weight: 800; letter-spacing: 0.1em; color: var(--tv-done-fg); margin-top: 0.6vh; }
 
+  /* WHO IS IN. An occupied flat is the loud card; an empty one stays on the page, dimmed,
+     because "which are free" is the other half of the same question. No money here, and
+     none anywhere on this screen. */
+  .tv-guestcard.inuse { border-left-color: #22c55e; }
+  .tv-guestcard.free { border-left-color: var(--tv-dot); opacity: 0.55; }
+  .tv-guestfree { font-size: 1.1vw; font-weight: 800; letter-spacing: 0.12em; color: var(--tv-muted); margin-top: 0.6vh; }
+
+  /* The same answer along the board itself, for somebody walking past rather than
+     standing at it with the remote. Numbers only — a guest's name is not readable at
+     this size from across an office, and that is what the page is for. */
+  .tv-guestbar { display: flex; align-items: center; gap: 1vw; margin-top: 0.6vh; }
+  .tv-guestlbl { font-size: 0.95vw; font-weight: 800; letter-spacing: 0.12em; color: var(--tv-muted); }
+  .tv-guestn { font-size: 1.6vw; font-weight: 800; color: #22c55e; line-height: 1; }
+  .tv-guestn span { font-size: 1vw; color: var(--tv-muted); }
+  .tv-guestchips { display: flex; flex-wrap: wrap; gap: 0.4vw; min-width: 0; }
+  .tv-guestchip { font-size: 0.95vw; font-weight: 800; padding: 0.3vh 0.6vw; border-radius: 0.5vw;
+                  background: var(--tv-card); color: var(--tv-muted); }
+  .tv-guestchip.in { background: #14532d; color: #dcfce7; }
+
+  /* A named page you can only reach with a key you may not have. The wall has a remote;
+     the phone this URL opens on does not. */
+  .tv-navgo { cursor: pointer; }
+
   .tv-group { font-size: calc(0.95vw * var(--tvs)); font-weight: 800; letter-spacing: 0.12em;
               color: var(--tv-muted); margin-top: calc(0.6vh * var(--tvs)); }
   .tv-empty { font-size: 1.4vw; font-weight: 700; color: var(--tv-empty); padding: 1vh 0; }
@@ -5437,8 +5460,14 @@ async function arrivalsForDay(day) {
       // The door reader sees everyone, cleaners or not. Keep the non-cleaners out
       // of the roll call, but don't drop them without trace — silently vanishing
       // makes an untagged cleaner look like someone who never turned up.
-      else if (onlyCleaners && person) other.push({ id: person.id, name: person.name, time: t });
-      else unknown.push({ name: e.person_name, time: t });
+      // ...AND WITH THE SAME STAMP ON IT AS EVERYBODY ELSE'S. These two rows carried the
+      // time as it READS — "10:36 AM" — while the roster's carried the raw event
+      // "2026-09-14 05:48:00", and the strip sorts the three lists together as strings.
+      // "1" comes before "2", so anybody who arrived at ten or eleven sorted ABOVE the
+      // whole morning: the security and mosque pair sat at the head of the arrivals every
+      // day, reading as the first people in the building when they were the last.
+      else if (onlyCleaners && person) other.push({ id: person.id, name: person.name, time: t, raw: e.event_time });
+      else unknown.push({ name: e.person_name, time: t, raw: e.event_time });
     }
     mergeManualArrivals(day, arrivals);   // people the office added by hand (forgot to badge)
     return { arrivals, unknown, other };
@@ -9557,8 +9586,8 @@ function viewTick() {
     const inRows = Object.keys(hikArrivals)
       .filter((id) => staffById2[id])
       .map((id) => ({ id, name: staffById2[id].name, time: hikArrivals[id].time, raw: hikArrivals[id].raw }))
-      .concat((hikOther || []).map((o) => ({ id: o.id, name: o.name, time: o.time, raw: o.time })))
-      .concat((hikUnknown || []).map((o) => ({ name: o.name + ' (not on roster)', time: o.time, raw: o.time })))
+      .concat((hikOther || []).map((o) => ({ id: o.id, name: o.name, time: o.time, raw: o.raw || o.time })))
+      .concat((hikUnknown || []).map((o) => ({ name: o.name + ' (not on roster)', time: o.time, raw: o.raw || o.time })))
       .sort((a, b) => String(a.raw || '').localeCompare(String(b.raw || '')));
 
     // Only the cleaning crew. A building full of office staff who did not badge in is
@@ -9646,11 +9675,18 @@ function viewTick() {
       // a name round present → late → no-show → sick → off, and everything downstream
       // (isAway, the share-out, the board's AWAY column, the re-pin guard) has always been
       // ready for it.
-      const chips = (label, colour, items, render) => {
+      const chips = (label, colour, items, render, hideCount) => {
         if (!items.length) return;
-        const row = el(`<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:6px"></div>`);
+        // A GRID, NOT A WRAPPING ROW. The label used to be the first item in the same
+        // wrap as the chips, which lines up fine on a desk and falls apart on a phone:
+        // the second chip wraps to the LEFT MARGIN, under the label, and reads as
+        // belonging to no team at all. Its own column keeps every chip of a team indented
+        // beneath the team, at any width, however many names are in it.
+        const row = el(`<div style="display:grid;grid-template-columns:112px minmax(0,1fr);`
+          + `gap:6px;align-items:start;margin-bottom:6px"></div>`);
         row.appendChild(el(`<div style="font-size:11px;font-weight:800;letter-spacing:0.06em;color:${colour};`
-          + `flex:0 0 auto;min-width:74px">${label} ${items.length}</div>`));
+          + `padding-top:5px">${esc(label)}${hideCount ? '' : ' ' + items.length}</div>`));
+        const wrap = el(`<div style="display:flex;flex-wrap:wrap;gap:6px"></div>`);
         items.forEach((it) => {
           const chip = el(render(it));
           // Only somebody on the roster can carry a status. A name off the door reader
@@ -9661,8 +9697,9 @@ function viewTick() {
             chip.title = away ? 'Tap to put them back in' : 'Tap to mark them sick';
             chip.onclick = () => toggleSick(it.id);
           }
-          row.appendChild(chip);
+          wrap.appendChild(chip);
         });
+        row.appendChild(wrap);
         box.appendChild(row);
       };
       // BADGED IN AND THEN WENT HOME. The door saw them, so they sit in IN — and the IN
@@ -9670,7 +9707,7 @@ function viewTick() {
       // as present all day on the one strip the office looks at, while every other part of
       // the app already knew they were away. If there is a status against a name, it is
       // the more important half of the chip.
-      chips('IN', '#22c55e', inRows, (r) => {
+      const inChip = (r) => {
         const st = r.id ? (state.attendance[r.id] || 'present') : 'present';
         const away = AWAY.indexOf(st) >= 0 || st === 'late';
         return `<div style="font-size:11px;font-weight:700;color:#b7c8de;`
@@ -9678,7 +9715,51 @@ function viewTick() {
           + (r.time ? ` <span style="color:#7ea6dc">${esc(r.time)}</span>` : '')
           + (away ? ` <span style="color:${(STATUS[st] || {}).color || '#fbbf24'}">${esc((STATUS[st] || {}).label || st.toUpperCase())}</span>` : '')
           + `</div>`;
+      };
+      // GROUPED THE WAY THE BOARD UNDERNEATH IT IS GROUPED. Thirteen names in one
+      // unbroken run is a wall the office reads name by name, and the question actually
+      // being asked of this strip is never "who is here" — it is "is Team D in yet".
+      // Same teams as the columns below, in the same order, leader first inside each one,
+      // so a team short of somebody reads as a short line instead of a name that has to
+      // be hunted for.
+      //
+      // The groups that do not clean sit at the bottom: Security/Mosque, the outside
+      // team, and anybody the door saw who is on no roster at all. They are never the
+      // answer to that question, and three of this morning's thirteen were theirs.
+      const teamIndex = {};
+      (state.teams || []).forEach((t, i) => { teamIndex[t.name] = i; });
+      const crewRank = (name, items) => {
+        if (!name) return [3, 0];                                        // off the roster
+        const idx = teamIndex[name] === undefined ? 99 : teamIndex[name];
+        // Judged on who is actually IN it this morning, not on the team's name: a group
+        // with nobody who cleans in it has nothing to do with the round.
+        if (!items.some((r) => r.id && (staffById2[r.id] || {}).isCleaner)) return [2, idx];
+        return [name.slice(0, 4) === 'Team' ? 0 : 1, idx];
+      };
+      const teamColour = (name) => ((state.teams || []).find((t) => t.name === name) || {}).color || '#6f8ab0';
+      const inByCrew = {};
+      inRows.forEach((r) => {
+        const c = String(((staffById2[r.id] || {}).crew) || '').trim();
+        (inByCrew[c] = inByCrew[c] || []).push(r);
       });
+      const inGroups = Object.keys(inByCrew)
+        .map((c) => ({
+          crew: c,
+          // Leader first — the strip is read to find out whose round is covered, and the
+          // round is the leader's. Everyone else in arrival order behind them.
+          items: inByCrew[c].slice().sort((a, b) =>
+            (((staffById2[b.id] || {}).isLeader ? 1 : 0) - ((staffById2[a.id] || {}).isLeader ? 1 : 0))
+            || String(a.raw || '').localeCompare(String(b.raw || ''))),
+        }))
+        .sort((a, b) => {
+          const ra = crewRank(a.crew, a.items), rb = crewRank(b.crew, b.items);
+          return (ra[0] - rb[0]) || (ra[1] - rb[1]) || String(a.crew).localeCompare(String(b.crew));
+        });
+      if (inRows.length) {
+        box.appendChild(el(`<div style="font-size:11px;font-weight:800;letter-spacing:0.06em;`
+          + `color:#22c55e;margin-bottom:6px">IN ${inRows.length}</div>`));
+      }
+      inGroups.forEach((g) => chips(g.crew || 'NO TEAM', teamColour(g.crew), g.items, inChip, true));
       chips('NOT IN', '#fbbf24', outRows, (r) => `<div style="font-size:11px;font-weight:700;color:#b7c8de;`
         + `background:#16233a;border:1px solid #3d557f;border-radius:7px;padding:5px 9px">${esc(r.name)}`
         + ` <span style="color:${colourOf(r)}">${esc(r.why)}</span>`
@@ -13896,6 +13977,117 @@ function tvOffRollCall() {
   } catch (e) { return []; }
 }
 
+/** Every guest flat on the books, paused ones aside. Occupancy is about the room. */
+function guestFlats() {
+  return (state.servicedUnits || [])
+    .filter((u) => !u.paused && unitType(u) === 'airbnb')
+    .sort((a, b) => String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }));
+}
+
+/** A flat with somebody in it. The guest name IS the occupancy: it is typed when they
+ *  arrive and cleared when they go, and nothing else in this app knows a booking. */
+const flatOccupied = (u) => !!String((u && u.guest) || '').trim();
+
+/**
+ * The separate job's page: what is owed today that the columns did not already draw.
+ *
+ * Off the roll call is not enough on its own — a flat somebody has been GIVEN rides
+ * into their column on today's plan even with Airbnb switched off, and would then be on
+ * the wall twice, on a card and on a page. Once, wherever it is.
+ */
+function tvAirDue(cols) {
+  const drawn = new Set();
+  (cols || []).forEach((c) => (c.jobs || []).forEach((j) => drawn.add(j.id)));
+  return tvOffRollCall().filter((u) => !drawn.has(u.id));
+}
+
+/**
+ * THE PAGES, IN ORDER, IN ONE PLACE.
+ *
+ * renderTV worked out which page it was on by counting backwards from the end, and the
+ * remote counted the pages for itself with a different sum that did not know the flats
+ * page existed at all. The two only agreed while that page did not exist: give the
+ * flats a page and the month became unreachable — right on the remote wrapped round
+ * before it got there — with nothing on screen to say a page had been lost.
+ *
+ * One list, named, and renderTV, the remote and the legend all read it.
+ */
+function tvPageList(opts) {
+  const o = opts || {};
+  const cols = o.cols || tvColumns();
+  const air = o.air || tvAirDue(cols);
+  const flats = o.flats || guestFlats();
+  const list = [];
+  const boardPages = Math.max(1, Math.ceil(cols.length / TV_COLS_PER_PAGE));
+  for (let i = 0; i < boardPages; i += 1) list.push({ key: 'board', label: 'BOARD', board: i });
+  if (air.length) list.push({ key: 'air', label: 'AIRBNB' });
+  if (flats.length) list.push({ key: 'guests', label: "WHO'S IN" });
+  list.push({ key: 'rounds', label: 'ROUNDS' });
+  list.push({ key: 'cal', label: 'MONTH' });
+  return list;
+}
+
+/**
+ * WHICH FLATS HAVE SOMEBODY IN THEM — the whole page, and no money on it.
+ *
+ * Not a cleaning page: it says nothing about what is owed or done. Occupied rooms lead
+ * and are the loud ones, because that is the question being asked in front of it; the
+ * empty ones stay on, quietly, because "which are free" is the other half of the same
+ * answer and a list that only shows half of it cannot be counted against the building.
+ */
+function tvGuestsPage(flats) {
+  const box = el(`<div class="tv-cols" style="display:flex;flex-direction:column;min-height:0;gap:1.2vh"></div>`);
+  const inRooms = flats.filter(flatOccupied);
+  const free = flats.filter((u) => !flatOccupied(u));
+  const grid = (list, cls) => {
+    const g = el(`<div class="tv-air"></div>`);
+    list.forEach((u) => {
+      const card = el(`<div class="tv-aircard tv-guestcard ${cls}"></div>`);
+      card.appendChild(el(`<div class="tv-airunit">${esc(u.unit)}</div>`));
+      if (cls === 'inuse') {
+        card.appendChild(el(`<div class="tv-airguest">${esc(u.guest)}</div>`));
+        if (u.time) card.appendChild(el(`<div class="tv-airtime">OUT ${esc(u.time)}</div>`));
+      } else {
+        card.appendChild(el(`<div class="tv-guestfree">EMPTY</div>`));
+      }
+      g.appendChild(card);
+    });
+    return g;
+  };
+  if (inRooms.length) {
+    box.appendChild(el(`<div class="tv-group">IN</div>`));
+    box.appendChild(grid(inRooms, 'inuse'));
+  }
+  if (free.length) {
+    box.appendChild(el(`<div class="tv-group">EMPTY</div>`));
+    box.appendChild(grid(free, 'free'));
+  }
+  if (!flats.length) box.appendChild(el(`<div class="tv-empty">No guest flats on the books</div>`));
+  return box;
+}
+
+/**
+ * THE SAME ANSWER WITHOUT TOUCHING THE REMOTE — a strip along the board itself.
+ *
+ * The page above is the considered version; this is the glanceable one, for the far
+ * more common case of somebody walking past rather than standing and clicking. Room
+ * numbers only: a name is unreadable at this size from across an office, and who is in
+ * 406 is a question for the page.
+ */
+function tvGuestStrip(flats) {
+  if (!flats.length) return null;
+  const inRooms = flats.filter(flatOccupied);
+  const wrap = el(`<div class="tv-guestbar"></div>`);
+  wrap.appendChild(el(`<div class="tv-guestlbl">GUESTS IN</div>`));
+  wrap.appendChild(el(`<div class="tv-guestn">${inRooms.length}<span>/${flats.length}</span></div>`));
+  const chips = el(`<div class="tv-guestchips"></div>`);
+  flats.forEach((u) => {
+    chips.appendChild(el(`<div class="tv-guestchip${flatOccupied(u) ? ' in' : ''}">${esc(u.unit)}</div>`));
+  });
+  wrap.appendChild(chips);
+  return wrap;
+}
+
 // Named after whatever is actually on it rather than hardcoded to "Airbnb" — the
 // off-roll-call list is a rule about roll call, not a room type, and the day the
 // office switches something else off this page should say so without being edited.
@@ -14005,19 +14197,20 @@ function renderTV() {
   // what the columns did not: nothing is drawn twice, and nothing is dropped. With the
   // flats on the roll call the columns take them all, the page does not exist, and the
   // board is exactly as it was.
-  const drawn = new Set();
-  cols.forEach((c) => (c.jobs || []).forEach((j) => drawn.add(j.id)));
-  const air = tvOffRollCall().filter((u) => !drawn.has(u.id));
-  const boardPages = Math.max(1, Math.ceil(cols.length / TV_COLS_PER_PAGE));
-  // The month is always the last page, so its position does not move about as the crew
-  // grows and the board gains or loses a page under it.
+  const air = tvAirDue(cols);
+  const flats = guestFlats();
   // The month is last and the rounds sit just before it, so neither moves about as the
-  // crew grows and the board gains or loses a page underneath them.
-  const tvPages = boardPages + (air.length ? 1 : 0) + 2;
+  // crew grows and the board gains or loses a page underneath them. tvPageList holds
+  // that order; nothing here counts backwards from the end any more.
+  const pageList = tvPageList({ cols, air, flats });
+  const boardPages = pageList.filter((p) => p.key === 'board').length;
+  const tvPages = pageList.length;
   if (tvPage >= tvPages) tvPage = 0;
-  const onCal = tvPage === tvPages - 1;
-  const onRounds = tvPage === tvPages - 2;
-  const onAir = !onCal && !onRounds && air.length > 0 && tvPage === tvPages - 3;
+  const cur = pageList[tvPage] || pageList[0];
+  const onCal = cur.key === 'cal';
+  const onRounds = cur.key === 'rounds';
+  const onAir = cur.key === 'air';
+  const onGuests = cur.key === 'guests';
 
   // Every number at the top counts the page you are actually looking at, or the
   // Airbnb page would sit under the offices' progress and read as its own.
@@ -14031,6 +14224,7 @@ function renderTV() {
   const left = el(`<div></div>`);
   left.appendChild(el(`<div class="tv-brand">${onCal ? 'THE MONTH AHEAD'
     : onRounds ? 'THE ROUNDS'
+    : onGuests ? 'WHO IS IN'
     : onAir ? esc(tvAirTitle(air)) : 'CLEANING BOARD'}</div>`));
   // THE DAY THE BOARD IS ABOUT, NOT THE DAY THE CLOCK IS ON.
   // The work day rolls at 3am — a round that runs past midnight belongs to the morning
@@ -14070,7 +14264,15 @@ function renderTV() {
   // THE ROUNDS PAGE IS NOT ABOUT A DAY, so it does not borrow the day's numbers. DONE
   // over an arrangement would read as "none of this has been cleaned", which is not what
   // the page is saying at all.
-  if (onRounds) {
+  // WHO IS IN IS NOT A DAY'S WORK. Its numbers are rooms with somebody in them and
+  // rooms without — done and jobs would be answering a question this page is not asking.
+  if (onGuests) {
+    const inN = flats.filter(flatOccupied).length;
+    mid.appendChild(tile(inN, inN === 1 ? 'ROOM IN USE' : 'ROOMS IN USE', '#22c55e'));
+    mid.appendChild(tile(flats.length - inN, 'EMPTY', null));
+    mid.appendChild(tile(flats.length, flats.length === 1 ? 'FLAT' : 'FLATS', null));
+    top.appendChild(mid);
+  } else if (onRounds) {
     const rd = tvRounds();
     const kept = rd.rounds.reduce((n, r) => n + r.rooms.length, 0);
     mid.appendChild(tile(kept, kept === 1 ? 'ROOM' : 'ROOMS', null));
@@ -14110,15 +14312,22 @@ function renderTV() {
   wrap.appendChild(top);
 
   const bar = el(`<div class="tv-bar"><i></i></div>`);
-  bar.firstChild.style.width = pct + '%';
-  wrap.appendChild(bar);
+  // The bar is "how much of today is done". On the guests page that is not what the
+  // numbers above it mean, and a full green bar over an occupancy count reads as a
+  // claim about work nobody made.
+  bar.firstChild.style.width = (onGuests ? 0 : pct) + '%';
+  if (!onGuests) wrap.appendChild(bar);
 
   // The roll call is the morning's crew. Airbnb is not on it, so on that page the
   // strip would be naming people who are not doing this work.
-  if (!onAir) {
+  if (!onAir && !onGuests) {
     wrap.appendChild(tvCrewStrip());
     const also = tvAlsoStrip();
     if (also) wrap.appendChild(also);
+    // ...and who is in, without anybody having to reach for the remote. The page is the
+    // considered version of this; the strip is for walking past.
+    const guests = tvGuestStrip(flats);
+    if (guests) wrap.appendChild(guests);
   }
 
   // --- columns, a page at a time ---
@@ -14235,7 +14444,9 @@ function renderTV() {
   });
   const roundsGrid = onRounds ? tvRoundsPage() : null;
   wrap.appendChild(onCal ? tvCalendarPage(shownDay)
-    : onRounds ? roundsGrid : onAir ? tvAirGrid(air) : grid);
+    : onRounds ? roundsGrid
+    : onGuests ? tvGuestsPage(flats)
+    : onAir ? tvAirGrid(air) : grid);
 
   // THE REMOTE, SPELLED OUT. Left and right walk the pages, up and down walk the days —
   // true since the pages went in, and said out loud only at the bottom of the month.
@@ -14253,18 +14464,40 @@ function renderTV() {
       + (tvDayOffset > 1 ? esc(fmtDay(shownDay).toUpperCase()) : 'TOMORROW') + `</div>`));
     nav.appendChild(days);
 
+    // NAMED FROM THE LIST THAT DRAWS THEM, so a page cannot exist and go unmentioned —
+    // which is what happened to the flats page: on the wall, reachable, and absent from
+    // the one line that tells anybody the other pages are there.
+    //
+    // ...AND CLICKABLE. The remote walks left and right, which is right for a wall; it
+    // is useless on the phone or laptop this same URL gets opened on, where there are no
+    // arrow keys to press. Naming a page and then only answering a key is a menu that
+    // is not one.
     const pgs = el(`<div class="tv-navgrp"></div>`);
     pgs.appendChild(el(`<div class="tv-navk">◀▶</div>`));
-    pgs.appendChild(el(`<div class="tv-navl${!onCal && !onRounds ? ' on' : ''}">BOARD</div>`));
-    if (boardPages > 1) {
-      const dots = el(`<div class="tv-pager"></div>`);
-      for (let i = 0; i < boardPages; i += 1) {
-        dots.appendChild(el(`<div class="tv-dot${!onCal && !onRounds && i === tvPage ? ' on' : ''}"></div>`));
+    const goTo = (i) => { tvPage = i; renderTV(); };
+    let seenBoard = false;
+    pageList.forEach((pg, i) => {
+      if (pg.key === 'board') {
+        if (seenBoard) return;                 // one BOARD label, however many pages of it
+        seenBoard = true;
+        const lbl = el(`<div class="tv-navl tv-navgo${cur.key === 'board' ? ' on' : ''}">BOARD</div>`);
+        lbl.onclick = () => goTo(i);
+        pgs.appendChild(lbl);
+        if (boardPages > 1) {
+          const dots = el(`<div class="tv-pager"></div>`);
+          for (let n = 0; n < boardPages; n += 1) {
+            const dot = el(`<div class="tv-dot tv-navgo${cur.key === 'board' && n === tvPage ? ' on' : ''}"></div>`);
+            dot.onclick = ((to) => () => goTo(to))(n);
+            dots.appendChild(dot);
+          }
+          pgs.appendChild(dots);
+        }
+        return;
       }
-      pgs.appendChild(dots);
-    }
-    pgs.appendChild(el(`<div class="tv-navl${onRounds ? ' on' : ''}">ROUNDS</div>`));
-    pgs.appendChild(el(`<div class="tv-navl${onCal ? ' on' : ''}">MONTH</div>`));
+      const lbl = el(`<div class="tv-navl tv-navgo${tvPage === i ? ' on' : ''}">${esc(pg.label)}</div>`);
+      lbl.onclick = () => goTo(i);
+      pgs.appendChild(lbl);
+    });
     nav.appendChild(pgs);
 
     wrap.appendChild(nav);
@@ -14428,7 +14661,11 @@ function startTVLoop() {
   // the remote had one more page to walk than there were pages to see.
   // ...+ 2: the rounds and the month, both always drawn. Counted the same way renderTV
   // counts them, or an arrow walks onto a page the board will not draw.
-  const pages = () => Math.max(1, Math.ceil(tvColumns().length / TV_COLS_PER_PAGE)) + 2;
+  // Counted from the same list that draws them. This used to do its own sum — board
+  // pages plus two — which did not know about the flats page or the guests page, so the
+  // moment either existed the month sat past the end of the remote's world and could
+  // not be reached at all.
+  const pages = () => tvPageList().length;
   // PICK UP NEW CODE WITHOUT ANYBODY WALKING TO THE TV. The board pulls fresh DATA
   // all day, but the JavaScript it is running is whatever it downloaded when the page
   // was opened — and this screen is opened once and left for weeks. Every fix shipped

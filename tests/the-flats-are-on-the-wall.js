@@ -44,7 +44,7 @@ const APP_STATE = {
     { id: 'su301', unit: '301', type: 'building', freq: 'daily', lastCleaned: DAY_BEFORE, assignedTo: 'p2' },
     // Three guest flats due today: one handed to somebody, two nobody has picked up.
     { id: 'su406', unit: '406', type: 'airbnb', freq: 'daily', preferLate: true, lastCleaned: DAY_BEFORE, assignedTo: 'p1', guest: 'Faisal' },
-    { id: 'su506', unit: '506', type: 'airbnb', freq: 'daily', preferLate: true, lastCleaned: DAY_BEFORE },
+    { id: 'su506', unit: '506', type: 'airbnb', freq: 'daily', preferLate: true, lastCleaned: DAY_BEFORE, guest: 'Warsame', time: '11:00' },
     { id: 'su606', unit: '606', type: 'airbnb', freq: 'daily', preferLate: true, lastCleaned: DAY_BEFORE },
   ],
   areas: [{ id: 'corridors', label: 'Corridors', kind: 'interior', freq: 'daily', assignedTo: 'p1' }],
@@ -153,6 +153,71 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
     both.cols.some((l) => /^406/.test(l)), both.cols.join(', '));
   check('...and get no second page, so no room is drawn twice',
     both.air.length === 0, JSON.stringify(both.air));
+
+  // ---- WHO IS IN --------------------------------------------------------------
+  // Occupancy, not cleaning: every flat on the books, with somebody in it or empty.
+  // Back to the board itself — the strip lives there, not on the pages that replace it.
+  await page.evaluate(() => { state.rollCallTypes = ['office', 'building']; tvPage = 0; renderTV(); });
+  await page.waitForTimeout(400);
+
+  const strip = await page.evaluate(() => {
+    const bar = document.querySelector('.tv-guestbar');
+    if (!bar) return null;
+    return {
+      n: (bar.querySelector('.tv-guestn') || {}).textContent,
+      in: [...bar.querySelectorAll('.tv-guestchip.in')].map((c) => c.textContent),
+      all: [...bar.querySelectorAll('.tv-guestchip')].map((c) => c.textContent),
+    };
+  });
+  check('the board itself carries a guests strip, for walking past',
+    !!strip, 'no .tv-guestbar on the board');
+  check('...counting the rooms with somebody in them',
+    !!strip && strip.n.replace(/\s/g, '') === '2/3', JSON.stringify(strip));
+  check('...and marking which rooms those are',
+    !!strip && strip.in.join(',') === '406,506', JSON.stringify(strip && strip.in));
+
+  // The page is reached by CLICKING its name, which is the half a remote cannot do and
+  // every phone this URL opens on needs.
+  const clicked = await page.evaluate(() => {
+    const lbl = [...document.querySelectorAll('.tv-navl')].find((n) => /WHO/.test(n.textContent));
+    if (!lbl) return null;
+    lbl.click();
+    return {
+      title: (document.querySelector('.tv-brand') || {}).textContent,
+      inuse: [...document.querySelectorAll('.tv-guestcard.inuse .tv-airunit')].map((n) => n.textContent),
+      free: [...document.querySelectorAll('.tv-guestcard.free .tv-airunit')].map((n) => n.textContent),
+      // innerText of the board itself: textContent on <body> drags in the inline
+      // <script>, whose own regexes contain a $ and which nobody can read off a wall.
+      money: (((document.getElementById('app') || {}).innerText || '').match(/.{0,18}[$£€].{0,18}/) || [null])[0],
+      bar: !!document.querySelector('.tv-bar'),
+    };
+  });
+  check('the page is named in the legend and opens on a click', !!clicked && /WHO IS IN/.test(clicked.title),
+    clicked ? clicked.title : 'no WHO label in the legend');
+  check('...the occupied flats are on it, with their guest', !!clicked && clicked.inuse.join(',') === '406,506',
+    JSON.stringify(clicked && clicked.inuse));
+  check('...the empty one is on it too, so the page can be counted against the building',
+    !!clicked && clicked.free.join(',') === '606', JSON.stringify(clicked && clicked.free));
+  check('...no money anywhere on the wall', !!clicked && !clicked.money,
+    'a currency mark is on the screen: ' + JSON.stringify(clicked && clicked.money));
+  // The bar means "how much of today is done" and this page is not about a day.
+  check('...and no progress bar claiming work that was never counted',
+    !!clicked && !clicked.bar, 'the done-bar is on the guests page');
+
+  // The bug the page list exists to stop: a page that exists but cannot be reached.
+  const reach = await page.evaluate(() => {
+    const seen = [];
+    const n = tvPageList().length;
+    for (let i = 0; i < n; i += 1) {
+      tvPage = i; renderTV();
+      seen.push((document.querySelector('.tv-brand') || {}).textContent);
+    }
+    return { n, seen };
+  });
+  check('every page the remote can reach is a page that draws something',
+    reach.seen.length === reach.n && reach.seen.every(Boolean), JSON.stringify(reach));
+  check('...and the month is still one of them',
+    reach.seen.some((t) => /MONTH/.test(t)), JSON.stringify(reach.seen));
 
   check('no page errors', errs.length === 0, errs.join('\n'));
 
