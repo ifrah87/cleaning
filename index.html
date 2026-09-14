@@ -845,6 +845,22 @@
      because "which are free" is the other half of the same question. No money here, and
      none anywhere on this screen. */
   .tv-guestcard.inuse { border-left-color: #22c55e; }
+  /* The office's "currently staying" card, read at wall distance. The unit is the label,
+     the dates are the fact, and the name sits between them — sized so a long Somali name
+     wraps rather than being cut, which is what the phone card does with an ellipsis and
+     a wall cannot. */
+  .tv-stays { flex: 1; display: grid; grid-template-columns: repeat(auto-fill, minmax(21vw, 1fr));
+              gap: 1.2vw; align-content: start; }
+  .tv-stay { background: var(--tv-card); border-radius: 1vw; padding: 1.4vh 1.4vw;
+             border-left: 0.5vw solid var(--tv-done-ln); min-width: 0; }
+  .tv-stayunit { font-size: 1vw; font-weight: 800; letter-spacing: 0.12em; color: var(--tv-muted); }
+  .tv-stayname { font-size: 1.9vw; font-weight: 800; line-height: 1.05; margin-top: 0.4vh;
+                 overflow-wrap: anywhere; }
+  .tv-staydates { font-size: 1.7vw; font-weight: 800; margin-top: 0.6vh; white-space: nowrap; }
+  .tv-staydates span { color: var(--tv-muted); margin: 0 0.5vw; }
+  .tv-stayleft { font-size: 1.1vw; font-weight: 700; color: var(--tv-muted); margin-top: 0.5vh; }
+  .tv-stayleft.soon { color: #fbbf24; font-weight: 800; }
+
   .tv-guestleft { font-size: 1.1vw; font-weight: 800; letter-spacing: 0.1em; color: var(--tv-muted); margin-top: 0.4vh; }
   .tv-guestleft.out { color: #fbbf24; }
 
@@ -14008,7 +14024,12 @@ async function pullStays() {
     const json = await res.json().catch(() => null);
     if (!res.ok || !json || json.ok !== true || !Array.isArray(json.data)) throw new Error('no');
     tvStays = json.data
-      .map((r) => ({ unit: String((r && r.unit) || '').trim(), until: (r && r.until) || null }))
+      .map((r) => ({
+        unit: String((r && r.unit) || '').trim(),
+        guest: (r && r.guest) || null,
+        from: (r && r.from) || null,
+        until: (r && r.until) || null,
+      }))
       .filter((r) => r.unit);
     tvStaysAt = Date.now();
   } catch (e) {
@@ -14098,19 +14119,29 @@ function tvGuestsPage(flats) {
     return box;
   }
 
-  // Soonest out first: the room that has to be turned around next is the one the page
-  // is being read for, and a list in room order buries it.
-  const grid = el(`<div class="tv-air"></div>`);
+  // THE SAME CARD THE OFFICE ALREADY READS, with everything a wall cannot use taken
+  // off it: no rate, no balance, no deposit, no buttons. Unit, who is in it, the dates
+  // they hold it for, and how much of that is left.
+  const grid = el(`<div class="tv-stays"></div>`);
   rooms.forEach((r) => {
-    const card = el(`<div class="tv-aircard tv-guestcard inuse"></div>`);
-    card.appendChild(el(`<div class="tv-airunit">${esc(r.unit)}</div>`));
-    card.appendChild(el(`<div class="tv-airtime">${r.until ? 'UNTIL ' + esc(fmtDay(r.until)) : 'NO END DATE'}</div>`));
-    // How long is left, because a date on its own has to be worked out against today
-    // by whoever is reading the wall — and "out today" is the whole point of the page.
-    if (r.until) {
-      const days = Math.round((new Date(r.until + 'T00:00:00') - new Date(workToday() + 'T00:00:00')) / 86400000);
-      card.appendChild(el(`<div class="tv-guestleft${days <= 0 ? ' out' : ''}">`
-        + (days <= 0 ? 'OUT TODAY' : days === 1 ? 'TOMORROW' : days + ' DAYS') + `</div>`));
+    const card = el(`<div class="tv-stay"></div>`);
+    card.appendChild(el(`<div class="tv-stayunit">UNIT ${esc(r.unit)}</div>`));
+    if (r.guest) card.appendChild(el(`<div class="tv-stayname">${esc(r.guest)}</div>`));
+    card.appendChild(el(`<div class="tv-staydates">`
+      + `${r.from ? esc(fmtDay(r.from)) : '—'}<span>→</span>${r.until ? esc(fmtDay(r.until)) : '—'}</div>`));
+
+    const day = (iso) => (iso ? new Date(iso + 'T00:00:00') : null);
+    const nights = (r.from && r.until)
+      ? Math.round((day(r.until) - day(r.from)) / 86400000) : null;
+    const left = r.until
+      ? Math.round((day(r.until) - day(workToday())) / 86400000) : null;
+    const parts = [];
+    if (nights !== null) parts.push(nights + (nights === 1 ? ' night' : ' nights'));
+    // OUT TODAY is the one this page is read for, so it is the one that is coloured.
+    if (left !== null) parts.push(left <= 0 ? 'out today' : left === 1 ? '1 day left' : left + ' days left');
+    if (parts.length) {
+      card.appendChild(el(`<div class="tv-stayleft${left !== null && left <= 1 ? ' soon' : ''}">`
+        + esc(parts.join(' · ')) + `</div>`));
     }
     grid.appendChild(card);
   });
@@ -14119,17 +14150,24 @@ function tvGuestsPage(flats) {
 }
 
 /**
- * The rooms with somebody in them, soonest to leave first.
+ * The rooms with somebody in them right now, soonest to leave first.
  *
- * From the booking feed when it has answered, because that is where a stay is true.
- * When it has not, this app's own guest names are all there is — occupancy without a
- * date, which is still worth showing and is marked as what it is.
+ * From the booking feed when it has answered, because that is where a stay is true —
+ * and the feed carries the week ahead as well, so an arrival that has not started yet
+ * is filtered out here rather than being drawn as though somebody were already in it.
+ *
+ * When the feed has not answered, this app's own guest names are all there is:
+ * occupancy without dates, which is still worth showing and is marked as what it is.
  */
 function occupiedFlats(flats) {
   if (Array.isArray(tvStays)) {
-    return tvStays.slice().sort((a, b) => String(a.until || '9999').localeCompare(String(b.until || '9999')));
+    const today = workToday();
+    return tvStays
+      .filter((s) => (!s.from || s.from <= today) && (!s.until || s.until >= today))
+      .slice()
+      .sort((a, b) => String(a.until || '9999').localeCompare(String(b.until || '9999')));
   }
-  return (flats || []).filter(flatOccupied).map((u) => ({ unit: u.unit, until: null }));
+  return (flats || []).filter(flatOccupied).map((u) => ({ unit: u.unit, guest: u.guest || null, from: null, until: null }));
 }
 
 /**

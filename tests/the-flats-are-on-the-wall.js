@@ -95,12 +95,16 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
   // The booking feed, answered locally like everything else. 406 and 606 are booked;
   // 506 carries a stale guest name in this app and no booking at all.
   const soon = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return key(d); };
+  const ago = (n) => soon(-n);
   await ctx.route('**://app.orfanerealestate.so/**', (route) => route.fulfill({
     status: 200, contentType: 'application/json',
     headers: { 'Access-Control-Allow-Origin': '*' },
     body: JSON.stringify({ ok: true, asOf: WORK_TODAY, data: [
-      { unit: '406', until: soon(5) },
-      { unit: '606', until: soon(1) },
+      { unit: '406', guest: 'Mohamed Ahmed Yusuf', from: ago(9), until: soon(5) },
+      { unit: '606', guest: 'Bahjo', from: ago(6), until: soon(1) },
+      // ...and one who has not arrived yet. The feed carries the week ahead so the
+      // board can see it coming; a room nobody is in must not be drawn as occupied.
+      { unit: '806', guest: 'Not Arrived Yet', from: soon(3), until: soon(10) },
     ] }),
   }));
   await ctx.addInitScript(([h, ss]) => { localStorage.setItem('sb-' + h.split('.')[0] + '-auth-token', JSON.stringify(ss)); }, [SUPA_HOST, SESSION]);
@@ -194,30 +198,42 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
     lbl.click();
     return {
       title: (document.querySelector('.tv-brand') || {}).textContent,
-      units: [...document.querySelectorAll('.tv-guestcard .tv-airunit')].map((n) => n.textContent),
-      untils: [...document.querySelectorAll('.tv-guestcard .tv-airtime')].map((n) => n.textContent),
-      left: [...document.querySelectorAll('.tv-guestleft')].map((n) => n.textContent),
+      units: [...document.querySelectorAll('.tv-stayunit')].map((n) => n.textContent),
+      names: [...document.querySelectorAll('.tv-stayname')].map((n) => n.textContent),
+      dates: [...document.querySelectorAll('.tv-staydates')].map((n) => n.textContent),
+      left: [...document.querySelectorAll('.tv-stayleft')].map((n) => n.textContent),
       // innerText of the board itself: textContent on <body> drags in the inline
       // <script>, whose own regexes contain a $ and which nobody can read off a wall.
-      money: (((document.getElementById('app') || {}).innerText || '').match(/.{0,18}[$£€].{0,18}/) || [null])[0],
+      text: ((document.getElementById('app') || {}).innerText || ''),
       bar: !!document.querySelector('.tv-bar'),
     };
   });
   check('the page is named in the legend and opens on a click', !!clicked && /WHO IS IN/.test(clicked.title),
     clicked ? clicked.title : 'no WHO label in the legend');
   // Soonest out first — the room that has to be turned around next leads the page.
-  check('...the booked rooms are on it, the soonest to leave first',
-    !!clicked && clicked.units.join(',') === '606,406', JSON.stringify(clicked && clicked.units));
-  check('...each saying until when', !!clicked && /UNTIL/.test(clicked.untils.join(' ')),
-    JSON.stringify(clicked && clicked.untils));
-  check('...and how long that is from today, so nobody has to work it out off a wall',
-    !!clicked && clicked.left.length === 2, JSON.stringify(clicked && clicked.left));
-  // A flat with a name typed in this app but NO booking is not a stay. The feed is the
-  // one that knows, and the page must not invent an occupancy from a leftover name.
-  check('...and a room with a stale name here but no booking is not on it',
+  check('...a card per room somebody is in, the soonest to leave first',
+    !!clicked && clicked.units.join(',') === 'UNIT 606,UNIT 406', JSON.stringify(clicked && clicked.units));
+  check('...carrying the guest by name', !!clicked && clicked.names.join(',') === 'Bahjo,Mohamed Ahmed Yusuf',
+    JSON.stringify(clicked && clicked.names));
+  check('...and the dates they hold the room for',
+    !!clicked && clicked.dates.every((d) => /→/.test(d)), JSON.stringify(clicked && clicked.dates));
+  check('...and how many nights that is, and how much is left',
+    !!clicked && /nights/.test(clicked.left.join(' ')) && /day/.test(clicked.left.join(' ')),
+    JSON.stringify(clicked && clicked.left));
+  // The guest arriving in three days is on the feed and must not be drawn as though
+  // somebody were already in the room.
+  check('...and a booking that has not started is not on it',
+    !!clicked && !clicked.units.some((u) => /806/.test(u)), JSON.stringify(clicked && clicked.units));
+  // A flat with a name typed in this app but NO booking is not a stay either.
+  check('...nor a room with a stale name here and no booking',
     !!clicked && !clicked.units.some((u) => /506/.test(u)), JSON.stringify(clicked && clicked.units));
-  check('...no money anywhere on the wall', !!clicked && !clicked.money,
-    'a currency mark is on the screen: ' + JSON.stringify(clicked && clicked.money));
+
+  // NO MENTION OF MONEY. The office card this is modelled on carries a nightly rate, a
+  // balance, an unpaid badge and a deposit; none of it belongs on a wall.
+  const moneyish = !!clicked && (/[$£€]/.test(clicked.text)
+    || /\b(unpaid|paid|deposit|rate|night(ly)? rate|balance|owing|invoice)\b/i.test(clicked.text));
+  check('...and not one word about money anywhere on the wall', !!clicked && !moneyish,
+    JSON.stringify(clicked && (clicked.text.match(/.{0,24}([$£€]|unpaid|deposit|balance).{0,24}/i) || [])[0]));
   check('...and no progress bar claiming work that was never counted',
     !!clicked && !clicked.bar, 'the done-bar is on the guests page');
 
