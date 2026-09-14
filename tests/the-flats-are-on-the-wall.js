@@ -213,8 +213,13 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
   // Soonest out first — the room that has to be turned around next leads the page.
   check('...a card per room somebody is in, the soonest to leave first',
     !!clicked && clicked.units.join(',') === 'UNIT 606,UNIT 406', JSON.stringify(clicked && clicked.units));
-  check('...carrying the guest by name', !!clicked && clicked.names.join(',') === 'Bahjo,Mohamed Ahmed Yusuf',
+  // A television on an office wall is read by everybody who walks past it, guests
+  // included. The room and the dates answer the question; the name is not ours to post.
+  check('...and NOT the guest\u2019s name, which is theirs', !!clicked && clicked.names.length === 0,
     JSON.stringify(clicked && clicked.names));
+  check('...no guest name anywhere on the page at all',
+    !!clicked && !/Bahjo|Mohamed Ahmed Yusuf|Not Arrived/i.test(clicked.text),
+    JSON.stringify(clicked && (clicked.text.match(/.{0,20}(Bahjo|Yusuf).{0,20}/i) || [])[0]));
   check('...and the dates they hold the room for',
     !!clicked && clicked.dates.every((d) => /→/.test(d)), JSON.stringify(clicked && clicked.dates));
   check('...and how many nights that is, and how much is left',

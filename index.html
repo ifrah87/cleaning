@@ -849,16 +849,22 @@
      the dates are the fact, and the name sits between them — sized so a long Somali name
      wraps rather than being cut, which is what the phone card does with an ellipsis and
      a wall cannot. */
-  .tv-stays { flex: 1; display: grid; grid-template-columns: repeat(auto-fill, minmax(21vw, 1fr));
-              gap: 1.2vw; align-content: start; }
-  .tv-stay { background: var(--tv-card); border-radius: 1vw; padding: 1.4vh 1.4vw;
-             border-left: 0.5vw solid var(--tv-done-ln); min-width: 0; }
-  .tv-stayunit { font-size: 1vw; font-weight: 800; letter-spacing: 0.12em; color: var(--tv-muted); }
+  /* THE CARDS FILL THE TELEVISION. Eight cards packed at the top of a 1080p wall left
+     two thirds of the screen black and the type no bigger than a laptop's — on a screen
+     read from the other side of an office, unused height IS unreadable text. The rows
+     share what there is, so four stays are four tall cards and twelve are twelve
+     shorter ones, and either way the wall is full. */
+  .tv-stays { flex: 1; display: grid; grid-template-columns: repeat(auto-fit, minmax(21vw, 1fr));
+              gap: 1.2vw; align-content: stretch; grid-auto-rows: 1fr; }
+  .tv-stay { background: var(--tv-card); border-radius: 1vw; padding: 1.8vh 1.6vw;
+             border-left: 0.5vw solid var(--tv-done-ln); min-width: 0;
+             display: flex; flex-direction: column; justify-content: center; gap: 0.4vh; }
+  .tv-stayunit { font-size: 1.3vw; font-weight: 800; letter-spacing: 0.12em; color: var(--tv-muted); }
   .tv-stayname { font-size: 1.9vw; font-weight: 800; line-height: 1.05; margin-top: 0.4vh;
                  overflow-wrap: anywhere; }
-  .tv-staydates { font-size: 1.7vw; font-weight: 800; margin-top: 0.6vh; white-space: nowrap; }
+  .tv-staydates { font-size: 2.4vw; font-weight: 800; white-space: nowrap; }
   .tv-staydates span { color: var(--tv-muted); margin: 0 0.5vw; }
-  .tv-stayleft { font-size: 1.1vw; font-weight: 700; color: var(--tv-muted); margin-top: 0.5vh; }
+  .tv-stayleft { font-size: 1.35vw; font-weight: 700; color: var(--tv-muted); }
   .tv-stayleft.soon { color: #fbbf24; font-weight: 800; }
 
   .tv-guestleft { font-size: 1.1vw; font-weight: 800; letter-spacing: 0.1em; color: var(--tv-muted); margin-top: 0.4vh; }
@@ -14026,7 +14032,6 @@ async function pullStays() {
     tvStays = json.data
       .map((r) => ({
         unit: String((r && r.unit) || '').trim(),
-        guest: (r && r.guest) || null,
         from: (r && r.from) || null,
         until: (r && r.until) || null,
       }))
@@ -14126,7 +14131,9 @@ function tvGuestsPage(flats) {
   rooms.forEach((r) => {
     const card = el(`<div class="tv-stay"></div>`);
     card.appendChild(el(`<div class="tv-stayunit">UNIT ${esc(r.unit)}</div>`));
-    if (r.guest) card.appendChild(el(`<div class="tv-stayname">${esc(r.guest)}</div>`));
+    /* NO NAME ON THE WALL. A guest's name is theirs, and a television in an office is
+       read by everybody who walks past it — including the guests. The room, the dates
+       and what is left of them answer the question this page exists for without it. */
     card.appendChild(el(`<div class="tv-staydates">`
       + `${r.from ? esc(fmtDay(r.from)) : '—'}<span>→</span>${r.until ? esc(fmtDay(r.until)) : '—'}</div>`));
 
@@ -14167,7 +14174,7 @@ function occupiedFlats(flats) {
       .slice()
       .sort((a, b) => String(a.until || '9999').localeCompare(String(b.until || '9999')));
   }
-  return (flats || []).filter(flatOccupied).map((u) => ({ unit: u.unit, guest: u.guest || null, from: null, until: null }));
+  return (flats || []).filter(flatOccupied).map((u) => ({ unit: u.unit, from: null, until: null }));
 }
 
 /**
