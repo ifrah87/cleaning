@@ -13991,10 +13991,23 @@ function renderTV() {
   // nobody has worked it yet.
   if (tvDayOffset && tvDayTouched && Date.now() - tvDayTouched > 2 * 60 * 1000) tvDayOffset = 0;
   const cols = tvDayOffset ? tvColumnsForDay(shiftDay(workToday(), tvDayOffset)) : tvColumns();
-  // The guest flats are in the columns now, so the page that used to carry them would
-  // simply show the same rooms a second time. Kept as an empty list rather than torn
-  // out, so the board falls back to it the day somebody wants it again.
-  const air = [];
+  // THE SEPARATE JOB, WHENEVER THE COLUMNS CANNOT CARRY IT.
+  // This was hard-emptied on the grounds that the guest flats ride in the columns now —
+  // true only while they are ON the roll call. Switch Airbnb off in Settings and the
+  // columns stop carrying them, and with this page dead the flats were on the wall
+  // nowhere at all: not a column, not a page, no count. The office was reading a board
+  // that did not mention eleven rooms.
+  //
+  // tvOffRollCall answers exactly this. Off the roll call is not quite enough on its
+  // own, though: a flat somebody has been GIVEN rides into the columns on today's plan
+  // even with Airbnb switched off, so the page would have repeated a room already on
+  // the wall — the very thing the empty list was guarding against. So the page takes
+  // what the columns did not: nothing is drawn twice, and nothing is dropped. With the
+  // flats on the roll call the columns take them all, the page does not exist, and the
+  // board is exactly as it was.
+  const drawn = new Set();
+  cols.forEach((c) => (c.jobs || []).forEach((j) => drawn.add(j.id)));
+  const air = tvOffRollCall().filter((u) => !drawn.has(u.id));
   const boardPages = Math.max(1, Math.ceil(cols.length / TV_COLS_PER_PAGE));
   // The month is always the last page, so its position does not move about as the crew
   // grows and the board gains or loses a page under it.
