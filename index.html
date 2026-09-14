@@ -845,8 +845,8 @@
      because "which are free" is the other half of the same question. No money here, and
      none anywhere on this screen. */
   .tv-guestcard.inuse { border-left-color: #22c55e; }
-  .tv-guestcard.free { border-left-color: var(--tv-dot); opacity: 0.55; }
-  .tv-guestfree { font-size: 1.1vw; font-weight: 800; letter-spacing: 0.12em; color: var(--tv-muted); margin-top: 0.6vh; }
+  .tv-guestleft { font-size: 1.1vw; font-weight: 800; letter-spacing: 0.1em; color: var(--tv-muted); margin-top: 0.4vh; }
+  .tv-guestleft.out { color: #fbbf24; }
 
   /* The same answer along the board itself, for somebody walking past rather than
      standing at it with the remote. Numbers only — a guest's name is not readable at
@@ -13977,6 +13977,56 @@ function tvOffRollCall() {
   } catch (e) { return []; }
 }
 
+/**
+ * WHICH FLATS ARE OCCUPIED, AND UNTIL WHEN — read from where the stay is booked.
+ *
+ * This app has never known a date. It holds a guest's name and a checkout TIME, which
+ * answers "is somebody in" and cannot answer "until when" at all. The stay itself is
+ * recorded in the apartments system, once, when the booking is taken — so the wall
+ * reads it from there rather than asking the office to type every stay twice and drift
+ * from the booking the first time a guest extends.
+ *
+ * Room numbers and end dates only: no name, no money, nothing about the person crosses
+ * the wire. The name printed on the page is this app's own, as it always was.
+ *
+ * NEVER THE SAME AS AN EMPTY BUILDING. A feed that has not answered leaves tvStays null
+ * and the page says the dates could not be read, because a wall that quietly shows
+ * nothing is read as "nobody is staying" — which is a different fact entirely.
+ */
+const STAYS_URL = 'https://app.orfanerealestate.so/api/public/airbnb-stays';
+const STAYS_KEY = 'P6U2tpzf7mj51HrJHEMPsSBp';
+const STAYS_EVERY_MS = 10 * 60 * 1000;   // a checkout date does not move minute to minute
+let tvStays = null;        // [{unit, until}] once it has answered; null until then
+let tvStaysAt = 0;
+let _staysBusy = false;
+
+async function pullStays() {
+  if (_staysBusy) return;
+  _staysBusy = true;
+  try {
+    const res = await fetch(STAYS_URL + '?key=' + encodeURIComponent(STAYS_KEY), { cache: 'no-store' });
+    const json = await res.json().catch(() => null);
+    if (!res.ok || !json || json.ok !== true || !Array.isArray(json.data)) throw new Error('no');
+    tvStays = json.data
+      .map((r) => ({ unit: String((r && r.unit) || '').trim(), until: (r && r.until) || null }))
+      .filter((r) => r.unit);
+    tvStaysAt = Date.now();
+  } catch (e) {
+    // Left as it was. Yesterday's dates with a stale mark beat no dates at all, and
+    // beat an empty page that looks like an empty building.
+  } finally {
+    _staysBusy = false;
+  }
+}
+
+/** The stay on a room, when the feed has one. Matched on the room number, which is what
+ *  both systems call a flat — 506 here is 506 there. */
+function stayFor(unit) {
+  if (!Array.isArray(tvStays)) return null;
+  const key = String(unit || '').trim().toLowerCase();
+  return tvStays.find((s) => s.unit.toLowerCase() === key) || null;
+}
+
 /** Every guest flat on the books, paused ones aside. Occupancy is about the room. */
 function guestFlats() {
   return (state.servicedUnits || [])
@@ -14037,33 +14087,49 @@ function tvPageList(opts) {
  */
 function tvGuestsPage(flats) {
   const box = el(`<div class="tv-cols" style="display:flex;flex-direction:column;min-height:0;gap:1.2vh"></div>`);
-  const inRooms = flats.filter(flatOccupied);
-  const free = flats.filter((u) => !flatOccupied(u));
-  const grid = (list, cls) => {
-    const g = el(`<div class="tv-air"></div>`);
-    list.forEach((u) => {
-      const card = el(`<div class="tv-aircard tv-guestcard ${cls}"></div>`);
-      card.appendChild(el(`<div class="tv-airunit">${esc(u.unit)}</div>`));
-      if (cls === 'inuse') {
-        card.appendChild(el(`<div class="tv-airguest">${esc(u.guest)}</div>`));
-        if (u.time) card.appendChild(el(`<div class="tv-airtime">OUT ${esc(u.time)}</div>`));
-      } else {
-        card.appendChild(el(`<div class="tv-guestfree">EMPTY</div>`));
-      }
-      g.appendChild(card);
-    });
-    return g;
-  };
-  if (inRooms.length) {
-    box.appendChild(el(`<div class="tv-group">IN</div>`));
-    box.appendChild(grid(inRooms, 'inuse'));
+  const rooms = occupiedFlats(flats);
+
+  if (!Array.isArray(tvStays)) {
+    box.appendChild(el(`<div class="tv-empty">Stay dates could not be read — showing who this app has in.</div>`));
   }
-  if (free.length) {
-    box.appendChild(el(`<div class="tv-group">EMPTY</div>`));
-    box.appendChild(grid(free, 'free'));
+  if (!rooms.length) {
+    box.appendChild(el(`<div class="tv-empty">${Array.isArray(tvStays)
+      ? 'No guest is staying today.' : 'Nothing to show.'}</div>`));
+    return box;
   }
-  if (!flats.length) box.appendChild(el(`<div class="tv-empty">No guest flats on the books</div>`));
+
+  // Soonest out first: the room that has to be turned around next is the one the page
+  // is being read for, and a list in room order buries it.
+  const grid = el(`<div class="tv-air"></div>`);
+  rooms.forEach((r) => {
+    const card = el(`<div class="tv-aircard tv-guestcard inuse"></div>`);
+    card.appendChild(el(`<div class="tv-airunit">${esc(r.unit)}</div>`));
+    card.appendChild(el(`<div class="tv-airtime">${r.until ? 'UNTIL ' + esc(fmtDay(r.until)) : 'NO END DATE'}</div>`));
+    // How long is left, because a date on its own has to be worked out against today
+    // by whoever is reading the wall — and "out today" is the whole point of the page.
+    if (r.until) {
+      const days = Math.round((new Date(r.until + 'T00:00:00') - new Date(workToday() + 'T00:00:00')) / 86400000);
+      card.appendChild(el(`<div class="tv-guestleft${days <= 0 ? ' out' : ''}">`
+        + (days <= 0 ? 'OUT TODAY' : days === 1 ? 'TOMORROW' : days + ' DAYS') + `</div>`));
+    }
+    grid.appendChild(card);
+  });
+  box.appendChild(grid);
   return box;
+}
+
+/**
+ * The rooms with somebody in them, soonest to leave first.
+ *
+ * From the booking feed when it has answered, because that is where a stay is true.
+ * When it has not, this app's own guest names are all there is — occupancy without a
+ * date, which is still worth showing and is marked as what it is.
+ */
+function occupiedFlats(flats) {
+  if (Array.isArray(tvStays)) {
+    return tvStays.slice().sort((a, b) => String(a.until || '9999').localeCompare(String(b.until || '9999')));
+  }
+  return (flats || []).filter(flatOccupied).map((u) => ({ unit: u.unit, until: null }));
 }
 
 /**
@@ -14076,13 +14142,15 @@ function tvGuestsPage(flats) {
  */
 function tvGuestStrip(flats) {
   if (!flats.length) return null;
-  const inRooms = flats.filter(flatOccupied);
+  const occupied = new Set(occupiedFlats(flats).map((r) => String(r.unit).toLowerCase()));
+  const isIn = (u) => occupied.has(String(u.unit).toLowerCase());
+  const inRooms = flats.filter(isIn);
   const wrap = el(`<div class="tv-guestbar"></div>`);
   wrap.appendChild(el(`<div class="tv-guestlbl">GUESTS IN</div>`));
   wrap.appendChild(el(`<div class="tv-guestn">${inRooms.length}<span>/${flats.length}</span></div>`));
   const chips = el(`<div class="tv-guestchips"></div>`);
   flats.forEach((u) => {
-    chips.appendChild(el(`<div class="tv-guestchip${flatOccupied(u) ? ' in' : ''}">${esc(u.unit)}</div>`));
+    chips.appendChild(el(`<div class="tv-guestchip${isIn(u) ? ' in' : ''}">${esc(u.unit)}</div>`));
   });
   wrap.appendChild(chips);
   return wrap;
@@ -14267,7 +14335,7 @@ function renderTV() {
   // WHO IS IN IS NOT A DAY'S WORK. Its numbers are rooms with somebody in them and
   // rooms without — done and jobs would be answering a question this page is not asking.
   if (onGuests) {
-    const inN = flats.filter(flatOccupied).length;
+    const inN = occupiedFlats(flats).length;
     mid.appendChild(tile(inN, inN === 1 ? 'ROOM IN USE' : 'ROOMS IN USE', '#22c55e'));
     mid.appendChild(tile(flats.length - inN, 'EMPTY', null));
     mid.appendChild(tile(flats.length, flats.length === 1 ? 'FLAT' : 'FLATS', null));
@@ -14746,6 +14814,8 @@ function startTVLoop() {
     if (isDirty()) return;                    // something of ours is still owed
     reloadFresh();
   }, 60000);
+  void pullStays().then(() => renderTV());
+  setInterval(() => { void pullStays(); }, STAYS_EVERY_MS);
   setInterval(() => renderTV(), TV_TICK_MS);
   // THE BOARD DOES NOT TURN ITSELF. It used to rotate — fifteen seconds of board,
   // six of Airbnb, round and round — and that was wrong for a screen on a wall: a

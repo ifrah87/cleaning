@@ -92,6 +92,17 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
     if (url.includes('/rest/v1/hik_events')) return json(m === 'GET' ? EVENTS : [{}]);
     return json([]);
   });
+  // The booking feed, answered locally like everything else. 406 and 606 are booked;
+  // 506 carries a stale guest name in this app and no booking at all.
+  const soon = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return key(d); };
+  await ctx.route('**://app.orfanerealestate.so/**', (route) => route.fulfill({
+    status: 200, contentType: 'application/json',
+    headers: { 'Access-Control-Allow-Origin': '*' },
+    body: JSON.stringify({ ok: true, asOf: WORK_TODAY, data: [
+      { unit: '406', until: soon(5) },
+      { unit: '606', until: soon(1) },
+    ] }),
+  }));
   await ctx.addInitScript(([h, ss]) => { localStorage.setItem('sb-' + h.split('.')[0] + '-auth-token', JSON.stringify(ss)); }, [SUPA_HOST, SESSION]);
   const page = await ctx.newPage();
   const errs = [];
@@ -155,8 +166,8 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
     both.air.length === 0, JSON.stringify(both.air));
 
   // ---- WHO IS IN --------------------------------------------------------------
-  // Occupancy, not cleaning: every flat on the books, with somebody in it or empty.
-  // Back to the board itself — the strip lives there, not on the pages that replace it.
+  // Occupancy and until-when, read from the booking feed. The fixture answers it below
+  // with two rooms staying and one that is not booked at all.
   await page.evaluate(() => { state.rollCallTypes = ['office', 'building']; tvPage = 0; renderTV(); });
   await page.waitForTimeout(400);
 
@@ -166,15 +177,14 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
     return {
       n: (bar.querySelector('.tv-guestn') || {}).textContent,
       in: [...bar.querySelectorAll('.tv-guestchip.in')].map((c) => c.textContent),
-      all: [...bar.querySelectorAll('.tv-guestchip')].map((c) => c.textContent),
     };
   });
   check('the board itself carries a guests strip, for walking past',
     !!strip, 'no .tv-guestbar on the board');
-  check('...counting the rooms with somebody in them',
+  check('...counting the rooms the BOOKINGS say are in use, not the names typed here',
     !!strip && strip.n.replace(/\s/g, '') === '2/3', JSON.stringify(strip));
   check('...and marking which rooms those are',
-    !!strip && strip.in.join(',') === '406,506', JSON.stringify(strip && strip.in));
+    !!strip && strip.in.join(',') === '406,606', JSON.stringify(strip && strip.in));
 
   // The page is reached by CLICKING its name, which is the half a remote cannot do and
   // every phone this URL opens on needs.
@@ -184,8 +194,9 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
     lbl.click();
     return {
       title: (document.querySelector('.tv-brand') || {}).textContent,
-      inuse: [...document.querySelectorAll('.tv-guestcard.inuse .tv-airunit')].map((n) => n.textContent),
-      free: [...document.querySelectorAll('.tv-guestcard.free .tv-airunit')].map((n) => n.textContent),
+      units: [...document.querySelectorAll('.tv-guestcard .tv-airunit')].map((n) => n.textContent),
+      untils: [...document.querySelectorAll('.tv-guestcard .tv-airtime')].map((n) => n.textContent),
+      left: [...document.querySelectorAll('.tv-guestleft')].map((n) => n.textContent),
       // innerText of the board itself: textContent on <body> drags in the inline
       // <script>, whose own regexes contain a $ and which nobody can read off a wall.
       money: (((document.getElementById('app') || {}).innerText || '').match(/.{0,18}[$£€].{0,18}/) || [null])[0],
@@ -194,15 +205,30 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
   });
   check('the page is named in the legend and opens on a click', !!clicked && /WHO IS IN/.test(clicked.title),
     clicked ? clicked.title : 'no WHO label in the legend');
-  check('...the occupied flats are on it, with their guest', !!clicked && clicked.inuse.join(',') === '406,506',
-    JSON.stringify(clicked && clicked.inuse));
-  check('...the empty one is on it too, so the page can be counted against the building',
-    !!clicked && clicked.free.join(',') === '606', JSON.stringify(clicked && clicked.free));
+  // Soonest out first — the room that has to be turned around next leads the page.
+  check('...the booked rooms are on it, the soonest to leave first',
+    !!clicked && clicked.units.join(',') === '606,406', JSON.stringify(clicked && clicked.units));
+  check('...each saying until when', !!clicked && /UNTIL/.test(clicked.untils.join(' ')),
+    JSON.stringify(clicked && clicked.untils));
+  check('...and how long that is from today, so nobody has to work it out off a wall',
+    !!clicked && clicked.left.length === 2, JSON.stringify(clicked && clicked.left));
+  // A flat with a name typed in this app but NO booking is not a stay. The feed is the
+  // one that knows, and the page must not invent an occupancy from a leftover name.
+  check('...and a room with a stale name here but no booking is not on it',
+    !!clicked && !clicked.units.some((u) => /506/.test(u)), JSON.stringify(clicked && clicked.units));
   check('...no money anywhere on the wall', !!clicked && !clicked.money,
     'a currency mark is on the screen: ' + JSON.stringify(clicked && clicked.money));
-  // The bar means "how much of today is done" and this page is not about a day.
   check('...and no progress bar claiming work that was never counted',
     !!clicked && !clicked.bar, 'the done-bar is on the guests page');
+
+  // A FEED THAT DID NOT ANSWER IS NOT AN EMPTY BUILDING. The difference has to be on
+  // the screen, or the wall quietly reports nobody is staying.
+  const blind = await page.evaluate(() => {
+    tvStays = null; renderTV();
+    return (document.getElementById('app') || {}).innerText || '';
+  });
+  check('a feed that could not be read says so, rather than showing an empty building',
+    /could not be read/i.test(blind), blind.slice(0, 120));
 
   // The bug the page list exists to stop: a page that exists but cannot be reached.
   const reach = await page.evaluate(() => {
