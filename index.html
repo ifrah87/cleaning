@@ -4798,6 +4798,35 @@ function setUnitAssignee(id, pid, pin, clearTie) {
       if (pid) plan[k].byHand = true; else delete plan[k].byHand;
       stampPlanEdit(day);
     }
+    // ...AND A ROOM THAT WAS NOT ON TODAY HAS TO BE PUT ON TODAY, OR THE HAND-OUT IS A
+    // HAND-OUT OF NOTHING.
+    //
+    // "Give X more work" offers every room in the building that nobody is holding and
+    // nobody has cleaned — which is the point of it: the office gives somebody an extra
+    // room, one the schedule did not ask for today. But handing it over only wrote
+    // u.assignedTo, and the board does not draw rooms, it draws TODAY'S LIST: what the
+    // schedule says is due, plus what is on today's plan. A room that is neither is not
+    // on that list, so the chip was added to the column and was gone by the next render.
+    // The office tapped the room, watched it land, watched it vanish, and tapped it
+    // again — "the rooms comes up, i add it, but it dissapears".
+    //
+    // Giving somebody a room IS putting it on today. It goes on the plan the same way a
+    // room added by hand on Plan a Day does — byHand, so the five-minute re-sync cannot
+    // take it off again — and un-dropped, because putting it back on today is the office
+    // reversing whatever took it off.
+    //
+    // Only when a plan for today already exists. An empty or absent plan means the day
+    // was never laid out (or was cleared on purpose), and the roll call reads a plan
+    // with anything in it as the WHOLE round — so inventing a one-room plan here would
+    // shrink the morning to that one room.
+    if (pid && plan && Object.keys(plan).length && !plan[k]) {
+      const u2 = (state.servicedUnits || []).find((x) => x.id === id);
+      if (u2) {
+        plan[k] = { kind: 'unit', refId: id, label: 'Unit ' + u2.unit, assignedTo: pid, byHand: true };
+        unmarkPlanDropped(day, k);
+        stampPlanEdit(day);
+      }
+    }
   }
   _assignPick = null;
   save(); render();
