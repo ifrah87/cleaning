@@ -986,6 +986,31 @@ const STATUS_ORDER = ['present', 'late', 'noshow', 'sick', 'off'];
 const AWAY = ['noshow', 'sick', 'off'];
 const isAway = (pid) => AWAY.includes(state.attendance[pid] || 'present');
 
+// SICK IS A STATEMENT ABOUT ONE DAY. state.attendance is one word per person with no date
+// on it, and nothing ever put it back — so somebody marked sick on Tuesday opened
+// Wednesday still sick, their rooms shared out round everybody else again, until the
+// office noticed and tapped them back in. Every mark other than present now carries the
+// work day it was made on (attendanceOn), and a mark from any other day is spent.
+//
+// A mark written before the stamp existed is taken as today's: it may well be, and
+// clearing somebody the office sent home this morning would be the worse mistake. It
+// expires with everything else at the next day boundary. Returns true if it changed
+// anything worth pushing.
+function expireAttendance() {
+  if (!state.attendance) return false;
+  if (!state.attendanceOn || typeof state.attendanceOn !== 'object') state.attendanceOn = {};
+  const day = workToday();
+  let changed = false;
+  Object.keys(state.attendance).forEach((pid) => {
+    const st = state.attendance[pid];
+    if (!st || st === 'present') { delete state.attendanceOn[pid]; return; }
+    const on = state.attendanceOn[pid];
+    if (!on) { state.attendanceOn[pid] = day; changed = true; return; }
+    if (on !== day) { state.attendance[pid] = 'present'; delete state.attendanceOn[pid]; changed = true; }
+  });
+  return changed;
+}
+
 // Areas live in state (editable). Helpers to read them:
 // Alphabetical, like the teams and the staff. Areas were kept in the order they were
 // typed in, so removing one and adding it back sent it to the bottom of every list it
@@ -1674,6 +1699,17 @@ const DOW_LABEL = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const DOW_SHORT = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
 const DOW_PICK_ORDER = [6, 0, 1, 2, 3, 4, 5];   // the working week starts on Saturday here
 const dowOf = (day) => new Date(day + 'T00:00:00').getDay();
+// THE LAST DEPENDABLE DAY OF THE WEEK GETS EVERYTHING. Friday is the office's own day
+// and always has been unpredictable — fewer crew in, the rooms picked by hand on the
+// morning — and the offices are shut for it. So a room whose turn falls across Friday
+// has no reliable day left: it waits for Saturday at best, and on a bad week longer.
+// Ifrah asked for the plain version of the rule on 2026-09-21: every room on the roll
+// call is cleaned on the Thursday, whatever its own pattern says, so the building goes
+// into the closure clean and nothing is riding on what Friday turns out to be.
+// It is a SWEEP, not a change of pattern: no room's days move, and every room carries
+// on from its Thursday clean exactly as it would from any other.
+const SWEEP_DAY = 4;                         // Thursday
+const sweepsOn = (day) => state.thursdaySweep !== false && dowOf(day) === SWEEP_DAY;
 const fixedDays = (u) => (u && Array.isArray(u.days) && u.days.length) ? u.days : null;
 // The most recent day this room was pinned to, on or before `day`. The mirror of
 // nextFixedDay, and what says whether a pinned day has come round unanswered.
@@ -1750,9 +1786,20 @@ const onBeatFrom = (u, from, day) => {
   const n = Math.round((new Date(day + 'T00:00:00') - new Date(from + 'T00:00:00')) / 864e5);
   return n >= 0 && n % Math.max(1, cycleLen(u)) === 0;   // daily is cycle 1, so every day
 };
-function dueOnDayFrom(u, day, base) {
+// noSweep asks the question the rooms' own patterns answer, with the Thursday sweep
+// left out. Only the week-leveller wants this: the sweep is fixed, deliberate load and
+// it must be worked AROUND rather than treated as a clump to be broken up. Everything
+// that shows the office what is due asks the ordinary way and gets the sweep.
+function dueOnDayFrom(u, day, base, noSweep) {
   if (extraCleanDue(u, day)) return true;
   if (heldBack(u, day)) return false;
+  // THE THURSDAY SWEEP. Above every scheduling rule below it and below the two
+  // decisions above it: a room held back is held back, and an extra clean the office
+  // asked for is already a yes. Everything else — a pattern, a frequency, a clean
+  // recorded yesterday — gives way, because the point of the sweep is that it does not
+  // depend on where a room happens to be in its cycle. Cleaning it TWICE on the same
+  // Thursday is the one thing it must not do, so a room already done today is done.
+  if (!noSweep && sweepsOn(day)) return String(base || '') !== String(day);
   // Cleaned on the Friday for this Saturday. Above the two branches because it is true
   // of a room running on its frequency and of one pinned to all seven days alike, and
   // below extraCleanDue because an extra clean the office asked for on a named day is
@@ -1833,7 +1880,7 @@ function dueOnDay(u, day) {
 // real last-clean date, which never moves as you look further ahead, so a room due
 // today reads as due on every day after it as well. Left like that an every-other-day
 // room appears on all seven days instead of four, and the counts only ever climb.
-function projectDueDays(nDays) {
+function projectDueDays(nDays, noSweep) {
   const start = workToday();
   const proj = {};
   // Same scope as the rest of planning: kinds of room run as their own operation
@@ -1848,7 +1895,7 @@ function projectDueDays(nDays) {
       // Same predicate the roll call uses, reckoned from the projected last clean
       // rather than the real one. It used to be a second copy of the rule here,
       // which is how a fixed-weekday room would have been projected on a cycle.
-      if (!dueOnDayFrom(u, day, proj[u.id])) return;
+      if (!dueOnDayFrom(u, day, proj[u.id], noSweep)) return;
       due.push(u);
       // TODAY IS A RECORD, NOT A PREDICTION. Every day ahead is walked on the assumption
       // that its work gets done — that is the whole point of the walk, or each day
@@ -2112,6 +2159,9 @@ function finalizeState() {
   STAFF = state.staff;
   refreshTeamColors();
   STAFF.forEach(p => { if (!state.attendance[p.id]) state.attendance[p.id] = 'present'; });
+  // Yesterday's sick list is not today's. Every device expires it the same way, so this
+  // only needs delivering when it stamped an old mark — then the server holds the date.
+  const attChanged = expireAttendance();
   // LAST, so it is checking the finished roster rather than a half-filled one — a board
   // with no staff yet has just been seeded from DEFAULT_STAFF above, and scrubbing
   // against an empty list would hand back everything on the way past.
@@ -2119,7 +2169,7 @@ function finalizeState() {
   // Ours to deliver: the server is still carrying whatever we just handed back. Not on
   // the television, which never writes, and not before this device has ever synced —
   // marking a starter board dirty is how a demo roster gets pushed at a real building.
-  if (dangling && !TV_MODE && _everSynced) markDirty();
+  if ((dangling || attChanged) && !TV_MODE && _everSynced) markDirty();
 }
 // Is this device holding the starter board rather than the office's real one?
 // finalizeState() fills a missing roster from DEFAULT_STAFF so the app is never
@@ -2200,7 +2250,7 @@ const DEVICE_KEYS = ['tab', 'tickFilter', 'roomsFilter', 'expandedFloors', 'expa
   'editingEmp', 'editingUnit', 'editingArea', 'rcFold', 'rcSetupOpen', 'checkExpanded',
   'shutGroups', 'pendingCover'];
 const SETTING_KEYS = ['autoAssign', 'autoConfirm', 'autoBalance', 'autoDays', 'earlyCap',
-  'lockOnDeal', 'floors', 'rollCallTypes', 'teams'];
+  'lockOnDeal', 'floors', 'rollCallTypes', 'teams', 'thursdaySweep'];
 let _settingsSeen = null;
 // Stamped from one place rather than from every switch in Settings: there are a dozen
 // setters and a stamp missing from any one of them is a setting that can still be
@@ -3311,6 +3361,9 @@ function toggleSick(pid) {
 }
 function setStatus(pid, next) {
   state.attendance[pid] = next;
+  if (!state.attendanceOn || typeof state.attendanceOn !== 'object') state.attendanceOn = {};
+  if (next === 'present') delete state.attendanceOn[pid];
+  else state.attendanceOn[pid] = workToday();   // good for today only — see expireAttendance
 
   if (AWAY.includes(next)) {
     // Their rooms are nobody's now. Left on them they keep a name against them and are
@@ -3868,7 +3921,16 @@ function autoLevelEodDays() {
   // the every-other-day rooms never ran. That switch is about granting rooms an EXTRA
   // clean to flatten a fortnight, which is a different and more intrusive thing than
   // deciding which two patterns the rooms sit on. Nobody has to turn anything on.
-  if (state.eodSpread === false || state.autoDays === false) return { moves: 0 };
+  // …AND NOT ON "PUT ROOMS ON SET DAYS" EITHER. The note above was written when this
+  // pass was cut loose from "Keep the week level", and it left the same mistake in the
+  // same line: the spread still rode on autoDays, which is off on the live building, so
+  // the pass that splits the every-other-day rooms has never once run there. Every room
+  // asked for the same set, got it, and the whole estate has been coming up on one
+  // pattern — which is exactly what the office reports. autoDays decides whether the app
+  // PICKS days for a room that has none; it has no business deciding whether the rooms
+  // the app already placed may be re-spread. Days somebody typed are still never touched
+  // — daysAuto === false is what protects those, not this switch.
+  if (state.eodSpread === false) return { moves: 0 };
   if (state.eodLevelledOn === todayKey()) return { moves: 0 };
   const plan = levelEodPlan();
   const peakBefore = Math.max.apply(null, plan.before);
@@ -4007,7 +4069,17 @@ function levelPlan(horizon) {
   days.forEach((d, i) => { idx[d] = i; });
 
   const before = projectedCounts(span);
-  const walk = projectDueDays(span);
+  // THE SWEEP IS NOT A CLUMP. Every room is due on the Thursday by decree, so that day
+  // cannot be lightened and there is nothing to learn from its total. Left in, it was
+  // read as the worst day of the fortnight and the leveller set about prising it apart
+  // — handing out extra cleans across the week to flatten a day that is meant to be
+  // full. Worse, a room's next due day came back as the sweep Thursday, so its whole
+  // cycle was laid out from a day that says nothing about its pattern.
+  // So the maths below runs on the rooms' own patterns, and the sweep days are held
+  // out of it entirely. They are put back for the before/after the office is shown.
+  const sweeps = days.map((d, i) => (sweepsOn(d) ? i : -1)).filter((i) => i >= 0);
+  const isSweep = (i) => sweeps.indexOf(i) >= 0;
+  const walk = projectDueDays(span, true);
   const firstDueIdx = {};      // room -> the day it is next due, as an offset
   walk.forEach((d, i) => d.due.forEach((u) => { if (firstDueIdx[u.id] === undefined) firstDueIdx[u.id] = i; }));
 
@@ -4054,6 +4126,7 @@ function levelPlan(horizon) {
     cands.forEach((c) => {
       let peak = 0, sq = 0;
       for (let i = 0; i < span; i += 1) {
+        if (isSweep(i)) continue;                  // full by decree — nothing to weigh
         const v = load[i] + ((inSeries(i, c.at) || c.keep.includes(i)) ? 1 : 0);
         if (v > peak) peak = v;
         sq += v * v;
@@ -4072,22 +4145,32 @@ function levelPlan(horizon) {
   });
 
   const after = {};
-  days.forEach((d, i) => { after[d] = load[i]; });
-  const nums = days.map((d) => after[d]);
+  // On a sweep day the answer is the whole building, whatever the cycles say.
+  days.forEach((d, i) => { after[d] = isSweep(i) ? units.length : load[i]; });
   // The first days of the horizon carry work that is already due and is never
   // delayed, so they cannot be lightened and judging the result by them hides a
   // real fix: a clump due tomorrow still lands tomorrow, whatever we do about the
   // fortnight after it. The settled half is where levelling shows up.
   const tail = Math.floor(span / 2);
+  // Every figure the levelling is JUDGED on is taken over the days it could actually
+  // have changed — the sweep days are full by decree, and counting them would leave a
+  // fortnight holding two whole buildings reading as permanently lumpy, so no
+  // levelling would ever look worth applying. Carried as day INDICES rather than as a
+  // filtered list of totals, because the settled half is a position in the fortnight
+  // and slicing a list that has had days removed from it no longer lands on it.
+  const live = days.map((d, i) => i).filter((i) => !isSweep(i));
+  const settled = live.filter((i) => i >= tail);
+  const at = (src, list) => list.map((i) => src[days[i]] || 0);
+  const nums = at(after, live);
   return {
     days, moves, before, after,
-    peakBefore: Math.max(...days.map((d) => before[d] || 0)),
+    peakBefore: Math.max(...at(before, live)),
     peakAfter: Math.max(...nums),
-    lowBefore: Math.min(...days.map((d) => before[d] || 0)),
+    lowBefore: Math.min(...at(before, live)),
     lowAfter: Math.min(...nums),
-    settledBefore: Math.max(...days.slice(tail).map((d) => before[d] || 0)),
-    settledAfter: Math.max(...nums.slice(tail)),
-    settledLowAfter: Math.min(...nums.slice(tail)),
+    settledBefore: Math.max(...at(before, settled)),
+    settledAfter: Math.max(...at(after, settled)),
+    settledLowAfter: Math.min(...at(after, settled)),
   };
 }
 
@@ -5980,6 +6063,11 @@ function dueReason(u) {
   if (u.paused) return 'This room is paused, so it should not be on any list at all. ' + lastTxt + '.';
   if (extraCleanDue(u, day)) return 'An extra clean was asked for today (' + fmtDay(day) + '). ' + lastTxt + '.';
   if (heldBack(u, day)) return 'It is held back until ' + fmtDay(u.holdUntil) + ', so it should not be here. ' + lastTxt + '.';
+  if (sweepsOn(day) && String(last || '') !== String(day)) {
+    return 'Every room is cleaned on the Thursday, so the building goes into the Friday closure clean. '
+      + 'That is why it is on today whatever its own pattern says.\n\n' + lastTxt + ' · '
+      + (FREQ_LABEL[u.freq] || 'Daily') + '. Its normal days are unchanged — it carries on from today as usual.';
+  }
   const days = fixedDays(u);
   if (days) {
     const named = DOW_PICK_ORDER.filter((d) => days.indexOf(d) >= 0).map((d) => DOW_LABEL[d]).join(', ');
@@ -11558,6 +11646,8 @@ function viewSettings() {
      'Spreads rooms that fall due together, so the days stop swinging between heavy and empty. Nothing waits longer than its frequency.'],
     ['eodSpread', 'Split the every-other-day rooms',
      'Keeps them on two patterns — Sat/Mon/Wed and Sun/Tue/Thu — so the same number falls due each day. Friday is left clear for you to pick.'],
+    ['thursdaySweep', 'Clean every room on Thursday',
+     'The whole building on the Thursday, whatever each room\'s own pattern says, so nothing is left riding on the Friday. Rooms keep their normal days as well.'],
   ].forEach(([k, label, why, defOn]) => {
     // Most of these are on unless switched off; a couple are off unless switched on.
     const offByDefault = defOn === false;
@@ -15537,6 +15627,8 @@ function startDayWatch() {
     const day = workToday();
     if (day !== _plannedForDay) {
       _plannedForDay = day;
+      // Before anything deals rooms: yesterday's sick must not keep somebody off today.
+      if (expireAttendance()) save();
       autoPinDaysFromFreq();
       autoLevelEodDays();     // and undo any clump the pinning has settled into
       planningPass();
