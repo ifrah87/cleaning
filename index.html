@@ -1243,6 +1243,12 @@ const altSideFor = (p, dow) => (p && p.alt && p.alt[dow]) || null;
 const worksOnDay = (p, day) => {
   if (!p) return true;
   const dow = new Date(day + 'T00:00:00').getDay();
+  // A drawn Friday outranks the hand-set one for every team that was in the draw.
+  const drawn = fridayDrawFor(day);
+  if (drawn) {
+    const crew = String(p.crew || '').trim();
+    if (drawn.pool.indexOf(crew) >= 0) return drawn.teams.indexOf(crew) >= 0;
+  }
   const rota = altRotaFor(p, dow);
   if (rota) return rota.weeks.includes(weekIndex(day, rota.cycle));
   if (!Array.isArray(p.worksOn)) return true;
@@ -1487,6 +1493,108 @@ function rotaTeams() {
   });
   return names.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 }
+// FRIDAY TEAMS, DRAWN EACH WEEK. The hand-set rota above is a fixed two-week split, and
+// a fixed split is whatever the office happened to tap: on 24 Sep it had two teams in one
+// Friday and five the next, one man of Team H alternating while his partner worked every
+// Friday, and Zakaria Ibrahim Mahmed — a new starter — down for all of them because a
+// person-by-person rota never reaches somebody added after it was set.
+//
+// So the office can hand the Friday to a draw instead. Every Friday, fridayAuto.per teams
+// are in, taken from the teams that run a round (rotaTeams). The teams with the lowest
+// share of Fridays worked so far go first, and ties are broken at random, so over a
+// few weeks everybody has worked the same number of Fridays, give or take one, and who is
+// in alongside whom keeps changing. A team that was in last Friday loses a tie, so nobody
+// works two running while somebody level with them works none.
+//
+// The share is counted against the Fridays each team was actually in the draw for, not
+// against the whole history: a team formed last week has not "missed" the months before
+// it, and counting those would put it on every Friday until it caught up.
+//
+// DRAWN ONCE, STORED, NEVER RE-ROLLED ON SIGHT. A draw computed on each device would give
+// each device its own Friday. It is made by one phone or laptop, saved in fridayDraws, and
+// read by everybody — the wall included — so every screen says the same names. It is made
+// as soon as the previous Friday is over, which gives the office the week to tell people.
+// The first drawn Friday is at least three days out: turning the switch on must not
+// change who is in on a Friday people have already been told about.
+//
+// A person is in on a drawn Friday exactly when their team is. That is what makes a new
+// starter right the moment they are put on a team, with nothing else to set. Teams that
+// were not in the draw (the outside pair, security, Lead) keep their own rota.
+const FRIDAY_DOW = 5;
+const FRIDAY_NOTICE_DAYS = 3;
+function fridayDrawOn() { return !!(state.fridayAuto && state.fridayAuto.on); }
+function fridayDrawFor(day) {
+  if (!fridayDrawOn()) return null;
+  const d = state.fridayDraws && state.fridayDraws[day];
+  return d && Array.isArray(d.teams) && Array.isArray(d.pool) ? d : null;
+}
+// The Friday this work day belongs to: today on a Friday, otherwise the next one.
+function comingFriday(day) {
+  let d = day || workToday();
+  for (let i = 0; i < 7; i += 1) {
+    if (new Date(d + 'T00:00:00').getDay() === FRIDAY_DOW) return d;
+    d = shiftDay(d, 1);
+  }
+  return d;
+}
+function fridayTally(before) {
+  const draws = state.fridayDraws || {};
+  const from = (state.fridayAuto && state.fridayAuto.from) || '';
+  const worked = {}, seen = {};
+  Object.keys(draws).sort().forEach((d) => {
+    if (d < from || (before && d >= before)) return;
+    const r = draws[d];
+    (r.pool || []).forEach((t) => { seen[t] = (seen[t] || 0) + 1; });
+    (r.teams || []).forEach((t) => { worked[t] = (worked[t] || 0) + 1; });
+  });
+  return { worked, seen };
+}
+function drawFriday(day) {
+  const pool = rotaTeams();
+  const per = Math.min(pool.length, Math.max(1, (state.fridayAuto && state.fridayAuto.per) || 2));
+  const { worked, seen } = fridayTally(day);
+  const earlier = Object.keys(state.fridayDraws || {}).filter((d) => d < day).sort();
+  const last = earlier.length ? (state.fridayDraws[earlier[earlier.length - 1]].teams || []) : [];
+  const expected = pool.length ? per / pool.length : 0;
+  const share = (t) => (seen[t] ? (worked[t] || 0) / seen[t] : expected);
+  const order = pool.slice();
+  for (let i = order.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const t = order[i]; order[i] = order[j]; order[j] = t;
+  }
+  // Stable sort: the shuffle decides between teams that are level.
+  order.sort((a, b) => (share(a) - share(b))
+    || ((last.indexOf(a) >= 0 ? 1 : 0) - (last.indexOf(b) >= 0 ? 1 : 0)));
+  const teams = order.slice(0, per)
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  return { teams, pool, drawnAt: new Date().toISOString() };
+}
+// Make the coming Friday's draw if it is due and nobody has made it. Only a device that
+// writes, and only once it has the server's copy — a starter board drawing its own Friday
+// would be pushing a guess over the real one. Returns true when there is something to save.
+function ensureFridayDraw() {
+  if (TV_MODE || !_everSynced || !fridayDrawOn()) return false;
+  const day = comingFriday(workToday());
+  if (day < (state.fridayAuto.from || '')) return false;
+  if (state.fridayDraws && state.fridayDraws[day]) return false;
+  if (!rotaTeams().length) return false;
+  state.fridayDraws = { ...(state.fridayDraws || {}), [day]: drawFriday(day) };
+  return true;
+}
+function setFridayDraw(on) {
+  const cur = state.fridayAuto || {};
+  let from = cur.from;
+  if (on && !from) {
+    const today = workToday();
+    from = comingFriday(today);
+    const gap = Math.round((new Date(from + 'T00:00:00') - new Date(today + 'T00:00:00')) / 864e5);
+    if (gap < FRIDAY_NOTICE_DAYS) from = shiftDay(from, 7);
+  }
+  state.fridayAuto = { per: cur.per || 2, ...cur, on: !!on, from };
+  ensureFridayDraw();
+  save(); render();
+}
+
 function buildTeamAltRota(dow, picked, day) {
   const all = rotaTeams();
   const inNow = (picked || []).filter((t) => all.indexOf(t) >= 0);
@@ -2250,7 +2358,7 @@ const DEVICE_KEYS = ['tab', 'tickFilter', 'roomsFilter', 'expandedFloors', 'expa
   'editingEmp', 'editingUnit', 'editingArea', 'rcFold', 'rcSetupOpen', 'checkExpanded',
   'shutGroups', 'pendingCover'];
 const SETTING_KEYS = ['autoAssign', 'autoConfirm', 'autoBalance', 'autoDays', 'earlyCap',
-  'lockOnDeal', 'floors', 'rollCallTypes', 'teams', 'thursdaySweep'];
+  'lockOnDeal', 'floors', 'rollCallTypes', 'teams', 'thursdaySweep', 'fridayAuto'];
 let _settingsSeen = null;
 // Stamped from one place rather than from every switch in Settings: there are a dozen
 // setters and a stamp missing from any one of them is a setting that can still be
@@ -2901,8 +3009,20 @@ function applyRemote(saved, merging) {
   // incoming copy has no opinion about what this screen is in the middle of. The only
   // honest reason to drop one is that what it points at no longer exists, which is the
   // check below, after the merged lists have landed.
+  const myDraws = TV_MODE ? {} : (state.fridayDraws || {});
   state = { ...state, ...saved, ...mineDevice, ...mineSettings,
     settingsEditedAt: mergedStamps, tab: keepTab };
+  // A FRIDAY IS DRAWN ONCE. The server's draw for a date stands — two phones that drew
+  // the same Friday a second apart must end up agreeing, and the one that landed first
+  // is the one people may already have been told. A date only this device has drawn is
+  // kept and delivered, not dropped.
+  {
+    const merged = { ...(saved.fridayDraws || {}) };
+    let keptDraws = 0;
+    Object.keys(myDraws).forEach((d) => { if (!merged[d]) { merged[d] = myDraws[d]; keptDraws += 1; } });
+    state.fridayDraws = merged;
+    if (keptDraws) markDirty();
+  }
   // A setting this device won on is a change the server has not got. Deliver it.
   if (Object.keys(mineSettings).length && !TV_MODE) markDirty();
   if (mergedAreas) state.areas = mergedAreas;
@@ -12845,10 +12965,64 @@ function viewTeam() {
   if (cleaners) roundListPanel(wrap);
   if (cleaners) wrap.appendChild(floorAllocationBox());
 
+  // THE FRIDAY DRAW — see drawFriday. While it is on, the hand-set rota below is hidden:
+  // two places to say who works Friday is how the office ends up believing the wrong one.
+  if (cleaners) {
+    const box = el('<div style="margin-bottom:14px"></div>');
+    box.appendChild(el(`<div class="section-label">Friday teams — drawn each week</div>`));
+    const on = fridayDrawOn();
+    const tog = el(`<button class="add-btn" style="background:${on ? '#15803d' : '#101c30'};`
+      + `color:${on ? '#ffffff' : '#7ea6dc'};border:1px solid ${on ? '#15803d' : '#3d557f'}">`
+      + (on ? '🎲 Drawn at random, fairly — ON' : '🎲 Draw the Friday teams each week — OFF') + `</button>`);
+    tog.onclick = () => {
+      if (on) {
+        showConfirm('Stop drawing the Friday teams?',
+          'Fridays already drawn stay as drawn. After that, Fridays go back to the rota set by hand.',
+          () => setFridayDraw(false), 'Stop the draw', 'safe');
+      } else {
+        const per = (state.fridayAuto && state.fridayAuto.per) || 2;
+        showConfirm('Draw the Friday teams each week?',
+          per + ' of the ' + rotaTeams().length + ' teams (' + rotaTeams().join(', ') + ') work each Friday. '
+          + 'The teams that have worked the fewest Fridays go first, picked at random when they are level, '
+          + 'so everybody works the same number over time.\n\nEach Friday is drawn on the Saturday before, '
+          + 'so there is a week to tell people. Everybody on a team is in when their team is — '
+          + 'new starters included.\n\nThis coming Friday keeps the rota already set by hand if it is '
+          + 'less than ' + FRIDAY_NOTICE_DAYS + ' days away.',
+          () => setFridayDraw(true), 'Start the draw', 'safe');
+      }
+    };
+    box.appendChild(tog);
+    if (on) {
+      const fri = comingFriday(workToday());
+      const drawn = fridayDrawFor(fri);
+      const from = state.fridayAuto.from;
+      const info = el(`<div style="font-size:12px;font-weight:700;color:#b7c8de;background:#101c30;`
+        + `border-radius:8px;padding:8px 10px;margin-top:8px;line-height:1.6"></div>`);
+      if (drawn) {
+        info.appendChild(el(`<div style="color:#fcd34d">${esc(fmtDay(fri))}: ${esc(drawn.teams.map((t) => {
+          const lead = teamMembers(t).find((x) => x.isLeader);
+          return t + (lead ? ' (' + lead.name.split(' ')[0] + ')' : '');
+        }).join(', '))}</div>`));
+      } else if (fri < from) {
+        info.appendChild(el(`<div style="color:#7f9abf">${esc(fmtDay(fri))}: the rota set by hand. `
+          + `The first drawn Friday is ${esc(fmtDay(from))}, drawn the Saturday before.</div>`));
+      } else {
+        info.appendChild(el(`<div style="color:#7f9abf">${esc(fmtDay(fri))}: not drawn yet — it is drawn when the app next opens.</div>`));
+      }
+      const { worked, seen } = fridayTally();
+      const rows = rotaTeams().map((t) => t + ' ' + (worked[t] || 0) + '/' + (seen[t] || 0));
+      if (Object.keys(seen).length) {
+        info.appendChild(el(`<div style="color:#5f7189;font-weight:600">Fridays worked so far: ${esc(rows.join(' · '))}</div>`));
+      }
+      box.appendChild(info);
+    }
+    wrap.appendChild(box);
+  }
+
   // SHARE OUT THE REST DAY — the Friday off alternates, so half the crew is in one
   // week and half the next. Doing that by hand across a whole crew is where it drifts
   // and somebody quietly ends up working most Fridays.
-  if (cleaners) {
+  if (cleaners && !fridayDrawOn()) {
     const fri = 5;
     const crew = cleaningStaff();
     const onRota = crew.filter((p) => altRotaFor(p, fri));
@@ -15629,6 +15803,7 @@ function startDayWatch() {
       _plannedForDay = day;
       // Before anything deals rooms: yesterday's sick must not keep somebody off today.
       if (expireAttendance()) save();
+      if (ensureFridayDraw()) save();   // the Friday just gone opens the draw for the next
       autoPinDaysFromFreq();
       autoLevelEodDays();     // and undo any clump the pinning has settled into
       planningPass();
@@ -15651,6 +15826,8 @@ async function boot() {
   const pulled = await remotePull();   // wait for the staff roster before matching arrivals
   if (pulled) tvLastData = Date.now();
   _plannedForDay = workToday();
+  // Only against the server's copy: a draw made from a stale one would be a second Friday.
+  if (pulled && ensureFridayDraw()) save();
   // Days first: the planning pass reads the schedule, so the rooms need to be ON
   // their days before it runs, not after. It is a property of the rota rather than
   // of who has badged in, so it does not wait for the roll call.
