@@ -100,6 +100,40 @@ async function push(records) {
   return records.length;
 }
 
+// Hik-Connect 7.0's tour bubbles ("Get Started"), the 2FA prompt ("Later" — never
+// "Enable Now", which would sign every device out and lock this scraper behind an
+// emailed code) and the release-notes card. Any of them can sit over the menu.
+async function dismissPopups(page) {
+  for (let i = 0; i < 6; i += 1) {
+    const g = page.getByText('Get Started', { exact: true });
+    if (!(await g.count()) || !(await g.first().isVisible().catch(() => false))) break;
+    await g.first().click({ force: true }).catch(() => {});
+    await page.waitForTimeout(700);
+  }
+  const later = page.getByText('Later', { exact: true });
+  if (await later.count()) await later.first().click({ force: true, timeout: 5000 }).catch(() => {});
+  await page.waitForTimeout(800);
+}
+async function onTransactionPage(page) {
+  return page.evaluate(() => /\bTransaction\b[\s\S]*\bExport\b/.test(document.body.innerText || '')
+    && !!document.querySelector('input[title="Current Month"], input[title="Today"]'));
+}
+// Click the on-screen element that owns a hidden [title] label.
+async function clickByTitle(page, title) {
+  const pt = await page.evaluate((t) => {
+    for (const e of document.querySelectorAll('[title]')) {
+      if (e.getAttribute('title') !== t) continue;
+      for (let n = e; n && n !== document.body; n = n.parentElement) {
+        const r = n.getBoundingClientRect();
+        if (r.width > 4 && r.height > 4) return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+      }
+    }
+    return null;
+  }, title);
+  if (pt) await page.mouse.click(pt.x, pt.y);
+  return !!pt;
+}
+
 async function run() {
   const headless = !process.argv.includes('--show');
   const browser = await chromium.launch({ headless });
@@ -115,20 +149,42 @@ async function run() {
     await page.click('button:has-text("Login")');
     await page.waitForTimeout(9000);
     if (!page.url().includes('/portal')) { await shot(page, 'error.png'); throw new Error('Login failed — check credentials (error.png).'); }
-    await page.click('button:has-text("Later")', { timeout: 5000 }).catch(() => {});
-    await page.waitForTimeout(1500);
+    // HIK-CONNECT 7.0 (24 Sep 2026) moved everything. The portal now opens behind a
+    // "New Side Navigation" tour, a 2FA "Account Security" prompt and release notes, and
+    // the old left-hand menu is gone: Attendance is picked from an app switcher (the grid
+    // button, top left), and inside it the menu is a strip of icons whose labels are
+    // hidden. The old clicks found nothing, every one of them was allowed to fail
+    // silently, and the run read an empty page and reported success all morning.
+    await dismissPopups(page);
 
     console.log('2. Attendance → Transaction…');
-    await page.getByText('Attendance', { exact: true }).first().click({ timeout: 10000 }).catch(() => {});
-    await page.waitForTimeout(4000);
-    await page.click('button:has-text("OK")', { timeout: 4000 }).catch(() => {});
-    await page.click('text=Attendance Records', { timeout: 8000 }).catch(() => {});
-    await page.waitForTimeout(1500);
-    await page.click('text=Transaction', { timeout: 8000 }).catch(() => {});
+    const attendance = page.getByText('Attendance', { exact: true }).first();
+    if (!(await attendance.isVisible().catch(() => false))) {
+      await page.mouse.click(33, 33);                  // the app switcher
+      await page.waitForTimeout(1500);
+    }
+    await attendance.click({ timeout: 10000, force: true });
     await page.waitForTimeout(5000);
+    await dismissPopups(page);
+    await page.click('button:has-text("OK")', { timeout: 3000 }).catch(() => {});
+    // Attendance Records is an icon now; its label is only a hidden title. Click the
+    // visible thing that carries it, which opens straight onto Transaction.
+    if (!(await onTransactionPage(page))) {
+      await clickByTitle(page, 'Attendance Records');
+      await page.waitForTimeout(4000);
+    }
+    if (!(await onTransactionPage(page))) {
+      await page.getByText('Transaction', { exact: true }).first().click({ timeout: 5000, force: true }).catch(() => {});
+      await page.waitForTimeout(4000);
+    }
     await page.click('button:has-text("OK")', { timeout: 3000 }).catch(() => {});
     await page.waitForTimeout(800);
     await shot(page, 'transaction.png');
+    // Say so, rather than filtering and reading an empty table from the wrong page.
+    if (!(await onTransactionPage(page))) {
+      throw new Error('Could not reach Attendance → Attendance Records → Transaction — '
+        + 'Hik-Connect has probably changed its layout again (transaction.png).');
+    }
 
     console.log('3. Filtering to Today…');
     // Time Period -> Today (Element-UI mirrors the value into the input's title attr)
@@ -157,6 +213,11 @@ async function run() {
     // like a problem rather than a success.
     if (!all.length) console.log('   ⚠ NOTHING ON THE PAGE. The reader records all day, so an empty '
       + 'Transaction log means the punches are not reaching Hik — check the device is on the network.');
+    // ...AND A RED RUN, NOT A GREEN ONE, once the crew is in. Before 08:00 EAT an empty
+    // page can be real; after it, nobody has ever looked at the warning above — on
+    // 24 Sep it printed on every run from 07:48 until the office asked.
+    const eatHour = (new Date().getUTCHours() + 3) % 24;
+    if (!all.length && eatHour >= 8) process.exitCode = 1;
 
     const records = parseRows(all);
     console.log('4. Pushing', records.length, 'check-ins to Supabase…');
