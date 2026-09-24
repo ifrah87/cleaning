@@ -1595,6 +1595,127 @@ function setFridayDraw(on) {
   save(); render();
 }
 
+// THE TEAMS RESHUFFLE EVERY SATURDAY. Leaders stay where they are — a leader IS the round,
+// the rooms are pinned to them, and a team is one leader — and the assistants are dealt
+// out again, one to a leader, so nobody spends every week beside the same person. Asked
+// for on 24 Sep: "reshuffle the teams around", every week, one leader per team.
+//
+// Who can be given an assistant: a leader who keeps rooms here. A leader with none — on
+// 24 Sep that is Hassan Mohamed Elmi, who works at another building — would take the
+// assistant off the tower with him, so he stays a team of one. That is read off the rooms
+// rather than off a name, so it follows whoever is offsite.
+//
+// Fair: leaders who have had the fewest assistant-weeks go first (teamShuffle.counts),
+// nobody lands on the leader they had last week if there is anybody else, and the rest is
+// left to chance. SEEDED BY THE WEEK, not Math.random: every phone and laptop that opens
+// on Saturday works out the same teams from the same roster, so two devices shuffling at
+// once cannot leave half the crew on one answer and half on the other — the roster merges
+// person by person, and two different shuffles would merge into a third nobody drew.
+//
+// A room that named the assistant as the leader's second pair of hands (assignedWith —
+// Abiker on Abukar's five) lets go of him when he moves: the board already shows every
+// assistant under their leader, and a name left on the old round would put him in two
+// places at once.
+function weekStartOf(day) {
+  let d = day;
+  for (let i = 0; i < 7; i += 1) {
+    if (new Date(d + 'T00:00:00').getDay() === 6) return d;   // Saturday opens the week
+    d = shiftDay(d, -1);
+  }
+  return d;
+}
+function seededRandom(seed) {
+  let h = 1779033703 ^ seed.length;
+  for (let i = 0; i < seed.length; i += 1) {
+    h = Math.imul(h ^ seed.charCodeAt(i), 3432918353);
+    h = (h << 13) | (h >>> 19);
+  }
+  let a = h >>> 0;
+  return () => {                                   // mulberry32
+    a = (a + 0x6D2B79F5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function teamShuffleOn() { return !!(state.teamShuffle && state.teamShuffle.on); }
+// Who goes with whom for that week, without changing anything: { assistantId: leader }.
+function drawTeams(week) {
+  const rnd = seededRandom('orfane-teams-' + week);
+  const mix = (arr) => {
+    const a = arr.slice().sort((x, y) => String(x.id).localeCompare(String(y.id)));
+    for (let i = a.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(rnd() * (i + 1));
+      const t = a[i]; a[i] = a[j]; a[j] = t;
+    }
+    return a;
+  };
+  const crew = cleaningStaff();
+  const holds = {};
+  (state.servicedUnits || []).forEach((u) => { if (u.usualTo) holds[u.usualTo] = true; });
+  const leaders = mix(crew.filter((p) => p.isLeader && p.crew && holds[p.id]));
+  const assistants = mix(crew.filter((p) => isAssistant(p)));
+  const counts = (state.teamShuffle && state.teamShuffle.counts) || {};
+  const leaderNow = {};
+  assistants.forEach((a) => {
+    const l = crew.find((x) => x.isLeader && x.crew === a.crew);
+    if (l) leaderNow[a.id] = l.id;
+  });
+  const given = {}, out = {};
+  assistants.forEach((a) => {
+    const load = (l) => given[l.id] || 0;
+    const pick = leaders.slice().sort((x, y) =>
+      (load(x) - load(y))
+      || ((x.id === leaderNow[a.id] ? 1 : 0) - (y.id === leaderNow[a.id] ? 1 : 0))
+      || ((counts[x.id] || 0) - (counts[y.id] || 0)))[0];
+    if (!pick) return;
+    given[pick.id] = load(pick) + 1;
+    out[a.id] = pick;
+  });
+  return out;
+}
+function applyTeamShuffle(week) {
+  const plan = drawTeams(week);
+  const now = new Date().toISOString();
+  const counts = { ...((state.teamShuffle && state.teamShuffle.counts) || {}) };
+  Object.keys(plan).forEach((aid) => {
+    const a = (state.staff || []).find((x) => x.id === aid);
+    const leader = plan[aid];
+    counts[leader.id] = (counts[leader.id] || 0) + 1;
+    if (!a || a.crew === leader.crew) return;
+    a.crew = leader.crew;
+    a.color = teamColor(leader.crew);
+    a.editedAt = now;
+    (state.servicedUnits || []).forEach((u) => {
+      if (!Array.isArray(u.assignedWith) || u.assignedWith.indexOf(aid) < 0) return;
+      if (u.usualTo === leader.id) return;
+      const rest = u.assignedWith.filter((x) => x !== aid);
+      u.assignedWith = rest.length ? rest : null;
+      stampUnitEdit(u);
+    });
+  });
+  state.teamShuffle = { ...(state.teamShuffle || {}), week, counts };
+  STAFF = state.staff;
+}
+// Reshuffle if a new week has started since the last one. Returns true if it did.
+function ensureTeamShuffle() {
+  if (TV_MODE || !_everSynced || !teamShuffleOn()) return false;
+  const week = weekStartOf(workToday());
+  if (state.teamShuffle.week === week || week < (state.teamShuffle.from || '')) return false;
+  applyTeamShuffle(week);
+  return true;
+}
+function setTeamShuffle(on) {
+  const cur = state.teamShuffle || {};
+  const thisWeek = weekStartOf(workToday());
+  // Mid-week is not the moment to split people up: the first shuffle is next Saturday.
+  state.teamShuffle = on
+    ? { counts: {}, ...cur, on: true, from: shiftDay(thisWeek, 7), week: cur.week || thisWeek }
+    : { ...cur, on: false };
+  save(); render();
+}
+
 function buildTeamAltRota(dow, picked, day) {
   const all = rotaTeams();
   const inNow = (picked || []).filter((t) => all.indexOf(t) >= 0);
@@ -2358,7 +2479,7 @@ const DEVICE_KEYS = ['tab', 'tickFilter', 'roomsFilter', 'expandedFloors', 'expa
   'editingEmp', 'editingUnit', 'editingArea', 'rcFold', 'rcSetupOpen', 'checkExpanded',
   'shutGroups', 'pendingCover'];
 const SETTING_KEYS = ['autoAssign', 'autoConfirm', 'autoBalance', 'autoDays', 'earlyCap',
-  'lockOnDeal', 'floors', 'rollCallTypes', 'teams', 'thursdaySweep', 'fridayAuto'];
+  'lockOnDeal', 'floors', 'rollCallTypes', 'teams', 'thursdaySweep', 'fridayAuto', 'teamShuffle'];
 let _settingsSeen = null;
 // Stamped from one place rather than from every switch in Settings: there are a dozen
 // setters and a stamp missing from any one of them is a setting that can still be
@@ -12965,6 +13086,55 @@ function viewTeam() {
   if (cleaners) roundListPanel(wrap);
   if (cleaners) wrap.appendChild(floorAllocationBox());
 
+  // THE WEEKLY RESHUFFLE — see drawTeams. Shows who is with whom now and, when it is on,
+  // who will be from Saturday, so the office can tell people before it happens.
+  if (cleaners) {
+    const box = el('<div style="margin-bottom:14px"></div>');
+    box.appendChild(el(`<div class="section-label">Teams — reshuffled every Saturday</div>`));
+    const on = teamShuffleOn();
+    const tog = el(`<button class="add-btn" style="background:${on ? '#15803d' : '#101c30'};`
+      + `color:${on ? '#ffffff' : '#7ea6dc'};border:1px solid ${on ? '#15803d' : '#3d557f'}">`
+      + (on ? '🔀 Reshuffled each Saturday — ON' : '🔀 Reshuffle the teams each week — OFF') + `</button>`);
+    tog.onclick = () => {
+      if (on) {
+        showConfirm('Stop reshuffling the teams?',
+          'Everybody stays on the team they are on now until you move them.',
+          () => setTeamShuffle(false), 'Stop', 'safe');
+      } else {
+        showConfirm('Reshuffle the teams every Saturday?',
+          'Leaders keep their team and their rooms. The assistants are dealt out again every '
+          + 'Saturday, one to a leader: never the leader they had the week before, and the leaders '
+          + 'who have had the fewest go first.\n\nA leader with no rooms here (working at another '
+          + 'building) is not given an assistant.\n\nThe first reshuffle is on '
+          + fmtDay(shiftDay(weekStartOf(workToday()), 7)) + ' — nobody moves mid-week.',
+          () => setTeamShuffle(true), 'Start', 'safe');
+      }
+    };
+    box.appendChild(tog);
+    const info = el(`<div style="font-size:12px;font-weight:700;color:#b7c8de;background:#101c30;`
+      + `border-radius:8px;padding:8px 10px;margin-top:8px;line-height:1.6"></div>`);
+    const first = (p) => String(p.name).split(' ')[0];
+    const line = (lead, mates) => first(lead) + (mates.length ? ' + ' + mates.map(first).join(', ') : ' (alone)');
+    const crew = cleaningStaff();
+    const leadersNow = crew.filter((p) => p.isLeader && p.crew)
+      .sort((a, b) => String(a.crew).localeCompare(String(b.crew), undefined, { numeric: true }));
+    info.appendChild(el(`<div style="color:#7f9abf">This week: ${esc(leadersNow
+      .map((l) => line(l, assistantsFor(l))).join(' · '))}</div>`));
+    if (on) {
+      const next = shiftDay(weekStartOf(workToday()), 7);
+      const plan = drawTeams(next);
+      const byLeader = {};
+      Object.keys(plan).forEach((aid) => {
+        const a = crew.find((x) => x.id === aid);
+        if (a) (byLeader[plan[aid].id] = byLeader[plan[aid].id] || []).push(a);
+      });
+      info.appendChild(el(`<div style="color:#fcd34d">From ${esc(fmtDay(next))}: ${esc(leadersNow
+        .map((l) => line(l, byLeader[l.id] || [])).join(' · '))}</div>`));
+    }
+    box.appendChild(info);
+    wrap.appendChild(box);
+  }
+
   // THE FRIDAY DRAW — see drawFriday. While it is on, the hand-set rota below is hidden:
   // two places to say who works Friday is how the office ends up believing the wrong one.
   if (cleaners) {
@@ -15803,6 +15973,7 @@ function startDayWatch() {
       _plannedForDay = day;
       // Before anything deals rooms: yesterday's sick must not keep somebody off today.
       if (expireAttendance()) save();
+      if (ensureTeamShuffle()) save();  // a Saturday deals the assistants out again
       if (ensureFridayDraw()) save();   // the Friday just gone opens the draw for the next
       autoPinDaysFromFreq();
       autoLevelEodDays();     // and undo any clump the pinning has settled into
@@ -15827,6 +15998,7 @@ async function boot() {
   if (pulled) tvLastData = Date.now();
   _plannedForDay = workToday();
   // Only against the server's copy: a draw made from a stale one would be a second Friday.
+  if (pulled && ensureTeamShuffle()) save();
   if (pulled && ensureFridayDraw()) save();
   // Days first: the planning pass reads the schedule, so the rooms need to be ON
   // their days before it runs, not after. It is a property of the rota rather than
