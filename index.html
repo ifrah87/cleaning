@@ -2071,9 +2071,17 @@ function dueOnDayFrom(u, day, base, noSweep) {
     // Capped at two days so a weekly room cleaned mid-week still takes its own day
     // rather than waiting another whole week for it.
     const minGap = Math.min(FREQ_DAYS[u.freq] || 1, 2);
+    // TWO DAYS RUNNING THAT SOMEBODY CHOSE. Ifrah set the every-other-day rooms on
+    // 2026-09-29 to Sat/Mon/Wed/Thu and Sat/Sun/Tue/Thu — every room on the Saturday,
+    // the rest split so a floor's rooms never all land together — and gave the office's
+    // customers that timetable. The rule above then dropped every Sunday: cleaned on the
+    // Saturday, too soon. When both days are on a set typed by hand, the back-to-back is
+    // the schedule, not an accident, so the room keeps it. Sets the app laid out itself
+    // still get the gap.
+    const chosenPair = (gap) => gap === 1 && u.daysAuto === false && days.indexOf(dowOf(base)) >= 0;
     if (base) {
       const gap = Math.round((new Date(day + 'T00:00:00') - new Date(base + 'T00:00:00')) / 864e5);
-      if (gap >= 0 && gap < minGap) return false;
+      if (gap >= 0 && gap < minGap && !chosenPair(gap)) return false;
     }
     return true;
   }
