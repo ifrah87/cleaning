@@ -15,6 +15,14 @@ const http=require('http'),fs=require('fs'),path=require('path');
 const {chromium}=require('playwright');
 const ROOT='/Users/ifrahawaale/Desktop/cleaning';
 const SUPA_HOST='issnrivggzkhrcjfhzit.supabase.co';
+// RUN IT AS ANY DAY OF THE WEEK.  SMOKE_NOW=2026-09-30T11:00:00 node tests/smoke-nav.js
+// Half of what this file checks is a weekly rhythm — the Friday closure, the Thursday
+// sweep, the every-other-day beat — and a check that only holds on some weekdays
+// passes until the morning it doesn't. Setting the clock here and in the page lets the
+// whole week be walked in one go instead of found out one day at a time.
+const NOW_AT=process.env.SMOKE_NOW?new Date(process.env.SMOKE_NOW).getTime():null;
+if(NOW_AT!==null){const Real=Date,off=NOW_AT-Real.now();
+ global.Date=class extends Real{constructor(...a){super(...(a.length?a:[Real.now()+off]))}static now(){return Real.now()+off}};}
 const key=(d)=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
 const TODAY=key(new Date()), YESTERDAY=key(new Date(Date.now()-864e5));
 // THE WORK DAY, NOT THE CALENDAR DAY. The app's day runs from 3am, so a run started at
@@ -71,6 +79,10 @@ for (const [label,vp] of [['PHONE',{width:420,height:900}],['DESKTOP',{width:144
  // Each viewport starts the morning over: the leader alone, nobody else in yet.
  EVENTS=[{person_name:'Hodan Omar',person_code:'1003',event_time:WORK_TODAY+' 06:30:00'}];
  const ctx=await browser.newContext({viewport:vp});
+ // The page gets the same shifted clock as this file. Playwright's own ctx.clock does
+ // not take on this page — it still read the real date — so it is shimmed by hand.
+ if(NOW_AT!==null)await ctx.addInitScript((at)=>{const Real=Date,off=at-Real.now();
+  window.Date=class extends Real{constructor(...a){super(...(a.length?a:[Real.now()+off]))}static now(){return Real.now()+off}};},NOW_AT);
  await ctx.route(`**://${SUPA_HOST}/**`,async(route)=>{const req=route.request(),url=req.url(),m=req.method();
   const json=(b,st=200)=>route.fulfill({status:st,contentType:'application/json',headers:{'Access-Control-Allow-Origin':'*'},body:JSON.stringify(b)});
   if(m==='OPTIONS')return route.fulfill({status:204,headers:{'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'*','Access-Control-Allow-Methods':'*'},body:''});
@@ -138,12 +150,21 @@ for (const [label,vp] of [['PHONE',{width:420,height:900}],['DESKTOP',{width:144
  // eod rooms pinned to set days automatically
  const pinned=await page.evaluate(()=>(state.servicedUnits||[]).filter(u=>u.freq==='eod').map(u=>({unit:u.unit,days:u.days||null})));
  check('every-other-day rooms were put on set days on their own', pinned.every(x=>x.days&&x.days.length), JSON.stringify(pinned));
- // Which weekday set is right depends on what day it is — Sat/Mon/Wed/Fri runs
- // Fri→Sat back to back, Sun/Tue/Thu runs Thu→Sun. So assert the RULE, not a set:
- // whichever it picked, the next clean must land two days after the last one.
- const gaps=await page.evaluate(()=>(state.servicedUnits||[]).filter(u=>u.freq==='eod'&&u.days&&u.lastCleaned)
-   .map(u=>{ for(let i=1;i<=7;i+=1){ const d=shiftDay(u.lastCleaned,i); if(u.days.indexOf(dowOf(d))>=0) return {unit:u.unit,gap:i}; } return {unit:u.unit,gap:null}; }));
- check('the set it picks keeps the room two days apart', gaps.length>0&&gaps.every(g=>g.gap===2), JSON.stringify(gaps));
+ // Which weekday set is right depends on what day it is — Sat/Mon/Wed runs Wed→Sat,
+ // three days, and Sun/Tue/Thu runs Thu→Sun. So assert the RULE, not a set: whichever
+ // it picked, the next clean is as close to two days out as either set could put it.
+ // NOT "exactly two": after a Wednesday clean neither set has a day two days on — one
+ // says Thursday, the other Saturday, both a day off — so the rhythm has no preference
+ // and the week's balance decides. Demanding two failed every Wednesday.
+ const gaps=await page.evaluate(()=>{
+   const gapIn=(set,last)=>{ for(let i=1;i<=7;i+=1) if(set.indexOf(dowOf(shiftDay(last,i)))>=0) return i; return null; };
+   return (state.servicedUnits||[]).filter(u=>u.freq==='eod'&&u.days&&u.lastCleaned).map(u=>{
+     const gap=gapIn(u.days,u.lastCleaned);
+     const best=Math.min(...EOD_SETS.map(set=>Math.abs(gapIn(set,u.lastCleaned)-2)));
+     return {unit:u.unit,gap,best};
+   });
+ });
+ check('the set it picks keeps the room two days apart', gaps.length>0&&gaps.every(g=>g.gap!==null&&Math.abs(g.gap-2)===g.best), JSON.stringify(gaps));
  // The search box has to stay reachable once the list is scrolled — that is the
  // whole point of pinning it under the header. This is the Rooms screen, behind ☰.
  await page.evaluate(()=>setTab('rooms')); await page.waitForTimeout(600);
@@ -178,7 +199,14 @@ for (const [label,vp] of [['PHONE',{width:420,height:900}],['DESKTOP',{width:144
  // day's plan, and the roll call shows what the plan holds.
  const beat=await page.evaluate(()=>{
    const days=Array.from({length:7},(_,i)=>shiftDay(workToday(),i));
-   const mk=(u)=>days.map(d=>dueOnDay(u,d)?'X':'.').join('');
+   // THE ROOM'S OWN BEAT IS ASKED WITH THE SWEEP OFF. Every room is cleaned on the
+   // Thursday whatever its pattern says, so with the sweep on the Thursday is an X on
+   // every line — on four days of the week that lands on a rest day and the beat reads
+   // broken when it isn't. The sweep is checked on its own, against the same line.
+   const sweep=days.findIndex(d=>sweepsOn(d));
+   const was=state.thursdaySweep;
+   const mk=(u,on)=>{ state.thursdaySweep=on?was:false;
+     try{ return days.map(d=>dueOnDay(u,d)?'X':'.').join(''); } finally{ state.thursdaySweep=was; } };
    const y=shiftDay(workToday(),-1), old=shiftDay(workToday(),-3);
    // The DAILY room needs a yesterday that is not a Friday. A Friday clean is worked in
    // advance of the Saturday, so on a Saturday "cleaned yesterday" is the one case that
@@ -186,16 +214,23 @@ for (const [label,vp] of [['PHONE',{width:420,height:900}],['DESKTOP',{width:144
    // The every-other-day cases must keep literal yesterday: a one-day gap is the whole
    // point of them, and stepping back a day would make them due today and prove nothing.
    const yDaily=(()=>{let d=y;while(new Date(d+'T00:00:00').getDay()===5)d=shiftDay(d,-1);return d;})();
+   const t1={id:'t1',unit:'T1',type:'building',freq:'eod',lastCleaned:y};
    return {
-     cleanedYesterday: mk({id:'t1',unit:'T1',type:'building',freq:'eod',lastCleaned:y}),
+     cleanedYesterday: mk(t1),
+     withSweep:        mk(t1,true),
      overdue:          mk({id:'t2',unit:'T2',type:'building',freq:'eod',lastCleaned:old}),
      neverRecorded:    mk({id:'t3',unit:'T3',type:'building',freq:'eod'}),
      daily:            mk({id:'t4',unit:'T4',type:'building',freq:'daily',lastCleaned:yDaily}),
+     sweep,
    };
  });
- const alternates=(s)=>!/XX/.test(s.slice(1));   // no two due days in a row after today
+ // No two due days in a row after today — the every-other-day beat.
+ const alternates=(s)=>!/XX/.test(s.slice(1));
  check('an every-other-day room cleaned yesterday is due every OTHER day',
    beat.cleanedYesterday==='.X.X.X.', beat.cleanedYesterday);
+ check('the Thursday sweep puts it on the Thursday and leaves the rest of its week alone',
+   beat.sweep>=0&&beat.withSweep===beat.cleanedYesterday.slice(0,beat.sweep)+'X'+beat.cleanedYesterday.slice(beat.sweep+1),
+   beat.withSweep+' vs '+beat.cleanedYesterday);
  check('an overdue every-other-day room shows today, then on its own beat',
    beat.overdue[0]==='X'&&alternates(beat.overdue), beat.overdue);
  check('a never-recorded room shows today, then on its own beat',
@@ -204,7 +239,11 @@ for (const [label,vp] of [['PHONE',{width:420,height:900}],['DESKTOP',{width:144
 
  // RECORDING A CLEAN HAS TO AFFECT TOMORROW. A pinned room ignored the last clean
  // entirely, so marking 305 cleaned today still planned it for the morning after.
+ // Asked with the sweep off: when tomorrow is a Thursday every room is due on it by
+ // decree, which says nothing about whether a recorded clean is respected.
  const pinnedRecent=await page.evaluate(()=>{
+   const was=state.thursdaySweep; state.thursdaySweep=false;
+   try{
    const t=workToday(), tom=shiftDay(t,1), dowT=dowOf(t), dowTom=dowOf(tom);
    // pinned to a set that contains BOTH today and tomorrow — the back-to-back case
    const eod={id:'r1',unit:'R1',type:'building',freq:'eod',days:[dowT,dowTom],lastCleaned:t};
@@ -216,6 +255,7 @@ for (const [label,vp] of [['PHONE',{width:420,height:900}],['DESKTOP',{width:144
      weeklyOwnDay: dueOnDay(wk,tom),
      dailyToday: dueOnDay(dy,t),
    };
+   } finally{ state.thursdaySweep=was; }
  });
  check('a room recorded as cleaned today is not planned for tomorrow',
    pinnedRecent.eodTomorrow===false, JSON.stringify(pinnedRecent));
