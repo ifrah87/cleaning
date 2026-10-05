@@ -215,6 +215,37 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
   check('...and the extra room is on the card with the rest',
     extraRoom.jobs.some((l) => /^806/.test(l)), JSON.stringify(extraRoom.jobs));
 
+  // EQUAL LEADERS, NOTHING SHARED. 5 Oct: both ticked leaders on Team H, each holding a
+  // room of his own and named on none of the other's. Nothing ties them but the team —
+  // and the team is the answer: one box, both names, both men's rooms on it.
+  const equal = await page.evaluate(() => {
+    state.servicedUnits.forEach((u) => { delete u.assignedWith; });
+    setUnitAssignee('u1102', 'pAbiker');
+    const pa = state.staff.find((x) => /Abukar/.test(x.name)), pb = state.staff.find((x) => /Abiker/.test(x.name));
+    pa.isLeader = true; pb.isLeader = true; delete pb.siteOn;
+    const cols = tvColumns();
+    const today = cols.find((c) => /Abukar/.test(c.name)) || { jobs: [] };
+    // Another day's board, which has no badge-ins to go on, must say the same.
+    const day = shiftDay(workToday(), 1);
+    state.plans = state.plans || {};
+    state.plans[day] = {
+      'unit:u804': { kind: 'unit', refId: 'u804', label: 'Unit 804', assignedTo: 'pAbukar' },
+      'unit:u1102': { kind: 'unit', refId: 'u1102', label: 'Unit 1102', assignedTo: 'pAbiker' },
+    };
+    const ahead = tvColumnsForDay(day);
+    return { names: cols.map((c) => c.name), jobs: today.jobs.map((j) => j.label),
+      aheadNames: ahead.map((c) => c.name), total: countJobs(cols).all };
+  });
+  check('two leaders on one team are one box',
+    equal.names.filter((n) => /Abiker|Abukar/.test(n)).length === 1
+    && equal.names.some((n) => /Abukar/.test(n) && /Abiker/.test(n)), JSON.stringify(equal.names));
+  check('...holding both men\'s rooms', ['804', '903', '1102'].every((u) => equal.jobs.some((l) => l.indexOf(u) === 0)),
+    JSON.stringify(equal.jobs));
+  check('...and nothing counted twice', equal.total === 7, String(equal.total));
+  check('another day\'s board draws them as one box too',
+    equal.aheadNames.filter((n) => /Abiker|Abukar/.test(n)).length === 1
+    && equal.aheadNames.some((n) => /Abukar/.test(n) && /Abiker/.test(n)), JSON.stringify(equal.aheadNames));
+
   check('no console errors', errs.length === 0, errs.join('\n       '));
 
   await browser.close(); s.close();

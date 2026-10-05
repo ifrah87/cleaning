@@ -14010,6 +14010,20 @@ function tvColumnsForDay(day) {
       late: !!(u && timeSlot(u) === 'late'), early: !!(u && timeSlot(u) === 'early'),
     });
   });
+  // EQUAL LEADERS SHARE A BOX ON ANY DAY, as they do on the live board (pairMates): a
+  // crew with two or more leaders is one team, so every leader's bucket goes into the
+  // first one's column and the others are named on it.
+  const coLeaders = {};
+  order.slice().forEach((k) => {
+    const p = byId[k];
+    if (!p || !p.isLeader || !p.crew) return;
+    const lead = order.find((o) => byId[o] && byId[o].isLeader && byId[o].crew === p.crew);
+    if (!lead || lead === k) return;
+    buckets[lead] = buckets[lead].concat(buckets[k]);
+    (coLeaders[lead] = coLeaders[lead] || []).push(p);
+    delete buckets[k];
+    order.splice(order.indexOf(k), 1);
+  });
   return order.sort((a, b) => (a === '__none__' ? -1 : 0) - (b === '__none__' ? -1 : 0)
       || buckets[b].length - buckets[a].length)
     .map((k) => {
@@ -14031,8 +14045,10 @@ function tvColumnsForDay(day) {
         return Object.keys(n).filter((id) => n[id] === rooms.length && id !== p.id)
           .map((id) => byId[id]).filter(Boolean);
       })();
-      return { key: k, name: p ? [p].concat(mates).map((x) => tvName(x)).join(' / ') : 'NOBODY YET',
-        jobs: buckets[k],
+      const named = [p].concat(coLeaders[k] || [], mates)
+        .filter((x, i, all) => x && all.findIndex((y) => y && y.id === x.id) === i);
+      return { key: k, name: p ? named.map((x) => tvName(x)).join(' / ') : 'NOBODY YET',
+        jobs: p ? dedupeJobs(buckets[k]) : buckets[k],
         none: !p, out: false, status: null, with: '',
         // ANOTHER DAY'S BOARD KNOWS WHERE PEOPLE WILL BE. The badge times cannot be known
         // for a day that has not happened, but the site rota is a schedule — so stepping
@@ -14083,7 +14099,12 @@ function tvColumns() {
     // real walk, on a real morning, that nobody would have been asked to do.
     const mates = cleaningStaff().filter((x) => crewOf(x) === c && onDutyToday(x) && tvHere(x)
       && !worksOffSite(x) && !helperRoundOwner(x));
-    if (mates.length < 2 || mates.some((x) => x.isLeader)) return null;
+    // EQUAL LEADERS ARE ONE TEAM TOO. A crew with ONE leader is that leader's round with
+    // the rest named beside them. A crew with no leader is a pair; and so is a crew with
+    // two or more — Abukar Daud Osman and Mahamed Abdi Abiker, Team H, both leaders, one
+    // team (the office, 5 Oct). Each carries rooms of his own, so neither is the other's
+    // assistant, and the wall drew them as two boxes. One team, one box, both names.
+    if (mates.length < 2 || mates.filter((x) => x.isLeader).length === 1) return null;
     return mates.sort((a, b) => String(tvArrival(b) ? 0 : 1).localeCompare(String(tvArrival(a) ? 0 : 1))
       || String(a.name).localeCompare(String(b.name)));
   };
