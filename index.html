@@ -3733,7 +3733,7 @@ function setTab(t, opts) {
     _navStack.push(state.tab);
     if (_navStack.length > 12) _navStack.shift();
   }
-  state.tab = t; _assignPick = null; save(); render();
+  state.tab = t; _assignPick = null; _roomMove = null; save(); render();
 }
 function goBack() {
   const prev = _navStack.pop();
@@ -5426,6 +5426,129 @@ function setUnitLastCleaned(id, dayKey, whoId) {
   // ticking rooms off ends up with an empty Cleaning History.
   if (dayKey && dayKey !== was) logClean(u, dayKey, whoId);
   save(); render();
+}
+// CHANGE WHO CLEANS A ROOM — ONE TAP, EVERYWHERE. Ifrah, 2026-10-05: "I want to be
+// able to reshuffle the rooms easily… change the cleaner that cleans a room — right now
+// it seems so rigid". It was: a move on the board was today only, the pin was a tick
+// in a sheet, the permanent list was sixty dropdowns at the foot of Settings and was not
+// stamped (so another phone's copy could quietly put it back), and none of them touched
+// the days already planned ahead — tomorrow still named the old cleaner until somebody
+// rebuilt it. This does all of it at once: the room's own cleaner from now on, today's
+// board if it is not cleaned yet, and every day already planned from today on.
+// Cleaned rooms keep who cleaned them — that is history, not a plan.
+function moveRoomTo(id, pid) {
+  const u = (state.servicedUnits || []).find((x) => x.id === id);
+  if (!u) return;
+  pid = pid || null;
+  u.usualTo = pid;
+  stampUnitEdit(u);
+  const today = workToday();
+  const k = planKey('unit', id);
+  const done = cleanedToday(u);
+  if (!done) {
+    u.assignedTo = pid;
+    if (pid && Array.isArray(u.assignedWith)) {
+      const rest = u.assignedWith.filter((x) => x !== pid);
+      u.assignedWith = rest.length ? rest : null;
+    }
+    if (!state.assignConfirmed) state.assignConfirmed = {};
+    if (pid) state.assignConfirmed[id] = todayKey(); else delete state.assignConfirmed[id];
+    u.autoDealtOn = null;
+  }
+  Object.keys(state.plans || {}).forEach((day) => {
+    if (day < today) return;
+    const j = state.plans[day][k];
+    if (!j) return;
+    if (day === today && done) return;
+    j.assignedTo = pid;
+    // Today it is a hand move like any other; days ahead stay the app's to re-deal around
+    // a sick day, and the re-deal follows the room's cleaner, which is now this one.
+    if (day === today && pid) j.byHand = true; else delete j.byHand;
+    stampPlanEdit(day);
+  });
+  _roomMove = null;
+  save(); render();
+}
+let _roomMove = null;   // the room whose cleaner is being changed on the Team page
+// Who a room can be given to: leaders, one entry per team — two equal leaders on one
+// team are one box on the board, so they are one choice here too.
+function roomOwnerGroups() {
+  const leaders = cleaningStaff().filter((p) => p.isLeader && !p.archived);
+  const groups = [];
+  leaders.forEach((p) => {
+    const g = p.crew && groups.find((x) => x.crew === p.crew);
+    if (g) g.people.push(p); else groups.push({ crew: p.crew || null, people: [p] });
+  });
+  groups.forEach((g) => { g.id = g.people[0].id; g.ids = g.people.map((p) => p.id); g.name = g.people.map(tvName).join(' / '); });
+  return groups;
+}
+function roomOwnersPanel(wrap) {
+  const rooms = (state.servicedUnits || []).filter((u) => !u.paused && onRollCall(u))
+    .sort((a, b) => String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }));
+  if (!rooms.length) return;
+  const groups = roomOwnerGroups();
+  const box = el('<div style="margin-bottom:14px"></div>');
+  box.appendChild(el(`<div class="section-label">Who cleans which room</div>`));
+  box.appendChild(el(`<div style="font-size:12px;color:#5f7189;margin-bottom:8px">Tap a room, then tap who should clean it. `
+    + `It changes from today on — today's board and every day already planned.</div>`));
+  const card = (title, list) => {
+    const c = el('<div style="border:1px solid #1e2f4d;border-radius:10px;padding:10px 12px;margin-bottom:8px;background:#101c30"></div>');
+    c.appendChild(el(`<div style="font-size:13px;font-weight:800;color:#eaf1fb;margin-bottom:6px">${esc(title)} `
+      + `<span style="font-size:11px;font-weight:700;color:#5f7189">${list.length} room${list.length === 1 ? '' : 's'}</span></div>`));
+    const chips = el('<div style="display:flex;flex-wrap:wrap;gap:6px"></div>');
+    list.forEach((u) => {
+      const t = eodTimetableOf(u);
+      const b = el(`<button class="freqmini" style="flex:0 0 auto;padding:7px 10px">${esc(u.unit)}`
+        + (t === 'A' || t === 'B' ? ` <span style="opacity:0.6">${t}</span>` : '') + `</button>`);
+      b.onclick = () => { _roomMove = u.id; render(); };
+      chips.appendChild(b);
+    });
+    if (!list.length) chips.appendChild(el('<div style="font-size:11px;color:#5f7189">No rooms</div>'));
+    c.appendChild(chips);
+    box.appendChild(c);
+  };
+  const seen = new Set();
+  groups.forEach((g) => {
+    const mine = rooms.filter((u) => g.ids.indexOf(u.usualTo) >= 0);
+    mine.forEach((u) => seen.add(u.id));
+    card(g.name, mine);
+  });
+  const loose = rooms.filter((u) => !seen.has(u.id));
+  if (loose.length) card('No regular cleaner — shared out each day', loose);
+  wrap.appendChild(box);
+
+  if (_roomMove) {
+    const u = rooms.find((x) => x.id === _roomMove) || (state.servicedUnits || []).find((x) => x.id === _roomMove);
+    if (!u) { _roomMove = null; return; }
+    const count = (g) => rooms.filter((x) => g.ids.indexOf(x.usualTo) >= 0).length;
+    const overlay = el('<div class="modal-overlay"></div>');
+    const modal = el('<div class="modal"></div>');
+    modal.appendChild(el(`<div class="modal-title">Who should clean ${esc(u.unit)}?</div>`));
+    const cur = groups.find((g) => g.ids.indexOf(u.usualTo) >= 0);
+    modal.appendChild(el(`<div class="modal-sub">Now: ${esc(cur ? cur.name : 'no regular cleaner')}`
+      + `${cleanedToday(u) ? ' · already cleaned today, so the change starts tomorrow' : ''}</div>`));
+    const picker = el('<div class="cover-picker" style="display:flex;flex-direction:column;gap:8px;margin-top:14px"></div>');
+    groups.slice().sort((a, b) => count(a) - count(b) || a.name.localeCompare(b.name)).forEach((g) => {
+      const on = cur && cur.id === g.id;
+      const n = count(g);
+      const b = el(`<button class="cover-opt ${on ? 'on' : ''}">${esc(g.name)}`
+        + `<span class="cover-load">${n} room${n === 1 ? '' : 's'}${on ? ' · now' : ''}</span></button>`);
+      b.onclick = () => moveRoomTo(u.id, g.id);
+      picker.appendChild(b);
+    });
+    const none = el(`<button class="cover-opt">No regular cleaner<span class="cover-load">shared out each day</span></button>`);
+    none.onclick = () => moveRoomTo(u.id, null);
+    picker.appendChild(none);
+    modal.appendChild(picker);
+    const row = el('<div class="modal-btns"></div>');
+    const cancel = el('<button class="modal-skip">Cancel</button>');
+    cancel.onclick = () => { _roomMove = null; render(); };
+    row.appendChild(cancel);
+    modal.appendChild(row);
+    overlay.appendChild(modal);
+    overlay.onclick = (e) => { if (e.target === overlay) { _roomMove = null; render(); } };
+    wrap.appendChild(overlay);
+  }
 }
 // Permanent room→person assignment (set in Settings). Sets the room's "usual"
 // cleaner so auto-assign always keeps it with them, and applies it today too.
@@ -12252,7 +12375,7 @@ function viewSettings() {
         if (u.usualTo === p.id) o.setAttribute('selected', '');
         sel.appendChild(o);
       });
-      sel.onchange = (e) => setUnitUsual(u.id, e.target.value);
+      sel.onchange = (e) => moveRoomTo(u.id, e.target.value);
       row.appendChild(sel);
       rabox.appendChild(row);
     });
@@ -13284,6 +13407,7 @@ function viewTeam() {
   // put it under eleven floor rows and the Friday rota — below the fold on a phone, and
   // below the fold is the same as not existing. Somebody stood with the list in their
   // hand and could not find the box to paste it into.
+  if (cleaners) roomOwnersPanel(wrap);
   if (cleaners) roundListPanel(wrap);
   if (cleaners) wrap.appendChild(floorAllocationBox());
 
