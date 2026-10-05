@@ -94,6 +94,9 @@ const check = (n, ok, d) => { results.push([n, !!ok]); console.log((ok ? '  \x1b
       autoSun: dueOnDayFrom(auto, SUN, SAT),
       handASun: dueOnDayFrom(handA, SUN, SAT), handAMon: dueOnDayFrom(handA, MON, SAT),
       today: dueOnDayFrom(hand, SUN, SUN),
+      // Saturday missed, carried, cleaned Sunday (not one of A's days): Monday still stands.
+      catchUpMon: dueOnDayFrom(handA, MON, SUN), catchUpNext: nextDueFrom(handA, SUN),
+      autoCatchUpMon: dueOnDayFrom(mk({ unit: '802', days: A, daysAuto: true }), MON, SUN),
     };
   }, [SAT, SUN, MON, shift(SAT, 3)]);
 
@@ -105,6 +108,9 @@ const check = (n, ok, d) => { results.push([n, !!ok]); console.log((ok ? '  \x1b
   check('a Sat/Mon/Wed/Thu room cleaned Saturday is not due Sunday', q.handASun === false);
   check('…and is due Monday', q.handAMon === true);
   check('a room already cleaned today is not due again today', q.today === false);
+  check('a Sat/Mon/Wed/Thu room caught up on Sunday is still due Monday', q.catchUpMon === true);
+  check('…its card says Monday too', q.catchUpNext === MON, 'next due reads ' + q.catchUpNext);
+  check('the same set laid out by the app still takes the gap', q.autoCatchUpMon === false);
   check('no console errors', errs.length === 0, errs.join(' | '));
 
   const failed = results.filter((r) => !r[1]).length;

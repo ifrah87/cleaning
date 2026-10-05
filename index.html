@@ -2078,7 +2078,13 @@ function dueOnDayFrom(u, day, base, noSweep) {
     // Saturday, too soon. When both days are on a set typed by hand, the back-to-back is
     // the schedule, not an accident, so the room keeps it. Sets the app laid out itself
     // still get the gap.
-    const chosenPair = (gap) => gap === 1 && u.daysAuto === false && days.indexOf(dowOf(base)) >= 0;
+    //
+    // A CATCH-UP CLEAN DOES NOT CANCEL A PROMISED DAY. Saturday 3 Oct was missed, the
+    // Sat/Mon/Wed/Thu rooms were carried and cleaned on the Sunday, and Monday — a day
+    // the customers were told — was then dropped as too soon. The clean the day before
+    // only counted as a chosen pair if it fell on one of the room's own days. On a set
+    // typed by hand every pinned day is a promise, whatever day the last clean landed on.
+    const chosenPair = (gap) => gap === 1 && u.daysAuto === false;
     if (base) {
       const gap = Math.round((new Date(day + 'T00:00:00') - new Date(base + 'T00:00:00')) / 864e5);
       if (gap >= 0 && gap < minGap && !chosenPair(gap)) return false;
