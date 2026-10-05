@@ -9912,13 +9912,12 @@ function viewTick() {
   // the one thing on this screen that has to mean the same at nine as it does at six.
   const counted = countJobs(kcols);
   const all = counted.all, done = counted.done, left = all - done;
-  // CLEARING THE WALL. A ticked room stays on the board all day so the morning can be
-  // read off it in one look, which is right until the board is mostly ✓ and the work
-  // that is LEFT is the thing you cannot find. A switch, not a rule: the rooms are still
-  // there, and one tap brings them back.
-  const fcols = state.hideDone
-    ? kcols.map((c) => Object.assign({}, c, { jobs: c.jobs.filter((j) => !j.done) }))
-    : kcols;
+  // A CLEANED ROOM STAYS ON THE BOARD, ticked. There was a switch to clear the done rooms
+  // off the wall, and it was left on: the office ticked Ahmed Daahir's 701, 1103 and 1002
+  // on 5 Oct and watched them vanish, which reads as the tick being lost rather than the
+  // room being done. The board is the record of the morning — what is cleaned has to be
+  // seen to be cleaned. No switch; state.hideDone is ignored wherever it is still saved.
+  const fcols = kcols;
 
   // ONE SURFACE. The counts, the buttons and the close-out used to be pale controls
   // stacked above a dark board, so the screen read as two designs meeting in the middle.
@@ -9952,12 +9951,6 @@ function viewTick() {
   tally.appendChild(el(`<b style="color:${left ? '#fbbf24' : '#22c55e'}">${left}</b>`));
   tally.appendChild(el(`<span>left</span>`));
   tally.appendChild(el(`<span style="margin-left:auto;color:#22c55e">${done} done</span>`));
-  if (done || state.hideDone) {
-    const hd = el(`<button class="bd-tab ${state.hideDone ? 'on' : ''}" style="flex:0 0 auto;margin-left:10px">`
-      + (state.hideDone ? `Show ${done} done` : `Hide ${done} done`) + `</button>`);
-    hd.onclick = () => { state.hideDone = !state.hideDone; save(); render(); };
-    tally.appendChild(hd);
-  }
   top.appendChild(tally);
 
   // WHO THE DOOR SAW, AND WHO IT DID NOT — ON THE BOARD.
