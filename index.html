@@ -4355,10 +4355,41 @@ function balanceEodConfirm() {
     'Balance now', 'safe'
   );
 }
-// The warning itself, for the morning screen and the rooms page.
+// HANDS OFF. Ifrah, 2026-10-05: "keep the balance all the time, I want this to be
+// hands off". So the fewest moves that level it are simply made — on open, at each new
+// day and on every five-minute pass — instead of waiting for somebody to press Balance
+// now. Only rooms already on A or B ever move, and only when something is actually out
+// of level, so a balanced week is never touched. Today's board keeps the room either
+// way. What moved is written down and stays on the morning screen for a week: these are
+// customers' days, and the office has to tell them.
+function autoBalanceEod() {
+  if (TV_MODE) return 0;
+  const moves = eodBalanceMoves();
+  if (!moves.length) return 0;
+  moves.forEach((m) => putOnEodTimetable(m.u, m.to));
+  state.lastEodBalance = {
+    day: todayKey(),
+    moves: moves.map((m) => ({ unit: m.u.unit, to: m.to })),
+  };
+  save();
+  return moves.length;
+}
+function eodBalanceNotice() {
+  const lb = state.lastEodBalance;
+  if (!lb || !lb.moves || !lb.moves.length) return null;
+  if (Math.round((new Date(todayKey() + 'T00:00:00') - new Date(lb.day + 'T00:00:00')) / 864e5) > 7) return null;
+  const box = el('<div class="alert" style="background:#eef6fd;border-color:#cfe8fb"></div>');
+  box.appendChild(el(`<div class="alert-title" style="color:#0b5394">Every-other-day rooms rebalanced on ${esc(fmtDay(lb.day))}</div>`));
+  box.appendChild(el(`<div class="alert-body" style="color:#0b3d6e">${lb.moves.map((m) => esc(m.unit + ' → ' + m.to
+    + (m.to === 'A' ? ' (Sat Mon Wed Thu)' : ' (Sat Sun Tue Thu)'))).join('<br>')}<br>Tell these customers their days changed.</div>`));
+  return box;
+}
+// The warning itself, for the morning screen and the rooms page. With the rebalance
+// automatic it is left with only what the app cannot fix itself — a room on days
+// that are neither timetable — and the note of what it moved.
 function eodBalanceAlert() {
   const issues = eodBalanceIssues();
-  if (!issues.length) return null;
+  if (!issues.length) return eodBalanceNotice();
   const al = el(`<div class="alert"></div>`);
   al.appendChild(el(`<div class="alert-title">⚠ Every-other-day rooms are out of balance</div>`));
   al.appendChild(el(`<div class="alert-body">${issues.map(esc).join('<br>')}</div>`));
@@ -16167,6 +16198,7 @@ function startDayWatch() {
       if (ensureTeamShuffle()) save();  // a Saturday deals the assistants out again
       if (ensureFridayDraw()) save();   // the Friday just gone opens the draw for the next
       placeUnplacedEodRooms();   // a new every-other-day room onto A or B, level
+      autoBalanceEod();          // and keep the two timetables level
       autoPinDaysFromFreq();
       autoLevelEodDays();     // and undo any clump the pinning has settled into
       planningPass();
@@ -16174,6 +16206,9 @@ function startDayWatch() {
       render();
       return;
     }
+    // A room paused, removed or re-timed on any device can tip the balance; level it
+    // again on the next pass rather than at tomorrow's rollover.
+    if (placeUnplacedEodRooms() + autoBalanceEod()) render();
     if ((topUpTodayPlan().added || 0) > 0) { carryPlanToBoardOnOpen(); render(); }
   }, 300000);   // five minutes — a day boundary and a backdated clean are both slow news
 }
@@ -16196,6 +16231,7 @@ async function boot() {
   // their days before it runs, not after. It is a property of the rota rather than
   // of who has badged in, so it does not wait for the roll call.
   if (pulled) placeUnplacedEodRooms();   // only against the server's copy
+  if (pulled) autoBalanceEod();
   autoPinDaysFromFreq();
   // Pinning alone lands the whole estate on one of the two patterns, because they all
   // ask for the set their last clean points at. This spreads them back out.

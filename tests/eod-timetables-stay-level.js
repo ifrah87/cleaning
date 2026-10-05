@@ -4,7 +4,7 @@
  * A = Sat Mon Wed Thu, B = Sat Sun Tue Thu, given to the customers 2026-09-29. Ifrah
  * wants them balanced and a rule that is always checking (2026-10-05): a new room goes
  * onto whichever keeps its floor and the building level, a lopsided floor or building
- * is flagged, and "Balance now" moves the fewest rooms that fix it.
+ * is levelled by the app itself with the fewest moves, and what moved is written down.
  *
  * Run:  NODE_PATH="$(pwd)/scraper/node_modules" node tests/eod-timetables-stay-level.js
  */
@@ -105,6 +105,14 @@ const check = (n, ok, d) => { results.push([n, !!ok]); console.log((ok ? '  \x1b
     mv.forEach((m) => putOnEodTimetable(m.u, m.to));
     r.fixedIssues = eodBalanceIssues();
     r.alertGone = eodBalanceAlert() === null;
+    // HANDS OFF: lopside it again and let the app level it by itself.
+    r.balancedNoop = autoBalanceEod(); r.noNote = !state.lastEodBalance;
+    get('204').days = A.slice(); get('302').days = A.slice(); get('105').days = A.slice();
+    r.autoMoved = autoBalanceEod();
+    r.autoIssues = eodBalanceIssues();
+    r.autoNote = state.lastEodBalance;
+    r.noteText = (eodBalanceAlert() || {}).textContent || '';
+    r.secondPass = autoBalanceEod();
     get('802').days = [1, 3, 6];
     r.odd = eodBalanceIssues();
     r.alertText = (eodBalanceAlert() || {}).textContent || '';
@@ -120,6 +128,11 @@ const check = (n, ok, d) => { results.push([n, !!ok]); console.log((ok ? '  \x1b
   check('floor 7 all on A is flagged', q.lopIssues.some((s) => /Floor 7/.test(s)), JSON.stringify(q.lopIssues));
   check('…two rooms of it go back to B and nothing else moves', q.lopMoves.length === 2 && q.lopMoves.every((m) => /^70\d>B$/.test(m)), JSON.stringify(q.lopMoves));
   check('…and that settles it', q.fixedIssues.length === 0 && q.alertGone, JSON.stringify(q.fixedIssues));
+  check('a level week is never touched by the automatic pass', q.balancedNoop === 0 && q.noNote);
+  check('lopsided again, the app levels it on its own', q.autoMoved > 0 && q.autoIssues.length === 0, q.autoMoved + ' ' + JSON.stringify(q.autoIssues));
+  check('…writes down what it moved', q.autoNote && q.autoNote.moves.length === q.autoMoved, JSON.stringify(q.autoNote));
+  check('…and says so on the morning screen, to tell the customers', /rebalanced/.test(q.noteText) && /Tell these customers/.test(q.noteText), q.noteText);
+  check('…and does not churn on the next pass', q.secondPass === 0);
   check('a room on neither timetable is flagged by number', q.odd.some((s) => /802/.test(s) && /neither/.test(s)), JSON.stringify(q.odd));
   check('…and the warning offers no move for it, only says so', /802/.test(q.alertText));
   check('no console errors', errs.filter((e) => !/airbnb-stays|ERR_FAILED/.test(e)).length === 0, errs.join(' | '));
