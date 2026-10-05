@@ -150,21 +150,11 @@ for (const [label,vp] of [['PHONE',{width:420,height:900}],['DESKTOP',{width:144
  // eod rooms pinned to set days automatically
  const pinned=await page.evaluate(()=>(state.servicedUnits||[]).filter(u=>u.freq==='eod').map(u=>({unit:u.unit,days:u.days||null})));
  check('every-other-day rooms were put on set days on their own', pinned.every(x=>x.days&&x.days.length), JSON.stringify(pinned));
- // Which weekday set is right depends on what day it is — Sat/Mon/Wed runs Wed→Sat,
- // three days, and Sun/Tue/Thu runs Thu→Sun. So assert the RULE, not a set: whichever
- // it picked, the next clean is as close to two days out as either set could put it.
- // NOT "exactly two": after a Wednesday clean neither set has a day two days on — one
- // says Thursday, the other Saturday, both a day off — so the rhythm has no preference
- // and the week's balance decides. Demanding two failed every Wednesday.
- const gaps=await page.evaluate(()=>{
-   const gapIn=(set,last)=>{ for(let i=1;i<=7;i+=1) if(set.indexOf(dowOf(shiftDay(last,i)))>=0) return i; return null; };
-   return (state.servicedUnits||[]).filter(u=>u.freq==='eod'&&u.days&&u.lastCleaned).map(u=>{
-     const gap=gapIn(u.days,u.lastCleaned);
-     const best=Math.min(...EOD_SETS.map(set=>Math.abs(gapIn(set,u.lastCleaned)-2)));
-     return {unit:u.unit,gap,best};
-   });
- });
- check('the set it picks keeps the room two days apart', gaps.length>0&&gaps.every(g=>g.gap!==null&&Math.abs(g.gap-2)===g.best), JSON.stringify(gaps));
+ // THE CUSTOMERS' TIMETABLES, LEVEL. Since 2026-10-05 a room with no days goes onto
+ // A (Sat Mon Wed Thu) or B (Sat Sun Tue Thu), whichever keeps its floor and the building
+ // even — the rhythm of its last clean no longer picks, the timetable does.
+ const level=await page.evaluate(()=>eodBalanceIssues());
+ check('the set it picks keeps the timetables level', level.length===0, JSON.stringify(level));
  // The search box has to stay reachable once the list is scrolled — that is the
  // whole point of pinning it under the header. This is the Rooms screen, behind ☰.
  await page.evaluate(()=>setTab('rooms')); await page.waitForTimeout(600);
@@ -340,10 +330,10 @@ for (const [label,vp] of [['PHONE',{width:420,height:900}],['DESKTOP',{width:144
    freqStick.onList && freqStick.due.slice(1)===freqStick.want.slice(1), JSON.stringify(freqStick));
 
  const pinnedDays=await page.evaluate(()=>(state.servicedUnits||[]).filter(u=>u.freq==='eod').map(u=>u.unit+':'+(u.days||[]).join('')));
- // Sat/Mon/Wed and Sun/Tue/Thu. Friday is the office's own day — they work out who is
- // in and pick the rooms themselves — so nothing automatic is ever put on it.
- check('every eod room ends up on one of the two weekday sets',
-   pinnedDays.every(x=>/:(613|024)$/.test(x)), pinnedDays.join(' '));
+ // Timetable A (Sat Mon Wed Thu) or B (Sat Sun Tue Thu). Friday is the office's own
+ // day — they work out who is in and pick the rooms themselves — so neither has it.
+ check('every eod room ends up on one of the two timetables',
+   pinnedDays.every(x=>/:(1346|0246)$/.test(x)), pinnedDays.join(' '));
  check('and none of them lands on a Friday',
    pinnedDays.every(x=>x.split(':')[1].indexOf('5')<0), pinnedDays.join(' '));
 

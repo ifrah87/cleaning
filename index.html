@@ -3843,6 +3843,7 @@ function addServicedUnit(unit, guest, freq, type, time) {
     time: (time||'').trim(),      // checkout / target time (optional)
     startDate: todayKey(),
   });
+  if ((freq || 'daily') === 'eod') placeUnplacedEodRooms();
   save(); render();
 }
 function removeServicedUnit(id) {
@@ -3899,6 +3900,7 @@ function clearUnitDays(id) {
 function setUnitFreq(id, freq) {
   const u = state.servicedUnits.find(x => x.id === id);
   if (u) { u.freq = freq; u.days = null; u.startDate = todayKey(); stampUnitEdit(u); }  // reset cycle anchor to today
+  if (u && freq === 'eod') putOnEodTimetable(u, bestEodTimetable(u));   // straight onto A or B
   save(); render();
 }
 // Flip a whole group of rooms onto one schedule at once — one-by-one is painful
@@ -3914,6 +3916,7 @@ function setUnitsFreqBulk(ids, freq, groupLabel) {
       (state.servicedUnits || []).forEach(u => {
         if (ids.includes(u.id)) { u.freq = freq; u.days = null; u.startDate = todayKey(); stampUnitEdit(u); }
       });
+      if (freq === 'eod') placeUnplacedEodRooms();
       save(); render();
     },
     'Set ' + FREQ_LABEL[freq],
@@ -4228,6 +4231,143 @@ function autoLevelEodDays() {
   };
   applyEodLevel(plan);
   return { moves: plan.moves.length };
+}
+// ============================================================
+// THE TWO TIMETABLES, KEPT LEVEL — ALWAYS
+// Since 2026-09-29 every every-other-day room is on one of two timetables the
+// customers were given: A = Sat Mon Wed Thu, B = Sat Sun Tue Thu. Ifrah wants them
+// balanced — the same number on each, and a floor's rooms never all on the same days —
+// and asked (2026-10-05) for a rule that is always checking. The pass above cannot be
+// it: it still deals the old three-day sets and leaves anything typed by hand alone.
+//
+// So: a room that becomes every-other-day goes straight onto whichever timetable keeps
+// its floor and the building level, and is fixed there like the rest. Everything else
+// is CHECKED on every draw, never moved behind anybody's back — these are days the
+// customers were told — and "Balance now" moves the fewest rooms that fix it.
+const EOD_TIMETABLES = { A: [1, 3, 4, 6], B: [0, 2, 4, 6] };
+const eodTimetableOf = (u) => {
+  const d = fixedDays(u);
+  if (!d) return null;
+  if (sameDays(d, EOD_TIMETABLES.A)) return 'A';
+  if (sameDays(d, EOD_TIMETABLES.B)) return 'B';
+  return 'other';
+};
+const eodRooms = () => (state.servicedUnits || [])
+  .filter((u) => (u.freq || 'daily') === 'eod' && !u.paused && onRollCall(u));
+// How far off level a set of placements is: a floor more than one apart, and the
+// building more than one apart. Zero is balanced. `as` overrides where rooms sit.
+function eodImbalance(rooms, as) {
+  const at = (u) => (as && as[u.id]) || eodTimetableOf(u);
+  const floors = {}; let A = 0, B = 0;
+  rooms.forEach((u) => {
+    const t = at(u);
+    if (t !== 'A' && t !== 'B') return;
+    const f = floorOfUnit(u.unit) || 0;
+    const c = (floors[f] = floors[f] || { A: 0, B: 0 });
+    c[t] += 1; if (t === 'A') A += 1; else B += 1;
+  });
+  let floorOff = 0;
+  Object.keys(floors).forEach((f) => { floorOff += Math.max(0, Math.abs(floors[f].A - floors[f].B) - 1); });
+  return { score: floorOff + Math.max(0, Math.abs(A - B) - 1), A, B, floors };
+}
+// Which timetable a room should join: the one that leaves things most level; on a
+// tie, the one its floor has fewer of, then the building, then A.
+function bestEodTimetable(u) {
+  const rooms = eodRooms().filter((x) => x.id !== u.id).concat([u]);
+  const tryAs = (t) => { const as = {}; as[u.id] = t; return eodImbalance(rooms, as); };
+  const a = tryAs('A'), b = tryAs('B');
+  if (a.score !== b.score) return a.score < b.score ? 'A' : 'B';
+  const f = floorOfUnit(u.unit) || 0;
+  const fa = (a.floors[f] || {}).A - 1, fb = (b.floors[f] || {}).B - 1;   // its floor without it
+  if (fa !== fb) return fa < fb ? 'A' : 'B';
+  return (a.A - 1) <= (b.B - 1) ? 'A' : 'B';
+}
+function putOnEodTimetable(u, t) {
+  keepTodayThroughDayChange(u, () => { u.days = EOD_TIMETABLES[t].slice(); });
+  u.daysAuto = false;               // a customer timetable — nothing automatic moves it
+  stampUnitEdit(u);
+}
+// Every every-other-day room with no days at all gets its timetable. Runs on open and
+// at each new day, and straight away whenever a room is made every-other-day.
+function placeUnplacedEodRooms() {
+  if (TV_MODE) return 0;
+  let n = 0;
+  eodRooms().forEach((u) => { if (!fixedDays(u)) { putOnEodTimetable(u, bestEodTimetable(u)); n += 1; } });
+  if (n) save();
+  return n;
+}
+// THE CHECK. What is wrong with the balance right now, in words the office can act on.
+function eodBalanceIssues() {
+  const rooms = eodRooms();
+  const out = [];
+  const odd = rooms.filter((u) => eodTimetableOf(u) === 'other');
+  if (odd.length) out.push(odd.map((u) => u.unit).join(', ') + (odd.length === 1 ? ' is' : ' are')
+    + ' on days that are neither timetable A (Sat Mon Wed Thu) nor B (Sat Sun Tue Thu)');
+  const none = rooms.filter((u) => !fixedDays(u));
+  if (none.length) out.push(none.map((u) => u.unit).join(', ') + ' not on a timetable yet');
+  const m = eodImbalance(rooms);
+  if (Math.abs(m.A - m.B) > 1) out.push(`Timetable A has ${m.A} rooms and B has ${m.B}`);
+  Object.keys(m.floors).sort((x, y) => x - y).forEach((f) => {
+    const c = m.floors[f];
+    if (Math.abs(c.A - c.B) > 1) {
+      const heavy = c.A > c.B ? 'A' : 'B';
+      const list = rooms.filter((u) => (floorOfUnit(u.unit) || 0) === +f && eodTimetableOf(u) === heavy).map((u) => u.unit);
+      out.push(`Floor ${f}: ${list.join(', ')} all on ${heavy}`);
+    }
+  });
+  return out;
+}
+// THE FIX. The fewest moves that bring the score down, one room at a time, best first.
+function eodBalanceMoves() {
+  const rooms = eodRooms();
+  const as = {};
+  rooms.forEach((u) => { const t = eodTimetableOf(u); if (t === 'A' || t === 'B') as[u.id] = t; });
+  const moves = [];
+  for (let guard = 0; guard < rooms.length; guard += 1) {
+    const now = eodImbalance(rooms, as).score;
+    if (!now) break;
+    let best = null;
+    rooms.forEach((u) => {
+      if (!as[u.id]) return;
+      const to = as[u.id] === 'A' ? 'B' : 'A';
+      const trial = Object.assign({}, as); trial[u.id] = to;
+      const s = eodImbalance(rooms, trial).score;
+      if (s < now && (!best || s < best.s)) best = { u, to, s };
+    });
+    if (!best) break;
+    as[best.u.id] = best.to;
+    const prev = moves.find((m) => m.u.id === best.u.id);
+    if (prev) moves.splice(moves.indexOf(prev), 1); else moves.push({ u: best.u, to: best.to });
+  }
+  return moves;
+}
+function balanceEodConfirm() {
+  const moves = eodBalanceMoves();
+  if (!moves.length) {
+    hikSyncMsg = { text: 'The every-other-day rooms are as level as the two timetables allow.' };
+    render(); return;
+  }
+  showConfirm(
+    `Move ${moves.length} room${moves.length === 1 ? '' : 's'} to balance the timetables?`,
+    moves.map((m) => `${m.u.unit} → ${m.to} (${m.to === 'A' ? 'Sat Mon Wed Thu' : 'Sat Sun Tue Thu'})`).join('\n')
+      + '\n\nThese are days the customers were given — tell them about the change.',
+    () => { moves.forEach((m) => putOnEodTimetable(m.u, m.to)); save(); render(); },
+    'Balance now', 'safe'
+  );
+}
+// The warning itself, for the morning screen and the rooms page.
+function eodBalanceAlert() {
+  const issues = eodBalanceIssues();
+  if (!issues.length) return null;
+  const al = el(`<div class="alert"></div>`);
+  al.appendChild(el(`<div class="alert-title">⚠ Every-other-day rooms are out of balance</div>`));
+  al.appendChild(el(`<div class="alert-body">${issues.map(esc).join('<br>')}</div>`));
+  if (!TV_MODE && eodBalanceMoves().length) {
+    const b = el('<button class="freqmini" style="margin-top:8px;padding:7px 12px">Balance now</button>');
+    b.onclick = balanceEodConfirm;
+    al.appendChild(b);
+  }
+  return al;
 }
 function levelEodDaysConfirm() {
   const plan = levelEodPlan();
@@ -9280,6 +9420,7 @@ function viewRooms() {
   const pastBtn = el(`<button class="add-btn" style="width:100%;margin-bottom:14px">＋ Record a past day</button>`);
   pastBtn.onclick = () => openBackdate(yesterdayKey());
   wrap.appendChild(pastBtn);
+  { const eal = eodBalanceAlert(); if (eal) wrap.appendChild(eal); }
   // SIXTY-SIX ROOMS IS A LOT OF SCROLLING. This screen is where a room's schedule is
   // changed, so it is read one room at a time — and it was the one room list with no
   // way to search it. The box is pinned under the header so it is still there when
@@ -10979,6 +11120,8 @@ function viewRollCall(opts) {
     al.appendChild(el(`<div class="alert-body">${esc(hikUnknown.map((u) => u.name + (u.time ? ` (${u.time})` : '')).join(', '))}</div>`));
     body.appendChild(al);
   }
+  // The every-other-day timetables, checked on every draw.
+  { const eal = eodBalanceAlert(); if (eal) body.appendChild(eal); }
 
   // FIFTEEN SECTIONS DOWN ONE COLUMN IS NOT A SCREEN, IT IS AN ARCHIVE.
   // Everything on this page earns its place once a day — the hand-out, the communal
@@ -16023,6 +16166,7 @@ function startDayWatch() {
       if (expireAttendance()) save();
       if (ensureTeamShuffle()) save();  // a Saturday deals the assistants out again
       if (ensureFridayDraw()) save();   // the Friday just gone opens the draw for the next
+      placeUnplacedEodRooms();   // a new every-other-day room onto A or B, level
       autoPinDaysFromFreq();
       autoLevelEodDays();     // and undo any clump the pinning has settled into
       planningPass();
@@ -16051,6 +16195,7 @@ async function boot() {
   // Days first: the planning pass reads the schedule, so the rooms need to be ON
   // their days before it runs, not after. It is a property of the rota rather than
   // of who has badged in, so it does not wait for the roll call.
+  if (pulled) placeUnplacedEodRooms();   // only against the server's copy
   autoPinDaysFromFreq();
   // Pinning alone lands the whole estate on one of the two patterns, because they all
   // ask for the set their last clean points at. This spreads them back out.
