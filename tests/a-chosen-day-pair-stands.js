@@ -97,6 +97,18 @@ const check = (n, ok, d) => { results.push([n, !!ok]); console.log((ok ? '  \x1b
       // Saturday missed, carried, cleaned Sunday (not one of A's days): Monday still stands.
       catchUpMon: dueOnDayFrom(handA, MON, SUN), catchUpNext: nextDueFrom(handA, SUN),
       autoCatchUpMon: dueOnDayFrom(mk({ unit: '802', days: A, daysAuto: true }), MON, SUN),
+      // Not ticked for a fortnight: on its own days only, never carried onto today.
+      ...(() => {
+        const t = workToday(), dow = dowOf(t), old = shiftDay(t, -14);
+        const off = mk({ unit: '204', days: [(dow + 1) % 7, (dow + 3) % 7], daysAuto: false, lastCleaned: old });
+        const on = mk({ unit: '203', days: [dow, (dow + 2) % 7], daysAuto: false, lastCleaned: old });
+        const autoOff = mk({ unit: '205', days: [(dow + 1) % 7, (dow + 3) % 7], daysAuto: true, lastCleaned: old });
+        return {
+          missedOffToday: dueOnDayFrom(off, t, old), missedOnToday: dueOnDayFrom(on, t, old),
+          missedNext: nextDueFrom(off, old) < t ? (state.servicedUnits.push(off), nextDueDate(off)) : null,
+          autoCarries: dueOnDayFrom(autoOff, t, old), tomorrow: shiftDay(t, 1),
+        };
+      })(),
     };
   }, [SAT, SUN, MON, shift(SAT, 3)]);
 
@@ -111,6 +123,10 @@ const check = (n, ok, d) => { results.push([n, !!ok]); console.log((ok ? '  \x1b
   check('a Sat/Mon/Wed/Thu room caught up on Sunday is still due Monday', q.catchUpMon === true);
   check('…its card says Monday too', q.catchUpNext === MON, 'next due reads ' + q.catchUpNext);
   check('the same set laid out by the app still takes the gap', q.autoCatchUpMon === false);
+  check('a hand-set room left unticked for a fortnight is NOT carried onto an off day', q.missedOffToday === false);
+  check('…and still comes up on its own day', q.missedOnToday === true);
+  check('…its card names its next own day, not a past one', q.missedNext === q.tomorrow, 'next due reads ' + q.missedNext);
+  check('a set the app laid out itself still carries the missed day', q.autoCarries === true);
   check('no console errors', errs.length === 0, errs.join(' | '));
 
   const failed = results.filter((r) => !r[1]).length;

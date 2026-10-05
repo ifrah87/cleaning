@@ -1997,7 +1997,16 @@ function nextDueFrom(u, base) {
   if (nd && doneFridayForSaturday(u, nd, base)) return shiftDay(nd, 1);
   return nd;
 }
-function nextDueDate(u) { return nextDueFrom(u, lastCleanDate(u)); }
+function nextDueDate(u) {
+  const nd = nextDueFrom(u, lastCleanDate(u));
+  // A hand-set room never carries a missed day (see dueOnDayFrom), so it is never
+  // "overdue since" one either: its next clean is simply its next own day from today.
+  const today = workToday();
+  if (nd && nd < today && fixedDays(u) && u.daysAuto === false) {
+    return fixedDays(u).indexOf(dowOf(today)) >= 0 ? today : nextFixedDay(u, today);
+  }
+  return nd;
+}
 const FREQ_LABEL = { nightly: 'Nightly', daily: 'Daily', eod: 'Every other day', weekly: 'Weekly', monthly: 'Monthly' };
 // How this room is scheduled, in words, for anywhere that used to print the frequency.
 function schedLabel(u) {
@@ -2035,6 +2044,17 @@ function dueOnDayFrom(u, day, base, noSweep) {
   // a decision, not a schedule, and outranks it.
   if (doneFridayForSaturday(u, day, base)) return false;
   const days = fixedDays(u);
+  // A TIMETABLE TYPED BY HAND IS THE TIMETABLE, TICKED OR NOT. The every-other-day
+  // rooms were given to the customers as fixed days (2026-09-29). Saturday 3 Oct went
+  // unticked and the carry-forward below put those rooms on the Sunday, 204 sat on
+  // every morning for a week because nobody ticked it, and a catch-up clean then argued
+  // with the next promised day. Ifrah, 2026-10-05: "even if the rooms are not marked
+  // clean please make sure the schedule doesn't change". So a hand-set room is due on
+  // its own days and no others — a missed tick never carries it onto an off day, and
+  // no clean, catch-up or otherwise, takes a promised day away. Only a clean already
+  // recorded for that very day stops it coming up twice. Sets the app laid out itself
+  // (daysAuto true) keep the carry and the gap below.
+  if (days && u.daysAuto === false) return days.indexOf(dowOf(day)) >= 0 && String(base || '') !== String(day);
   if (days) {
     // A pinned room comes up on its days. It used to come up on those and NOTHING else:
     // a day that was not ticked was assumed to have happened and the room moved on to
