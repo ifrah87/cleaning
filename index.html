@@ -330,6 +330,9 @@
   body:not(.tv) input, body:not(.tv) select { background: #16233a; color: #eaf1fb; border-color: #3d557f; }
   body:not(.tv) input::placeholder, body:not(.tv) .su-card input::placeholder { color: #6f8ab0; }
   body:not(.tv) .modal { background: #101c30; border-color: #1e2f4d; color: #eaf1fb; }
+  /* The title kept the light sheet's near-black, so on the dark sheet every pop-up's
+     heading was invisible — "Who should take 701?" read as a blank line. */
+  body:not(.tv) .modal-title { color: #eaf1fb; }
   body:not(.tv) .modal-skip { background: #16233a; border-color: #3d557f; color: #9fb6d4; }
   body:not(.tv) .alert { background: #2b1414; border-color: #7f1d1d; }
   /* The rest of the estate's furniture: the floor grid, the exterior rows, the hand-out
@@ -3733,7 +3736,7 @@ function setTab(t, opts) {
     _navStack.push(state.tab);
     if (_navStack.length > 12) _navStack.shift();
   }
-  state.tab = t; _assignPick = null; _roomMove = null; save(); render();
+  state.tab = t; _assignPick = null; _roomMove = null; _reassign = null; save(); render();
 }
 function goBack() {
   const prev = _navStack.pop();
@@ -5470,6 +5473,172 @@ function moveRoomTo(id, pid) {
   save(); render();
 }
 let _roomMove = null;   // the room whose cleaner is being changed on the Team page
+// ============================================================
+// REASSIGN ROOMS — ONE SCREEN, ANY ROOMS, ANYBODY, ANY OF THREE DAYS
+// Ifrah, 2026-10-07: "I want to be able to assign the rooms more easily… why is it
+// hard?" Because it was four tools: tap-and-tap on the board (one room, only onto
+// somebody who already had a box that day), the pin tick in the sheet, the Team page
+// (leaders only), and nothing at all for tomorrow except the tomorrow board. Here it
+// is one: pick WHEN, tap as many rooms as you like, tap WHO. Today and tomorrow take
+// anybody tagged a cleaner — Ahmed, an assistant covering — because that is a person
+// doing a room on a day. "From now on" is a room's regular cleaner, and that stays a
+// leader: a room pinned to an assistant is a room nobody deals (203 and 204 slipped for
+// a week that way).
+let _reassign = null;      // { when: 'today'|'tomorrow'|'always', ids: [], done: '' }
+function openReassign(when, ids) {
+  _reassign = { when: when || (_boardDay ? 'tomorrow' : 'today'), ids: (ids || []).slice(), done: '' };
+  if (_reassign.when === 'tomorrow') ensureDayPlanned(shiftDay(workToday(), 1));
+  render();
+}
+function closeReassign() { _reassign = null; render(); }
+const reassignDay = (when) => when === 'tomorrow' ? shiftDay(workToday(), 1) : workToday();
+// Who holds this room for the chosen day.
+function reassignHolder(u, when) {
+  if (when === 'always') return u.usualTo || null;
+  if (when === 'today') return u.assignedTo || null;
+  const j = (state.plans || {})[reassignDay(when)] && state.plans[reassignDay(when)][planKey('unit', u.id)];
+  return (j && j.assignedTo) || null;
+}
+// The rooms on offer: the day's rooms for today and tomorrow, every room for always.
+function reassignRooms(when) {
+  const all = (state.servicedUnits || []).filter((u) => !u.paused && onRollCall(u));
+  let list;
+  if (when === 'always') list = all;
+  else if (when === 'today') list = all.filter((u) => onTodaysList(u));
+  else {
+    const plan = (state.plans || {})[reassignDay(when)] || {};
+    list = all.filter((u) => plan[planKey('unit', u.id)] && !plan[planKey('unit', u.id)].dropped);
+  }
+  return list.sort((a, b) => String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }));
+}
+// Who can be given them: leaders as their boxes (equal leaders together), then for a day
+// everybody else tagged a cleaner.
+function reassignPeople(when) {
+  const groups = roomOwnerGroups().map((g) => {
+    // Today, hand it to whichever of the pair is actually in.
+    const inNow = when === 'today' ? g.people.find((p) => !isAway(p.id)) : null;
+    return { id: (inNow || g.people[0]).id, ids: g.ids, name: g.name, leader: true,
+      away: when === 'today' && g.people.every((p) => isAway(p.id)) };
+  });
+  if (when === 'always') return groups;
+  const inGroups = new Set([].concat.apply([], groups.map((g) => g.ids)));
+  const others = cleaningStaff().filter((p) => !inGroups.has(p.id) && !p.archived && !(state.removedStaff || {})[p.id])
+    .map((p) => ({ id: p.id, ids: [p.id], name: tvName(p), leader: false, away: when === 'today' && isAway(p.id) }));
+  return groups.concat(others);
+}
+function applyReassign(pid) {
+  const r = _reassign;
+  if (!r || !r.ids.length) return;
+  const rooms = r.ids.map((id) => (state.servicedUnits || []).find((u) => u.id === id)).filter(Boolean);
+  const who = (state.staff || []).find((p) => p.id === pid);
+  const moved = [], kept = [];
+  if (r.when === 'always') {
+    rooms.forEach((u) => { moveRoomTo(u.id, pid); moved.push(u.unit); });
+  } else if (r.when === 'today') {
+    rooms.forEach((u) => {
+      if (cleanedToday(u)) { kept.push(u.unit); return; }   // already done — that is history
+      setUnitAssignee(u.id, pid);
+      moved.push(u.unit);
+    });
+  } else {
+    const day = reassignDay(r.when);
+    const plan = getPlan(day);
+    rooms.forEach((u) => {
+      const k = planKey('unit', u.id);
+      if (plan[k]) {
+        plan[k].assignedTo = pid;
+        plan[k].byHand = true;
+        if (Array.isArray(plan[k].assignedWith)) {
+          const rest = plan[k].assignedWith.filter((x) => x !== pid);
+          plan[k].assignedWith = rest.length ? rest : null;
+        }
+      } else {
+        plan[k] = { kind: 'unit', refId: u.id, label: 'Unit ' + u.unit, assignedTo: pid, byHand: true };
+      }
+      if (typeof unmarkPlanDropped === 'function') unmarkPlanDropped(day, k);
+      moved.push(u.unit);
+    });
+    stampPlanEdit(day);
+  }
+  _reassign = { when: r.when, ids: [], done: (moved.length ? moved.join(', ') + ' → ' + (who ? tvName(who) : '?')
+    + (r.when === 'today' ? ' today' : r.when === 'tomorrow' ? ' tomorrow' : ' from now on') : '')
+    + (kept.length ? (moved.length ? ' · ' : '') + kept.join(', ') + ' already cleaned today, left as is' : '') };
+  save(); render();
+}
+function reassignSheet() {
+  const r = _reassign;
+  const staffById = {}; (state.staff || []).forEach((p) => { staffById[p.id] = p; });
+  const overlay = el('<div class="modal-overlay"></div>');
+  const modal = el('<div class="modal" style="max-height:88vh;overflow:auto"></div>');
+  modal.appendChild(el(`<div class="modal-title">Reassign rooms</div>`));
+  // 1. When.
+  const seg = el('<div style="display:flex;gap:6px;margin:10px 0 4px"></div>');
+  [['today', 'Today'], ['tomorrow', 'Tomorrow'], ['always', 'From now on']].forEach(([k, lbl]) => {
+    const b = el(`<button class="freqpick ${r.when === k ? 'on' : ''}" style="flex:1">${lbl}</button>`);
+    b.onclick = () => openReassign(k, []);
+    seg.appendChild(b);
+  });
+  modal.appendChild(seg);
+  modal.appendChild(el(`<div style="font-size:11px;color:#5f7189;margin-bottom:10px">`
+    + (r.when === 'always' ? 'Changes who the room goes to every time — today\'s board and every day already planned.'
+      : r.when === 'tomorrow' ? 'Tomorrow\'s board only. Their regular cleaner does not change.'
+      : 'Today\'s board only. Their regular cleaner does not change.') + `</div>`));
+  if (r.done) modal.appendChild(el(`<div style="font-size:13px;font-weight:700;color:#15803d;margin-bottom:10px">✓ ${esc(r.done)}</div>`));
+  // 2. Rooms, grouped under who has them now.
+  modal.appendChild(el(`<div class="modal-label">1. Tap the rooms${r.ids.length ? ` — ${r.ids.length} picked` : ''}</div>`));
+  const rooms = reassignRooms(r.when);
+  const people = reassignPeople(r.when);
+  const groupOf = (pid) => people.find((g) => g.ids.indexOf(pid) >= 0);
+  const buckets = {}; const order = [];
+  rooms.forEach((u) => {
+    const h = reassignHolder(u, r.when);
+    const g = h ? groupOf(h) : null;
+    const key = g ? g.name : h ? tvName(staffById[h]) : 'Nobody yet';
+    if (!buckets[key]) { buckets[key] = []; order.push(key); }
+    buckets[key].push(u);
+  });
+  if (!rooms.length) modal.appendChild(el('<div class="empty">No rooms on that day.</div>'));
+  order.sort((a, b) => (a === 'Nobody yet' ? -1 : b === 'Nobody yet' ? 1 : a.localeCompare(b))).forEach((key) => {
+    const box = el('<div style="margin-bottom:8px"></div>');
+    box.appendChild(el(`<div style="font-size:11px;font-weight:800;color:#5f7189;margin-bottom:4px">${esc(key)}</div>`));
+    const chips = el('<div style="display:flex;flex-wrap:wrap;gap:6px"></div>');
+    buckets[key].forEach((u) => {
+      const on = r.ids.indexOf(u.id) >= 0;
+      const done = r.when === 'today' && cleanedToday(u);
+      const b = el(`<button class="freqmini ${on ? 'on' : ''}" style="flex:0 0 auto;padding:8px 11px;${done ? 'opacity:0.5;' : ''}`
+        + `${on ? 'background:#0284c7;border-color:#0284c7;color:#fff' : ''}">${on ? '✓ ' : ''}${esc(u.unit)}${done ? ' ✓done' : ''}</button>`);
+      b.onclick = () => {
+        const i = r.ids.indexOf(u.id);
+        if (i >= 0) r.ids.splice(i, 1); else r.ids.push(u.id);
+        r.done = ''; render();
+      };
+      chips.appendChild(b);
+    });
+    box.appendChild(chips);
+    modal.appendChild(box);
+  });
+  // 3. Who.
+  modal.appendChild(el(`<div class="modal-label" style="margin-top:12px">2. Tap who gets them</div>`));
+  const load = (g) => rooms.filter((u) => g.ids.indexOf(reassignHolder(u, r.when)) >= 0).length;
+  const picker = el('<div class="cover-picker" style="display:flex;flex-direction:column;gap:6px"></div>');
+  people.slice().sort((a, b) => (a.away - b.away) || (b.leader - a.leader) || load(a) - load(b) || a.name.localeCompare(b.name))
+    .forEach((g) => {
+      const n = load(g);
+      const b = el(`<button class="cover-opt" ${r.ids.length ? '' : 'disabled'} style="${r.ids.length ? '' : 'opacity:0.45;'}">${esc(g.name)}`
+        + `<span class="cover-load">${n} room${n === 1 ? '' : 's'}${g.leader ? '' : ' · helper'}${g.away ? ' · off today' : ''}</span></button>`);
+      b.onclick = () => applyReassign(g.id);
+      picker.appendChild(b);
+    });
+  modal.appendChild(picker);
+  const row = el('<div class="modal-btns"></div>');
+  const close = el('<button class="modal-skip">Done</button>');
+  close.onclick = closeReassign;
+  row.appendChild(close);
+  modal.appendChild(row);
+  overlay.appendChild(modal);
+  overlay.onclick = (e) => { if (e.target === overlay) closeReassign(); };
+  return overlay;
+}
 // Who a room can be given to: leaders, one entry per team — two equal leaders on one
 // team are one box on the board, so they are one choice here too.
 function roomOwnerGroups() {
@@ -5489,6 +5658,11 @@ function roomOwnersPanel(wrap) {
   const groups = roomOwnerGroups();
   const box = el('<div style="margin-bottom:14px"></div>');
   box.appendChild(el(`<div class="section-label">Who cleans which room</div>`));
+  {
+    const rb = el('<button class="add-btn" style="margin-bottom:8px">⇄ Reassign several rooms — today, tomorrow or for good</button>');
+    rb.onclick = () => openReassign('always');
+    box.appendChild(rb);
+  }
   box.appendChild(el(`<div style="font-size:12px;color:#5f7189;margin-bottom:8px">Tap a room, then tap who should clean it. `
     + `It changes from today on — today's board and every day already planned.</div>`));
   const card = (title, list) => {
@@ -15855,6 +16029,9 @@ function render() {
       + (_boardDay ? '‹ Today' : 'Tomorrow ›') + `</button>`);
     dayBtn.onclick = () => setBoardDay(_boardDay ? 0 : 1);
     bar.appendChild(dayBtn);
+    const reBtn = el(`<button class="tb-btn" style="border-color:#15803d;color:#86efac">⇄ Reassign</button>`);
+    reBtn.onclick = () => openReassign();
+    bar.appendChild(reBtn);
     // ...AND ONWARD FROM TOMORROW. Tomorrow answers "what is the next round", and the
     // question straight after it is "and then what" — which the board cannot answer,
     // because it holds one day. Rather than grow a day stepper on a screen built for
@@ -15938,6 +16115,8 @@ function render() {
     + (offlineMode ? 'Offline — changes are held on this device until the server is back'
                    : 'Changes save on this device · Daily tasks reset each day')
     + `</div>`));
+
+  if (_reassign) app.appendChild(reassignSheet());
 
   // --- Cover confirmation popup ---
   if (state.pendingCover) {
