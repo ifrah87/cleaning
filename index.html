@@ -210,6 +210,7 @@
   .bd-hd { display: flex; align-items: baseline; gap: 8px; border-bottom: 1px solid #1e2f4d;
            padding-bottom: 8px; margin-bottom: 8px; flex-wrap: wrap; }
   .bd-who { font-size: 15px; font-weight: 800; color: #eaf1fb; }
+  .bd-sub .with-name { font-size: 15px; font-weight: 800; color: #eaf1fb; }
   .bd-col.none .bd-who { color: #fbbf24; }
   .bd-col.out .bd-who { color: #fcd34d; }
   .bd-col.off .bd-who { color: #94a3b8; }
@@ -772,6 +773,7 @@
   .tv-who { font-size: calc(1.7vw * var(--tvs)); font-weight: 800; line-height: 1.12; min-width: 0; overflow-wrap: anywhere; }
   .tv-count { font-size: calc(1.3vw * var(--tvs)); font-weight: 800; color: var(--tv-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
   .tv-with { font-size: calc(1vw * var(--tvs)); font-weight: 700; color: var(--tv-muted); margin-top: 0.35vh; overflow-wrap: anywhere; }
+  .tv-with .with-name { font-size: calc(1.7vw * var(--tvs)); font-weight: 800; color: var(--tv-fg); line-height: 1.12; }
   .tv-meta { display: flex; align-items: baseline; justify-content: space-between; gap: 0.6vw; margin-top: 0.4vh; }
   /* "Team B · F…" is not a floor. The team-and-floors line was one nowrap line with an
      ellipsis, so on any card that also carries a "with <assistant>" name the floors —
@@ -14361,7 +14363,12 @@ function tvWithLabel(p, spare) {
   // WITH THEIR TIME. An assistant's name is the only place they appear on this board, so
   // it is also the only place their badge-in can be shown — and it was not shown, so
   // "what time did Abukar get in?" could not be answered from the wall at all.
-  return 'with ' + a.map((x) => esc(tvName(x))
+  // THE NAME AS BIG AS THE LEADER'S. The office, 8 Oct: "make Abdalla's name a bigger
+  // font". A helper on the team with no room of his own was printed in the small grey
+  // line under the heading while the helper named on a room sat in the heading itself —
+  // two people on the same team, one readable from across the office and one not. The
+  // name now matches the heading; the times beside it stay small.
+  return 'with ' + a.map((x) => `<span class="with-name">${esc(tvName(x))}</span>`
     + (tvArrival(x)
         ? ` <span class="tv-atsm">${esc(tvArrival(x))}${tvLeft(x) ? ' → ' + esc(tvLeft(x)) : ''}</span>`
         : ' <span class="tv-noscan">(no scan)</span>')).join(', ');
@@ -14718,7 +14725,9 @@ function tvColumns() {
       // the card cannot disagree with the tally at the top.
       jobs: dedupeJobs((grouped.buckets[p.id] || [])
         .concat(...(alongside[p.id] || []).map((x) => grouped.buckets[x.id] || []))),
-      none: false, out: AWAY.indexOf(st) >= 0, status: st, with: tvWithLabel(p, spare),
+      // Not again underneath anybody already in the heading: Abdullahi was printed in both.
+      none: false, out: AWAY.indexOf(st) >= 0, status: st,
+      with: tvWithLabel(p, (x) => spare(x) && !(alongside[p.id] || []).some((y) => y.id === x.id)),
       team: tvTeam(p), at: tvArrival(p), left: tvLeft(p), note: p.note || '', site: siteToday(p),
     });
   });
