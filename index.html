@@ -2257,6 +2257,7 @@ let state = {
   plans: {},           // day plan: { 'YYYY-MM-DD': { 'kind:refId': {kind, refId, label, assignedTo} } }
   planSeeded: {},      // day -> true once auto-filled, so a cleared plan stays cleared
   manualArrivals: {},  // people added by hand when they forgot to badge: { 'YYYY-MM-DD': { staffId: {time} } }
+  manualDepartures: {}, // leaving times typed by the office: { 'YYYY-MM-DD': { staffId: {time, raw} } }
   assignConfirmed: {}, // office signed off on a room's cleaner: { unitId: 'YYYY-MM-DD' } — today's date = confirmed today
   unitCover: {},       // confirmed cover today: unitId -> personId
   pendingCover: null,  // {absentId, suggestId} -> drives the confirm popup
@@ -2389,6 +2390,7 @@ function finalizeState() {
   pruneByDaySuffix(state.logRefs, tickCutoff);
   pruneByDaySuffix(state.lastCleanUndo, tickCutoff);
   pruneByDayKey(state.manualArrivals, tickCutoff);
+  pruneByDayKey(state.manualDepartures, tickCutoff);
 
   // Plans: the day picker will go back 120 days, so a plan stays readable for as long
   // as the screen offers to show it, and no longer.
@@ -2422,6 +2424,7 @@ function finalizeState() {
   if (!state.planSeeded || typeof state.planSeeded !== 'object') state.planSeeded = {};
   if (!state.planDropped || typeof state.planDropped !== 'object') state.planDropped = {};
   if (!state.manualArrivals || typeof state.manualArrivals !== 'object') state.manualArrivals = {};
+  if (!state.manualDepartures || typeof state.manualDepartures !== 'object') state.manualDepartures = {};
   if (!state.assignConfirmed || typeof state.assignConfirmed !== 'object') state.assignConfirmed = {};
   dedupeServicedUnits();
   STAFF = state.staff;
@@ -6349,6 +6352,7 @@ async function arrivalsForDay(day) {
       else unknown.push({ name: e.person_name, time: t, raw: e.event_time });
     }
     mergeManualArrivals(day, arrivals);   // people the office added by hand (forgot to badge)
+    mergeManualDepartures(day, arrivals); // leaving times the office typed in (nobody badges out)
     return { arrivals, unknown, other };
   } catch (e) { return null; }
 }
@@ -6465,6 +6469,39 @@ function mergeManualArrivals(day, arrivals) {
   for (const id in man) {
     if (!arrivals[id]) arrivals[id] = { time: man[id].time || 'added', out: null, raw: man[id].raw || (day + ' 00:00'), manual: true };
   }
+}
+// LEAVING TIMES, TYPED BY THE OFFICE. Ifrah, 2026-10-12: "can we add their exit time".
+// The door only ever sees the crew arrive — on 11 Oct the reader held 18 punches at
+// 21:35, every one of them from the morning — so the "Out" half of the time card was
+// blank for everybody. The door still wins: a real out punch is never overwritten by a
+// typed one, and the typed one only fills the gap.
+function mergeManualDepartures(day, arrivals) {
+  const man = (state.manualDepartures && state.manualDepartures[day]) || {};
+  for (const id in man) {
+    const a = arrivals[id];
+    if (a && !a.out && man[id].time) { a.out = man[id].time; a.outManual = true; }
+  }
+}
+let _outEditing = null;   // the person whose leaving time is being typed, so a re-render keeps the box open
+let _outDraft = null;     // ...and what has been typed so far, which the minute's re-render would otherwise reset
+function setManualDeparture(staffId, hhmm) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(hhmm || ''));
+  if (!m) return;
+  const day = selectedDay || workToday();
+  const raw = day + ' ' + m[1].padStart(2, '0') + ':' + m[2];
+  if (!state.manualDepartures) state.manualDepartures = {};
+  if (!state.manualDepartures[day]) state.manualDepartures[day] = {};
+  state.manualDepartures[day][staffId] = { time: fmtEventTime(raw), raw };
+  _outEditing = null; _outDraft = null;
+  save(); loadHikArrivals().then(render);
+}
+function removeManualDeparture(staffId) {
+  const day = selectedDay || workToday();
+  if (state.manualDepartures && state.manualDepartures[day]) {
+    delete state.manualDepartures[day][staffId];
+    if (!Object.keys(state.manualDepartures[day]).length) delete state.manualDepartures[day];
+  }
+  save(); loadHikArrivals().then(render);
 }
 function addManualArrival(staffId) {
   // The work day, like the roll call that reads it back. Filed under the calendar day,
@@ -12075,6 +12112,7 @@ function viewRollCall(opts) {
       .sort((a, b) => String(a.raw || '').localeCompare(String(b.raw || '')))   // earliest badge-in first
       .forEach(({ s, t, out }) => {
         const manual = hikArrivals[s.id] && hikArrivals[s.id].manual;
+        const outManual = hikArrivals[s.id] && hikArrivals[s.id].outManual;
         const card = el('<div class="person" style="flex-direction:column;align-items:stretch;gap:8px"></div>');
         // Somebody who is in can be given a job: dropped on with a mouse, or tapped
         // while a job is in hand. The card is the target because the card is the person.
@@ -12095,12 +12133,41 @@ function viewRollCall(opts) {
           nameRow.appendChild(rm);
         }
         info.appendChild(nameRow);
+        const outBit = out
+          ? ` <span style="color:#5b6a7f">·</span> Out ${esc(out)}${outManual ? ` <span style="color:#5b6a7f">(office)</span>` : ''}`
+          : ` <span style="color:#5b6a7f">· still in</span>`;
         const timecard = manual
-          ? `✚ Added by office <span style="color:#5b6a7f">· didn't badge</span>`
-          : out
-          ? `✓ In ${esc(t)} <span style="color:#5b6a7f">·</span> Out ${esc(out)}`
-          : `✓ In ${esc(t)} <span style="color:#5b6a7f">· still in</span>`;
-        info.appendChild(el(`<div class="person-floors" style="color:#15803d;font-weight:600">${timecard}</div>`));
+          ? `✚ Added by office <span style="color:#5b6a7f">· didn't badge</span>${out ? outBit : ''}`
+          : `✓ In ${esc(t)}${outBit}`;
+        const tcRow = el(`<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"></div>`);
+        tcRow.appendChild(el(`<div class="person-floors" style="color:#15803d;font-weight:600;flex:1">${timecard}</div>`));
+        // Only a gap or a typed time can be edited — a time from the door is the record.
+        if (!out || outManual) {
+          if (_outEditing === s.id) {
+            const now = new Date();
+            const cur = outManual && state.manualDepartures[selectedDay || workToday()]
+              && (state.manualDepartures[selectedDay || workToday()][s.id] || {}).raw;
+            const val = _outDraft ? _outDraft : cur ? cur.slice(11, 16)
+              : String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+            const inp = el(`<input type="time" value="${val}" style="background:#16233a;color:#eaf1fb;border:1px solid #3d557f;border-radius:8px;padding:5px 8px">`);
+            const ok = el(`<button class="freqmini on" style="flex:0 0 auto;padding:5px 11px">Save</button>`);
+            const no = el(`<button class="su-rm" style="flex:0 0 auto">Cancel</button>`);
+            inp.oninput = () => { _outDraft = inp.value; };
+            ok.onclick = () => setManualDeparture(s.id, inp.value);
+            no.onclick = () => { _outEditing = null; _outDraft = null; render(); };
+            tcRow.appendChild(inp); tcRow.appendChild(ok); tcRow.appendChild(no);
+          } else {
+            const ed = el(`<button class="freqmini" style="flex:0 0 auto;padding:5px 11px">${outManual ? '✎ Out time' : '＋ Out time'}</button>`);
+            ed.onclick = () => { _outEditing = s.id; _outDraft = null; render(); };
+            tcRow.appendChild(ed);
+            if (outManual) {
+              const rmo = el(`<button class="su-rm" style="flex:0 0 auto">✕</button>`);
+              rmo.onclick = () => removeManualDeparture(s.id);
+              tcRow.appendChild(rmo);
+            }
+          }
+        }
+        info.appendChild(tcRow);
         card.appendChild(info);
         const mine = (state.servicedUnits || []).filter((u) => u.assignedTo === s.id);
         const myAreas = areasInterior().filter((a) => a.assignedTo === s.id);
