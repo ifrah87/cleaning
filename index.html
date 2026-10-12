@@ -6348,8 +6348,8 @@ async function arrivalsForDay(day) {
       // "1" comes before "2", so anybody who arrived at ten or eleven sorted ABOVE the
       // whole morning: the security and mosque pair sat at the head of the arrivals every
       // day, reading as the first people in the building when they were the last.
-      else if (onlyCleaners && person) other.push({ id: person.id, name: person.name, time: t, raw: e.event_time });
-      else unknown.push({ name: e.person_name, time: t, raw: e.event_time });
+      else if (onlyCleaners && person) other.push({ id: person.id, name: person.name, time: t, out: outT, raw: e.event_time });
+      else unknown.push({ name: e.person_name, time: t, out: outT, raw: e.event_time });
     }
     mergeManualArrivals(day, arrivals);   // people the office added by hand (forgot to badge)
     mergeManualDepartures(day, arrivals); // leaving times the office typed in (nobody badges out)
@@ -10500,9 +10500,9 @@ function viewTick() {
     (state.staff || []).forEach((x) => { staffById2[x.id] = x; });
     const inRows = Object.keys(hikArrivals)
       .filter((id) => staffById2[id])
-      .map((id) => ({ id, name: staffById2[id].name, time: hikArrivals[id].time, raw: hikArrivals[id].raw }))
-      .concat((hikOther || []).map((o) => ({ id: o.id, name: o.name, time: o.time, raw: o.raw || o.time })))
-      .concat((hikUnknown || []).map((o) => ({ name: o.name + ' (not on roster)', time: o.time, raw: o.raw || o.time })))
+      .map((id) => ({ id, name: staffById2[id].name, time: hikArrivals[id].time, out: hikArrivals[id].out, raw: hikArrivals[id].raw }))
+      .concat((hikOther || []).map((o) => ({ id: o.id, name: o.name, time: o.time, out: o.out, raw: o.raw || o.time })))
+      .concat((hikUnknown || []).map((o) => ({ name: o.name + ' (not on roster)', time: o.time, out: o.out, raw: o.raw || o.time })))
       .sort((a, b) => String(a.raw || '').localeCompare(String(b.raw || '')));
 
     // Only the cleaning crew. A building full of office staff who did not badge in is
@@ -10628,6 +10628,9 @@ function viewTick() {
         return `<div style="font-size:11px;font-weight:700;color:#b7c8de;`
           + `background:#16233a;border:1px solid #3d557f;border-radius:7px;padding:5px 9px">${esc(r.name)}`
           + (r.time ? ` <span style="color:#7ea6dc">${esc(r.time)}</span>` : '')
+          // AND WHEN THEY LEFT. The office, 12 Oct: "I want to see everyone's badged out
+          // times also" — the leaders' cards had it, this strip of everybody did not.
+          + (r.out ? ` <span style="color:#fca5a5">→ out ${esc(r.out)}</span>` : '')
           + (away ? ` <span style="color:${(STATUS[st] || {}).color || '#fbbf24'}">${esc((STATUS[st] || {}).label || st.toUpperCase())}</span>` : '')
           + `</div>`;
       };
