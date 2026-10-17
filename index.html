@@ -3854,6 +3854,13 @@ function addServicedUnit(unit, guest, freq, type, time) {
   if ((freq || 'daily') === 'eod') placeUnplacedEodRooms();
   save(); render();
 }
+// RIGHT-CLICK A ROOM NUMBER TO REMOVE IT. Ifrah, 2026-10-17: "I want to be able to delete
+// by right clicking on the room number." Rooms page only — never the board, where a stray
+// click would take a room off the day's work. It opens the same "Remove this unit?" as the
+// Remove button, so nothing goes without a second tap; on a phone a long-press does it.
+function removeOnRightClick(node, id) {
+  node.addEventListener('contextmenu', (e) => { e.preventDefault(); removeServicedUnit(id); });
+}
 function removeServicedUnit(id) {
   showConfirm('Remove this unit?', 'This unit will be removed from cleaning service.', () => {
     state.servicedUnits = state.servicedUnits.filter(u => u.id !== id);
@@ -9994,7 +10001,9 @@ function viewRooms() {
 
       // Row 1: number + status
       const top = el(`<div style="display:flex;align-items:center;gap:10px"></div>`);
-      top.appendChild(el(`<div style="font-size:16px;font-weight:800;min-width:56px;color:#0f1a27">${esc(u.unit)}</div>`));
+      const num = el(`<div style="font-size:16px;font-weight:800;min-width:56px;color:#0f1a27" title="Right-click to remove">${esc(u.unit)}</div>`);
+      removeOnRightClick(num, u.id);
+      top.appendChild(num);
       const mid = el(`<div style="flex:1;min-width:0"></div>`);
       mid.appendChild(el(`<div style="font-size:12px;color:#5f7189;font-weight:600">${esc(t.label)}${who ? ' · ' + esc(who.name.split(' ')[0]) : ''}</div>`));
       const doneToday = cleanedToday(u);
@@ -11191,9 +11200,11 @@ function servicedCard(u, isDue) {
 
   const top = el(`<div class="su-top"></div>`);
   const info = el(`<div style="flex:1;min-width:0"></div>`);
-  info.appendChild(el(`<div class="su-unit">${u.priority?'⭐ ':''}${u.preferEarly?'🌅 ':u.preferLate?'🌇 ':''}Unit ${esc(u.unit)}`
+  const unitHead = el(`<div class="su-unit" title="Right-click to remove">${u.priority?'⭐ ':''}${u.preferEarly?'🌅 ':u.preferLate?'🌇 ':''}Unit ${esc(u.unit)}`
     + `${u.preferEarly?' <span style="font-size:11px;color:#b45309;font-weight:700">Morning</span>':''}`
-    + `${u.preferLate?' <span style="font-size:11px;color:#7c3aed;font-weight:700">Afternoon</span>':''}</div>`));
+    + `${u.preferLate?' <span style="font-size:11px;color:#7c3aed;font-weight:700">Afternoon</span>':''}</div>`);
+  removeOnRightClick(unitHead, u.id);
+  info.appendChild(unitHead);
   if (u.guest) info.appendChild(el(`<div class="su-guest">${esc(u.guest)}</div>`));
   if (u.time) info.appendChild(el(`<div class="su-guest" style="color:#dc2626">🕐 Checkout ${esc(u.time)}</div>`));
   if (u.note) info.appendChild(el(`<div class="su-guest" style="color:#7c3aed">📝 ${esc(u.note)}</div>`));
