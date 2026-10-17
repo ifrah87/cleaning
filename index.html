@@ -10034,6 +10034,13 @@ function viewRooms() {
         cb.onclick = () => setUnitLastCleaned(u.id, null);
         lcRow.appendChild(cb);
       }
+      // A WRONG ROOM COMES OFF FROM HERE TOO. Ifrah, 2026-10-17: "I should have the option to
+      // remove a room if it's wrong." This is the list the Rooms page opens on, and Remove
+      // lived only on the full cards under Offices / Airbnb — so 905, added by mistake, could
+      // be seen here and not taken away. Same confirm, same headstone, as the full card.
+      const rm = el(`<button class="su-rm" style="flex:0 0 auto;margin-left:auto">Remove</button>`);
+      rm.onclick = () => removeServicedUnit(u.id);
+      lcRow.appendChild(rm);
       card.appendChild(lcRow);
       wrap.appendChild(card);
       cards.push({ card, tk, hay: [u.unit, u.guest, u.note, schedLabel(u)].filter(Boolean).join(' ').toLowerCase() });
