@@ -203,10 +203,42 @@ async function run() {
     await page.waitForTimeout(3000);
     await shot(page, 'transaction-today.png');
 
-    const all = await page.$$eval('.el-table__body-wrapper tr', trs =>
+    // THE TABLE ONLY DRAWS WHAT FITS ON SCREEN. Transaction keeps its rows in its own
+    // scroll box and renders about eighteen at a time; the rest appear as it is scrolled.
+    // Reading the rows without scrolling read the first eighteen punches of the day and
+    // nothing after — on 20 Oct everyone who badged after 07:07 (Abdalla 07:28, Salaal,
+    // Dauud, Liiban, Ikraan, Mahamedqaadar) was missing while every run reported success.
+    // So scroll it top to bottom and keep every row seen on the way. Two identical rows
+    // (same person, same minute) collapse into one, which parseRows does anyway.
+    const readRows = () => page.$$eval('.el-table__body-wrapper tr', trs =>
       trs.map(tr => Array.from(tr.querySelectorAll('td')).map(td => (td.innerText || '').trim()))
          .filter(r => r.length >= 6 && r.some(c => c)));
+    const seen = new Map();
+    const keep = (rows) => rows.forEach(r => seen.set(r.slice(0, 6).join('|'), r));
+    const SCROLLER = '.el-table .el-table-scrollbar__wrap';
+    await page.evaluate((sel) => { const w = document.querySelector(sel); if (w) w.scrollTop = 0; }, SCROLLER);
+    await page.waitForTimeout(800);
+    keep(await readRows());
+    for (let i = 0; i < 200; i += 1) {
+      const atEnd = await page.evaluate((sel) => {
+        const w = document.querySelector(sel);
+        if (!w) return true;
+        const before = w.scrollTop;
+        w.scrollTop = before + Math.max(100, w.clientHeight - 72);   // overlap a couple of rows
+        return w.scrollTop === before;
+      }, SCROLLER);
+      await page.waitForTimeout(700);
+      keep(await readRows());
+      if (atEnd) break;
+    }
+    const all = [...seen.values()];
     console.log('   rows read:', all.length);
+    // The page size is set to 100 above and only the first page is read. If a day ever
+    // fills it, the rest are on page two and are being dropped — say so loudly.
+    if (all.length >= 100) {
+      console.log('   ⚠ 100+ punches today — the Transaction page is full and later punches are on page 2, which is not read.');
+      process.exitCode = 1;
+    }
     // AN EMPTY PAGE IS NEWS. Two days were lost to a scrape that succeeded, read nothing
     // and said so in a line nobody was watching. The reader records all day; if this is
     // empty during working hours, something upstream has broken and the run should look
