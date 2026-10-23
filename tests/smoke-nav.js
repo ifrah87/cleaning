@@ -112,7 +112,7 @@ for (const [label,vp] of [['PHONE',{width:420,height:900}],['DESKTOP',{width:144
  await page.locator('.tb-btn',{hasText:'☰'}).first().click(); await page.waitForTimeout(400);
  const menu=await page.locator('body').textContent();
  check('☰ opens everything else', /Everything else/.test(menu), menu.slice(0,120));
- for (const name of ['Rooms & schedules','Morning set-up','Team','Cleaning history','Units report','Settings']) {
+ for (const name of ['Rooms & schedules','Morning set-up','Team','Cleaning history','Units report','Rooms by team','Settings']) {
    check(`the menu offers ${name}`, menu.includes(name));
  }
  await page.locator('button',{hasText:'Rooms & schedules'}).first().click(); await page.waitForTimeout(600);
@@ -152,6 +152,18 @@ for (const [label,vp] of [['PHONE',{width:420,height:900}],['DESKTOP',{width:144
    await page.locator('.body .su-card',{hasText:new RegExp(btn+'$')}).first().click(); await page.waitForTimeout(300);
  }
  check('tapping it again brings every unit back', await page.evaluate(()=>document.querySelectorAll('.body table tr').length-1===state.servicedUnits.length));
+ // rooms by team: the same split as Team › Who cleans which room, plus who is on each team
+ await page.evaluate(()=>{const u=state.servicedUnits.find(x=>x.unit==='101');u.usualTo='p1';const v=state.servicedUnits.find(x=>x.unit==='305');v.usualTo='p2';setTab('teamrooms')});
+ await page.waitForTimeout(500);
+ const tr=await page.evaluate(()=>{const r=teamRoomsReport();return {title:document.querySelector('.header').textContent,
+   blocks:[...document.querySelectorAll('.body .team-block')].map(b=>b.textContent),
+   want:roomOwnerGroups().map(g=>({name:g.name,rooms:state.servicedUnits.filter(u=>!u.paused&&onRollCall(u)&&g.ids.includes(u.usualTo)).map(u=>u.unit)})),
+   loose:r.loose.map(u=>u.unit),total:r.total,rolled:state.servicedUnits.filter(u=>!u.paused&&onRollCall(u)).length}});
+ check('Rooms by team is titled', tr.title.includes('Rooms by Team'), tr.title);
+ check('Rooms by team has a block per team, plus one for rooms nobody keeps', tr.blocks.length===tr.want.length+(tr.loose.length?1:0), tr.blocks.length+' blocks');
+ check('each team shows exactly the rooms the Team page gives it', tr.want.every((g,i)=>g.rooms.every(r=>tr.blocks[i].includes(r))&&tr.blocks[i].includes(g.rooms.length+' room')), JSON.stringify(tr.want));
+ check('Amina keeps 101, Fatima keeps 305', tr.blocks.some(b=>b.includes('Amina')&&b.includes('101'))&&tr.blocks.some(b=>b.includes('Fatima')&&b.includes('305')));
+ check('every roll-call room is on it once', tr.total===tr.rolled && tr.want.reduce((n,g)=>n+g.rooms.length,0)+tr.loose.length===tr.rolled);
  // floors
  await page.evaluate(()=>setTab('team')); await page.waitForTimeout(600);
  const body=await page.locator('.body').first().textContent();

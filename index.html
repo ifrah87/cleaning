@@ -10316,6 +10316,7 @@ function menuSheet() {
   group('THE RECORD', [
     ['history', 'Cleaning history', 'What was cleaned, by day'],
     ['unitsreport', 'Units report', 'Every unit we clean — print or download'],
+    ['teamrooms', 'Rooms by team', 'Which rooms each team keeps — print or download'],
     ['tonight', 'Tonight’s round', 'What is still outstanding late on'],
   ]);
   group('THE MACHINERY', [['settings', 'Settings', 'Switches, kinds of room, the board itself']]);
@@ -11138,6 +11139,7 @@ function viewMore() {
     { id: 'exterior', label: 'Exterior', ico: '⛅', sub: 'Outside areas and their frequencies' },
     { id: 'history', label: 'Cleaning History', ico: '◷', sub: 'What was cleaned, by day' },
     { id: 'unitsreport', label: 'Units Report', ico: '▤', sub: 'Every unit we clean, in one list — print or download' },
+    { id: 'teamrooms', label: 'Rooms by Team', ico: '▥', sub: 'Which rooms each team keeps — print or download' },
     { id: 'settings', label: 'Settings', ico: '⚙', sub: 'App settings' },
   ];
   items.forEach(it => {
@@ -11252,6 +11254,97 @@ function viewUnitsReport() {
       + `<td ${td}>${esc(r.schedule)}</td><td ${td}>${r.last ? esc(fmtDay(r.last)) + (r.lastBy ? ' · ' + esc(r.lastBy) : '') : '—'}</td></tr>`).join('')
     + `</table>`));
   wrap.appendChild(box);
+  return wrap;
+}
+
+// TEAM ROOMS REPORT. Ifrah, 2026-10-23: "a report of the different room assignments per
+// team." The same split as Team › Who cleans which room — roomOwnerGroups and each
+// room's usual cleaner, roll-call rooms only — so the paper and the screen never argue;
+// this just adds who is on each team and how often each room is done, to print or send.
+function teamRoomsReport() {
+  const rooms = (state.servicedUnits || []).filter((u) => !u.paused && onRollCall(u))
+    .sort((a, b) => String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }));
+  const seen = new Set();
+  const teams = roomOwnerGroups().map((g) => {
+    const mine = rooms.filter((u) => g.ids.indexOf(u.usualTo) >= 0);
+    mine.forEach((u) => seen.add(u.id));
+    const helpers = g.crew ? cleaningStaff().filter((p) => !p.archived && !p.isLeader
+      && String(p.crew || '').trim() === String(g.crew).trim()).map(tvName) : [];
+    return { team: g.crew || '', leaders: g.name, helpers, rooms: mine };
+  });
+  const loose = rooms.filter((u) => !seen.has(u.id));
+  return { teams, loose, total: rooms.length };
+}
+function teamRoomsReportCsvRows(rep) {
+  const row = (t, u) => ({ team: t.team, leaders: t.leaders, helpers: t.helpers.join(' / '), unit: String(u.unit),
+    type: UNIT_TYPES[unitType(u)].label, schedule: schedLabel(u) });
+  const out = [];
+  rep.teams.forEach((t) => t.rooms.forEach((u) => out.push(row(t, u))));
+  rep.loose.forEach((u) => out.push(row({ team: '', leaders: 'No regular cleaner', helpers: [] }, u)));
+  return out;
+}
+function downloadTeamRoomsCsv(rep) {
+  const cols = [['team', 'Team'], ['leaders', 'Leader'], ['helpers', 'Assistants'], ['unit', 'Room'],
+    ['type', 'Type'], ['schedule', 'Schedule']];
+  const cell = (v) => '"' + String(v).replace(/"/g, '""') + '"';
+  const csv = [cols.map((c) => cell(c[1])).join(',')]
+    .concat(teamRoomsReportCsvRows(rep).map((r) => cols.map((c) => cell(r[c[0]])).join(','))).join('\r\n');
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  const a = document.createElement('a');
+  a.href = url; a.download = 'team-rooms-' + todayKey() + '.csv';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+function printTeamRoomsReport(rep) {
+  const w = window.open('', '_blank');
+  if (!w) return;
+  const block = (title, sub, list) => '<h2>' + esc(title) + ' <span>' + list.length + ' room' + (list.length === 1 ? '' : 's') + '</span></h2>'
+    + (sub ? '<p>' + esc(sub) + '</p>' : '')
+    + (list.length ? '<table><tr><th>Room</th><th>Type</th><th>Schedule</th></tr>'
+      + list.map((u) => '<tr><td>' + esc(u.unit) + '</td><td>' + esc(UNIT_TYPES[unitType(u)].label) + '</td><td>' + esc(schedLabel(u)) + '</td></tr>').join('')
+      + '</table>' : '<p>No rooms</p>');
+  w.document.write('<!doctype html><meta charset="utf-8"><title>Team rooms ' + todayKey() + '</title>'
+    + '<style>body{font:13px system-ui,sans-serif;margin:24px;color:#111}h1{font-size:18px;margin:0 0 4px}'
+    + 'h2{font-size:14px;margin:18px 0 2px}h2 span{font-weight:400;color:#666;font-size:12px}p{margin:0 0 6px;color:#555}'
+    + 'table{border-collapse:collapse;width:100%;break-inside:avoid}th,td{border:1px solid #ccc;padding:4px 8px;text-align:left}th{background:#f2f4f7}</style>'
+    + '<h1>Rooms by team</h1><p>' + esc(fmtDay(todayKey())) + ' · ' + rep.total + ' rooms · ' + rep.teams.length + ' teams</p>'
+    + rep.teams.map((t) => block((t.team ? t.team + ' — ' : '') + t.leaders, t.helpers.length ? 'With ' + t.helpers.join(', ') : '', t.rooms)).join('')
+    + (rep.loose.length ? block('No regular cleaner', 'Shared out each day', rep.loose) : ''));
+  w.document.close();
+  w.focus(); w.print();
+}
+function viewTeamRoomsReport() {
+  const wrap = el('<div class="body"></div>');
+  const rep = teamRoomsReport();
+  wrap.appendChild(el(`<div class="su-unit" style="font-size:17px;margin:4px 0 2px">Rooms by team</div>`));
+  wrap.appendChild(el(`<div class="su-guest" style="margin-bottom:10px">${rep.total} room${rep.total === 1 ? '' : 's'} · `
+    + `${rep.teams.length} team${rep.teams.length === 1 ? '' : 's'} · each room's usual cleaner · ${esc(fmtDay(todayKey()))}</div>`));
+  const actions = el(`<div style="display:flex;gap:8px;margin-bottom:12px"></div>`);
+  const printBtn = el(`<button class="freqmini" style="flex:1;padding:9px">Print</button>`);
+  const csvBtn = el(`<button class="freqmini" style="flex:1;padding:9px">Download CSV</button>`);
+  printBtn.onclick = () => printTeamRoomsReport(rep);
+  csvBtn.onclick = () => downloadTeamRoomsCsv(rep);
+  actions.appendChild(printBtn); actions.appendChild(csvBtn);
+  wrap.appendChild(actions);
+  if (!rep.total) {
+    wrap.appendChild(el(`<div class="empty" style="text-align:center;padding:30px 0">No rooms on the service list yet.</div>`));
+    return wrap;
+  }
+  const td = 'style="padding:6px 10px;font-size:13px;border-top:1px solid rgba(127,127,127,.15);white-space:nowrap"';
+  const block = (title, sub, list, warn) => {
+    const c = el(`<div class="su-card team-block" style="padding:0;overflow:hidden"></div>`);
+    c.appendChild(el(`<div style="padding:10px 12px 8px"><div class="su-unit" style="font-size:15px;${warn ? 'color:#f59e0b' : ''}">${esc(title)} `
+      + `<span style="font-size:12px;font-weight:600;opacity:.6">${list.length} room${list.length === 1 ? '' : 's'}</span></div>`
+      + (sub ? `<div class="su-guest">${esc(sub)}</div>` : '') + `</div>`));
+    c.appendChild(list.length
+      ? el(`<table style="width:100%;border-collapse:collapse">` + list.map((u) => `<tr><td ${td}><b>${esc(u.unit)}</b></td>`
+        + `<td ${td}>${esc(UNIT_TYPES[unitType(u)].label)}</td><td ${td}>${esc(schedLabel(u))}</td></tr>`).join('') + `</table>`)
+      : el(`<div class="su-guest" style="padding:0 12px 10px">No rooms</div>`));
+    wrap.appendChild(c);
+  };
+  rep.teams.forEach((t) => block((t.team ? t.team + ' — ' : '') + t.leaders, t.helpers.length ? 'With ' + t.helpers.join(', ') : '', t.rooms));
+  // Amber, not hidden: a room nobody keeps is the one most likely to be missed.
+  if (rep.loose.length) block('No regular cleaner', 'Shared out each day', rep.loose, true);
   return wrap;
 }
 
@@ -16181,7 +16274,7 @@ function render() {
   }
   const ROOMS_TITLE = { all: 'All Rooms', airbnb: 'Airbnb Rooms', office: 'Office Cleaning', building: 'Building Cleaning' };
   const titles = { board:'', setup:'Setup', more:'Setup', today:'', rollcall:'Morning set-up', tick:'',
-    building:'Floors & Common Areas', exterior:'Exterior', history:'Cleaning History', unitsreport:'Units Report', team:'Team',
+    building:'Floors & Common Areas', exterior:'Exterior', history:'Cleaning History', unitsreport:'Units Report', teamrooms:'Rooms by Team', team:'Team',
     settings:'Settings', plan:'Plan a Day', calendar:'Calendar', rooms: ROOMS_TITLE[roomsFilter()], tonight:'Tonight’s Round' };
   // A tab with no view renders an empty screen, so never trust it blindly.
   if (titles[state.tab] === undefined) state.tab = 'board';
@@ -16327,6 +16420,7 @@ function render() {
   else if (state.tab==='exterior') app.appendChild(viewExterior());
   else if (state.tab==='history') app.appendChild(viewHistory());
   else if (state.tab==='unitsreport') app.appendChild(viewUnitsReport());
+  else if (state.tab==='teamrooms') app.appendChild(viewTeamRoomsReport());
   else if (state.tab==='team') app.appendChild(viewTeam());
   else if (state.tab==='settings') app.appendChild(viewSettings());
 
