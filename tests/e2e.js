@@ -255,6 +255,13 @@ function serve() {
     if (seg) { await page.locator('.segbtn').nth(SEG[seg]).click(); await page.waitForTimeout(900); }
   };
 
+  // Settings opens with every section folded; tap a header open (leaving it be if it is).
+  const openSetting = async (title) => {
+    const head = page.locator('.set-fold', { hasText: title }).first();
+    await head.waitFor();
+    if ((await head.innerText()).includes('▸')) { await head.click(); await page.waitForTimeout(400); }
+  };
+
   const autoAssign = async () => {
     await page.locator('button', { hasText: "Auto-assign today's rooms evenly" }).click();
     if (await page.locator('#confirmModal').count()) {
@@ -565,6 +572,7 @@ function serve() {
   // ------------------------------------------------------- TEAM-OWNED ZONES
   console.log('\n\x1b[1mTEAMS — a team owns a zone, the leader answers for it\x1b[0m');
   await go('settings');
+  await openSetting('Teams');
   await page.waitForSelector('#newTeam');
   const teamBox = page.locator('.addbox').filter({ hasText: 'Zone floors' }).first();
   contains('a team shows the zone it owns', await teamBox.innerText(), 'Zone floors');
@@ -635,7 +643,7 @@ function serve() {
   check('the flats are on the roll call to begin with', headBefore >= 5, 'due now: ' + headBefore);
 
   await go('settings');
-  await page.waitForSelector('text=/Roll Call covers/');
+  await openSetting('Roll Call covers');
   const rcBox = page.locator('.addbox').filter({ hasText: 'the morning roll call covers' }).first();
   const airBtn = rcBox.locator('button', { hasText: 'Airbnb' }).first();
   check('the kind is shown as on, with its room count', (await airBtn.textContent()).includes('5 rooms')

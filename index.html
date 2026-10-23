@@ -314,6 +314,10 @@
   body:not(.tv) .note, body:not(.tv) .footer { color: #6f8ab0; }
   body:not(.tv) .empty { color: #7f9abf; }
   body:not(.tv) .su-card { background: #101c30; border-color: #1e2f4d; color: #eaf1fb; }
+  /* Settings' boxes were still the light sheet's white on the dark page. */
+  body:not(.tv) .addbox { background: #101c30; border-color: #1e2f4d; color: #eaf1fb; }
+  body:not(.tv) .backup-export { background: #101c30; border-color: #1e3a5a; color: #7cc4fa; }
+  body:not(.tv) .backup-import { background: #101c30; border-color: #4a3a1a; color: #f5b453; }
   body:not(.tv) .su-card.done { background: #123020; border-color: #22c55e; }
   body:not(.tv) .su-ctl { border-top-color: #1e2f4d; }
   body:not(.tv) .su-unit { color: #eaf1fb; }
@@ -466,6 +470,9 @@
   .hint { font-size: 11px; color: #6b7a8f; text-align: center; margin-top: 6px; font-weight: 500; }
 
   /* Serviced units */
+  .nav-drawer { animation: navIn .18s ease-out; }
+  @keyframes navIn { from { transform: translateX(-100%); } to { transform: none; } }
+  @media (prefers-reduced-motion: reduce) { .nav-drawer { animation: none; } }
   .addbox { background: #ffffff; border: 1px solid #e7ecf3; border-radius: 12px; padding: 14px; margin-bottom: 8px; }
   .addbox input { width: 100%; background: #f4f7fb; color: #15202e; border: 1px solid #d8e0ea; border-radius: 8px; padding: 11px; }
   .addbox input::placeholder { color: #5b6a7f; }
@@ -10289,7 +10296,7 @@ function navGrid(box, onPick) {
   NAV_GROUPS.forEach(([label, items]) => {
     box.appendChild(el(`<div style="font-size:11px;font-weight:800;letter-spacing:0.12em;color:#8a99ab;`
       + `margin:16px 2px 8px">${esc(label)}</div>`));
-    const grid = el(`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px"></div>`);
+    const grid = el(`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px"></div>`);
     items.forEach(([tab, name, ico, hint]) => {
       const here = navHere(tab);
       const b = el(`<button style="display:flex;align-items:center;gap:10px;padding:13px 12px;border-radius:12px;`
@@ -10304,12 +10311,16 @@ function navGrid(box, onPick) {
     box.appendChild(grid);
   });
 }
+// FROM THE LEFT, UNDER THE BUTTON THAT OPENS IT. Ifrah, 2026-10-23: "why can't it pop up
+// on the left hand side." The ☰ is in the top-left corner, so the drawer comes out of
+// that side, full height, and the board stays visible to the right of it.
 function menuSheet() {
   const overlay = el('<div style="position:fixed;inset:0;z-index:900;background:rgba(10,18,32,0.55);'
-    + 'display:flex;align-items:flex-end;justify-content:center"></div>');
+    + 'display:flex;align-items:stretch;justify-content:flex-start"></div>');
   overlay.onclick = (e) => { if (e.target === overlay) { _menuOpen = false; render(); } };
-  const sheet = el('<div style="width:100%;max-width:560px;max-height:88vh;overflow:auto;background:#101c30;'
-    + 'border-radius:16px 16px 0 0;padding:14px 14px calc(18px + env(safe-area-inset-bottom,0))"></div>');
+  const sheet = el('<div class="nav-drawer" style="width:min(380px,88vw);height:100%;overflow:auto;background:#101c30;'
+    + 'border-right:1px solid #1e2f4d;box-shadow:8px 0 24px rgba(0,0,0,0.35);'
+    + 'padding:calc(14px + env(safe-area-inset-top,0)) 14px calc(18px + env(safe-area-inset-bottom,0))"></div>');
   const top = el(`<div style="display:flex;align-items:center;margin-bottom:2px">`
     + `<div style="flex:1;font-size:17px;font-weight:800;color:#eaf1fb">Go to</div></div>`);
   const x = el(`<button aria-label="Close" style="border:0;background:#16233a;color:#eaf1fb;border-radius:10px;`
@@ -12656,8 +12667,69 @@ function viewRollCall(opts) {
   return wrap;
 }
 
+// SETTINGS, FOLDED. Ifrah, 2026-10-23: "let's make the settings easier to use." It was one
+// page seven thousand pixels long with every section open, so finding the floor count
+// meant scrolling past fifteen area cards. Each section is now a header you tap, with a
+// line saying what is in it; all shut to start. Which ones are open is this screen's
+// own business (shutGroups is a device key), never the building's.
+const SETTINGS_SUMMARY = {
+  'Automatic': () => 'What the app does by itself — hand-out, set days, Thursday sweep',
+  'Roll Call covers': () => 'Which kinds of room the morning roll call is about',
+  'Other buildings': () => { const n = getSites().length; return n ? n + ' other building' + (n === 1 ? '' : 's') : 'None yet'; },
+  'Teams': () => 'Team names and their floors',
+  'Usual cleaner per room': () => 'Who keeps each room, one by one',
+  'Building · floors': () => (state.floors || 0) + ' floors · ' + ((state.floors || 0) * 6) + ' units',
+  'Common areas': () => (state.areas || []).length + ' areas — lobby, stairs, outside',
+  'Backup & restore': () => 'Download a copy, or load one back',
+};
+function foldSettings(wrap) {
+  const kids = [...wrap.children];
+  const groups = [];
+  kids.forEach((n) => {
+    if (n.classList && n.classList.contains('section-label')) groups.push({ head: n, rest: [] });
+    else if (groups.length) groups[groups.length - 1].rest.push(n);
+  });
+  groups.forEach((g) => {
+    const title = g.head.textContent.trim();
+    const key = 'settings:' + title;
+    const open = !!(state.shutGroups && state.shutGroups[key]);
+    const sum = SETTINGS_SUMMARY[title] ? SETTINGS_SUMMARY[title]() : '';
+    const btn = el(`<button class="su-card set-fold" style="display:flex;align-items:center;gap:10px;width:100%;text-align:left;`
+      + `cursor:pointer;margin:0 0 8px;${open ? 'border-color:#3d557f' : ''}">`
+      + `<div style="font-size:12px;color:#8a99ab;width:12px">${open ? '▾' : '▸'}</div>`
+      + `<div style="flex:1;min-width:0"><div class="su-unit" style="font-size:15px">${esc(title)}</div>`
+      + (sum ? `<div class="su-guest">${esc(sum)}</div>` : '') + `</div></button>`);
+    btn.onclick = () => {
+      state.shutGroups = { ...(state.shutGroups || {}) };
+      if (open) delete state.shutGroups[key]; else state.shutGroups[key] = true;
+      save(); render();
+    };
+    wrap.replaceChild(btn, g.head);
+    g.rest.forEach((n) => {
+      // The old spacers between sections only made sense with everything open.
+      if (!n.textContent.trim() && !n.children.length) { n.remove(); return; }
+      if (!open) n.remove();
+    });
+    if (open) {
+      const last = g.rest.filter((n) => n.isConnected).pop();
+      if (last) last.style.marginBottom = '16px';
+    }
+  });
+}
+
 function viewSettings() {
   const wrap = el('<div class="body"></div>');
+  // Cleaners are added and edited on Team — the same form used to be repeated here in
+  // full, which made two places to look and twice the scrolling.
+  {
+    const go = el(`<button class="su-card" style="display:flex;align-items:center;gap:12px;width:100%;text-align:left;cursor:pointer;margin-bottom:14px">`
+      + `<div style="font-size:20px;color:#9cc3ff">☺</div><div style="flex:1;min-width:0">`
+      + `<div class="su-unit" style="font-size:15px">Cleaners &amp; teams</div>`
+      + `<div class="su-guest">Add or edit people, leaders, who keeps which rooms — on the Team page</div></div>`
+      + `<div style="color:#8a99ab;font-size:18px">›</div></button>`);
+    go.onclick = () => setTab('team');
+    wrap.appendChild(go);
+  }
 
   // --- What the app does on its own ---
   wrap.appendChild(el(`<div class="section-label">Automatic</div>`));
@@ -12683,9 +12755,9 @@ function viewSettings() {
     // Most of these are on unless switched off; a couple are off unless switched on.
     const offByDefault = defOn === false;
     const on = offByDefault ? !!state[k] : state[k] !== false;
-    const row = el(`<div style="display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-top:1px solid #e7ecf3"></div>`);
+    const row = el(`<div style="display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-top:1px solid #1e2f4d"></div>`);
     const info = el(`<div style="flex:1;min-width:0"></div>`);
-    info.appendChild(el(`<div style="font-size:14px;font-weight:600;color:#0f1a27">${label}</div>`));
+    info.appendChild(el(`<div style="font-size:14px;font-weight:600;color:#eaf1fb">${label}</div>`));
     info.appendChild(el(`<div style="font-size:11px;color:#5f7189;line-height:1.5;margin-top:2px">${why}</div>`));
     row.appendChild(info);
     const b = el(`<button class="freqmini ${on ? 'on' : ''}" style="flex:0 0 auto;padding:8px 14px">${on ? 'On' : 'Off'}</button>`);
@@ -12699,8 +12771,8 @@ function viewSettings() {
   // the number that decides whether the first arrival is loaded up or spread thin.
   {
     const cap = earlyCap();
-    const row = el(`<div style="padding:10px 0;border-top:1px solid #e7ecf3"></div>`);
-    row.appendChild(el(`<div style="font-size:14px;font-weight:600;color:#0f1a27">Morning rooms per cleaner</div>`));
+    const row = el(`<div style="padding:10px 0;border-top:1px solid #1e2f4d"></div>`);
+    row.appendChild(el(`<div style="font-size:14px;font-weight:600;color:#eaf1fb">Morning rooms per cleaner</div>`));
     row.appendChild(el(`<div style="font-size:11px;color:#5f7189;line-height:1.5;margin-top:2px">`
       + `Rooms the customer asked for in the morning go to whoever badged in first, up to this many each, `
       + `then the next person in starts on them. Anything over it is shared out evenly.</div>`));
@@ -12713,7 +12785,7 @@ function viewSettings() {
     row.appendChild(btns);
     autoBox.appendChild(row);
   }
-  autoBox.appendChild(el(`<div style="font-size:11px;color:#5f7189;line-height:1.5;padding-top:10px;border-top:1px solid #e7ecf3;margin-top:4px">`
+  autoBox.appendChild(el(`<div style="font-size:11px;color:#5f7189;line-height:1.5;padding-top:10px;border-top:1px solid #1e2f4d;margin-top:4px">`
     + `<b>Marking rooms cleaned is never automatic</b> — only someone who saw it done can say so.</div>`));
   wrap.appendChild(autoBox);
 
@@ -12758,9 +12830,9 @@ function viewSettings() {
   siteRow.appendChild(siteIn); siteRow.appendChild(siteBtn); siteBox.appendChild(siteRow);
   getSites().forEach((t) => {
     const on = siteStaff(t.name);
-    const tr = el(`<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid #e7ecf3"></div>`);
+    const tr = el(`<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid #1e2f4d"></div>`);
     tr.appendChild(el(`<div class="crew-dot" style="background:${t.color}"></div>`));
-    tr.appendChild(el(`<div style="flex:1;font-size:14px;font-weight:600;color:#0f1a27">${esc(t.name)}</div>`));
+    tr.appendChild(el(`<div style="flex:1;font-size:14px;font-weight:600;color:#eaf1fb">${esc(t.name)}</div>`));
     tr.appendChild(el(`<div style="font-size:11px;color:#5b6a7f">${on.length ? esc(on.map((x) => x.name.split(' ')[0]).join(', ')) : 'nobody yet'}</div>`));
     // Same rule as a team: a building somebody is scheduled at cannot be deleted out
     // from under them, or their card names a place that no longer exists.
@@ -12785,9 +12857,9 @@ function viewSettings() {
   tRow.appendChild(tIn); tRow.appendChild(tBtn); tbox.appendChild(tRow);
   getTeams().forEach(t => {
     const memberCount = STAFF.filter(p => p.crew === t.name).length;
-    const tr = el(`<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid #e7ecf3"></div>`);
+    const tr = el(`<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid #1e2f4d"></div>`);
     tr.appendChild(el(`<div class="crew-dot" style="background:${t.color}"></div>`));
-    tr.appendChild(el(`<div style="flex:1;font-size:14px;font-weight:600;color:#0f1a27">${esc(t.name)}</div>`));
+    tr.appendChild(el(`<div style="flex:1;font-size:14px;font-weight:600;color:#eaf1fb">${esc(t.name)}</div>`));
     tr.appendChild(el(`<div style="font-size:11px;color:#5b6a7f">${memberCount} member${memberCount!==1?'s':''}</div>`));
     if (memberCount === 0) {
       const rmBtn = el(`<button class="su-rm">Remove</button>`);
@@ -12823,17 +12895,17 @@ function viewSettings() {
   const raPool = raLeaders.length ? raLeaders : (raCleaners.length ? raCleaners : (state.staff || []));
   const rooms = (state.servicedUnits || []).slice()
     .sort((a, b) => String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }));
-  wrap.appendChild(el(`<div class="section-label" style="margin-top:22px">Room assignments</div>`));
+  wrap.appendChild(el(`<div class="section-label" style="margin-top:22px">Usual cleaner per room</div>`));
   const rabox = el(`<div class="addbox"></div>`);
   rabox.appendChild(el(`<div style="font-size:13px;color:#5f7189;margin-bottom:10px">Pick a cleaner to give a room to permanently. Auto-assign always keeps the room with them.</div>`));
   if (!rooms.length) {
     rabox.appendChild(el(`<div class="empty">No rooms yet — add units on the Airbnb tab.</div>`));
   } else if (!raPool.length) {
-    rabox.appendChild(el(`<div class="empty">No staff yet. Add employees below first.</div>`));
+    rabox.appendChild(el(`<div class="empty">No staff yet. Add them on the Team page first.</div>`));
   } else {
     rooms.forEach(u => {
-      const row = el(`<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid #e7ecf3"></div>`);
-      row.appendChild(el(`<div style="flex:0 0 auto;min-width:64px;font-size:14px;font-weight:700;color:#0f1a27">Unit ${esc(u.unit)}</div>`));
+      const row = el(`<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid #1e2f4d"></div>`);
+      row.appendChild(el(`<div style="flex:0 0 auto;min-width:64px;font-size:14px;font-weight:700;color:#eaf1fb">Unit ${esc(u.unit)}</div>`));
       const sel = el(`<select class="area-select" style="flex:1;min-width:0;margin:0"></select>`);
       sel.appendChild(el(`<option value="">— Anyone —</option>`));
       raPool.forEach(p => {
@@ -12848,10 +12920,6 @@ function viewSettings() {
   }
   wrap.appendChild(rabox);
 
-  // --- Employees ---
-  wrap.appendChild(el(`<div class="section-label" style="margin-top:22px">Employees</div>`));
-  wrap.appendChild(employeeAddForm());
-  employeeGroups(wrap);
 
   // --- Floors ---
   wrap.appendChild(el(`<div class="section-label" style="margin-top:22px">Building · floors</div>`));
@@ -12866,7 +12934,7 @@ function viewSettings() {
   wrap.appendChild(fbox);
 
   // --- Add area ---
-  wrap.appendChild(el(`<div class="section-label" style="margin-top:20px">Add a cleaning area</div>`));
+  wrap.appendChild(el(`<div class="section-label" style="margin-top:20px">Common areas</div>`));
   const abox = el(`<div class="addbox"></div>`);
   const aName = el(`<input id="newArea" placeholder="Area name (e.g. Lift lobby, Bin store)" style="margin-bottom:8px">`);
   abox.appendChild(aName);
@@ -12895,13 +12963,13 @@ function viewSettings() {
   // --- Existing areas (interior then exterior) ---
   [['interior','Interior areas'],['exterior','Exterior areas']].forEach(([kind,title]) => {
     const list = state.areas.filter(a => a.kind===kind);
-    wrap.appendChild(el(`<div class="section-label" style="margin-top:20px">${title} (${list.length})</div>`));
+    wrap.appendChild(el(`<div style="font-size:12px;font-weight:800;color:#9fb6d4;margin:16px 2px 8px">${title} (${list.length})</div>`));
     if (!list.length) wrap.appendChild(el(`<div class="empty">None yet.</div>`));
     list.forEach(a => wrap.appendChild(areaCard(a)));
   });
 
   // --- Backup & Restore ---
-  wrap.appendChild(el(`<div class="section-label" style="margin-top:28px">Backup &amp; Restore</div>`));
+  wrap.appendChild(el(`<div class="section-label" style="margin-top:28px">Backup &amp; restore</div>`));
   const bbox = el(`<div class="addbox"></div>`);
   bbox.appendChild(el(`<div style="font-size:13px;color:#5f7189;margin-bottom:12px">Export your data to a file, or import a backup from another device.</div>`));
   const expBtn = el(`<button class="backup-btn backup-export">↓ Export Backup</button>`);
@@ -12917,7 +12985,8 @@ function viewSettings() {
   wrap.appendChild(bbox);
 
   // --- Logout ---
-  wrap.appendChild(el(`<div style="margin-top:32px;padding-top:16px;border-top:1px solid #e7ecf3"></div>`));
+  foldSettings(wrap);
+  wrap.appendChild(el(`<div style="margin-top:32px;padding-top:16px;border-top:1px solid #1e2f4d"></div>`));
   const logoutBtn = el(`<button class="reset-btn" style="color:#dc2626;border-color:#f6d5d5">Sign Out</button>`);
   logoutBtn.onclick = () => showConfirm('Sign out?', 'You will need to log in again.', () => logout());
   wrap.appendChild(logoutBtn);
@@ -13709,9 +13778,9 @@ function employeeGroups(wrap) {
     // view and drawn for the dark board. Shut by default: this is a thing to go and look
     // at, not a thing to read past every time the team page is opened.
     const open = !!(state.teamFold && state.teamFold.floormap);
-    const panel = el('<div style="margin-bottom:14px;border:1px solid #d8e0ea;border-radius:10px;overflow:hidden"></div>');
-    const hd = el(`<button style="display:flex;align-items:center;gap:8px;width:100%;padding:12px;`
-      + `border:0;background:${open ? '#f2f6fb' : '#fff'};text-align:left;cursor:pointer">`
+    const panel = el('<div style="margin-bottom:14px;border:1px solid #1e2f4d;border-radius:10px;overflow:hidden"></div>');
+    const hd = el(`<button style="display:flex;align-items:center;gap:8px;width:100%;padding:12px;color:#eaf1fb;`
+      + `border:0;background:${open ? '#16233a' : '#101c30'};text-align:left;cursor:pointer">`
       + `<span style="font-size:12px;color:#8a99ab;width:12px">${open ? '▾' : '▸'}</span>`
       + `<span style="flex:1;min-width:0;font-size:13px;font-weight:800">Floor map</span>`
       + `<span style="font-size:11px;font-weight:700;color:${drift.length ? '#b45309' : '#5f7189'}">`
