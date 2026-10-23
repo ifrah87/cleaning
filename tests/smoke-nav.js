@@ -142,15 +142,16 @@ for (const [label,vp] of [['PHONE',{width:420,height:900}],['DESKTOP',{width:144
    title:document.querySelector('.header')&&document.querySelector('.header').textContent,text:document.querySelector('.body').textContent}));
  check('Units report lists every serviced unit', rep.rows===rep.n && rep.n>0, rep.rows+' rows for '+rep.n+' units');
  check('Units report is titled', (rep.title||'').includes('Units Report'), rep.title);
+ check('Units report has no filter-button row', await page.locator('.body button.freqmini',{hasText:/^All$/}).count()===0);
  check('Units report shows the CSV and print buttons', /Download CSV/.test(rep.text) && /Print/.test(rep.text));
  // and it filters by kind of room
  for (const [btn,type] of [['Airbnb','airbnb'],['Office','office']]) {
-   await page.locator('.body button.freqmini',{hasText:new RegExp('^'+btn+'$')}).first().click(); await page.waitForTimeout(300);
-   const f=await page.evaluate((t)=>({want:state.servicedUnits.filter(u=>unitType(u)===t).length,rows:[...document.querySelectorAll('.body table tr')].slice(1).map(r=>r.children[1].textContent)}),type);
-   check(`Units report filters to ${btn} rooms only`, f.rows.length===f.want && f.want>0 && f.rows.every(x=>x===btn), f.rows.join(' | ')+' want '+f.want);
+   await page.locator('.body .su-card',{hasText:new RegExp(btn+'$')}).first().click(); await page.waitForTimeout(300);
+   const f0=await page.evaluate((t)=>({want:state.servicedUnits.filter(u=>unitType(u)===t).length,rows:[...document.querySelectorAll('.body table tr')].slice(1).map(r=>r.children[1].textContent)}),type);
+   check(`tapping the ${btn} total filters to ${btn} rooms only`, f0.rows.length===f0.want && f0.want>0 && f0.rows.every(x=>x===btn), f0.rows.join(' | ')+' want '+f0.want);
+   await page.locator('.body .su-card',{hasText:new RegExp(btn+'$')}).first().click(); await page.waitForTimeout(300);
  }
- await page.locator('.body button.freqmini',{hasText:/^All$/}).first().click(); await page.waitForTimeout(300);
- check('Units report: All brings every unit back', await page.evaluate(()=>document.querySelectorAll('.body table tr').length-1===state.servicedUnits.length));
+ check('tapping it again brings every unit back', await page.evaluate(()=>document.querySelectorAll('.body table tr').length-1===state.servicedUnits.length));
  // floors
  await page.evaluate(()=>setTab('team')); await page.waitForTimeout(600);
  const body=await page.locator('.body').first().textContent();

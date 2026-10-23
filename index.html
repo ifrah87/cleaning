@@ -10016,7 +10016,7 @@ function viewRooms() {
 
       // Row 1: number + status
       const top = el(`<div style="display:flex;align-items:center;gap:10px"></div>`);
-      const num = el(`<div style="font-size:16px;font-weight:800;min-width:56px;color:#0f1a27" title="Right-click to remove">${esc(u.unit)}</div>`);
+      const num = el(`<div class="su-unit" style="font-size:16px;font-weight:800;min-width:56px" title="Right-click to remove">${esc(u.unit)}</div>`);
       removeOnRightClick(num, u.id);
       top.appendChild(num);
       const mid = el(`<div style="flex:1;min-width:0"></div>`);
@@ -11208,22 +11208,17 @@ function viewUnitsReport() {
   const wrap = el('<div class="body"></div>');
   const everything = unitsReportRows();
   if (_reportType && !UNIT_TYPES[_reportType]) _reportType = '';
-  // FILTER BY KIND. Ifrah, 2026-10-23: "why can't I filter between the Airbnb and the
-  // offices." What is on screen is what prints and what downloads.
+  // FILTER BY KIND, from the tiles below. Ifrah, 2026-10-23: "why can't I filter between
+  // the Airbnb and the offices." What is on screen is what prints and what downloads.
   const rows = _reportType ? everything.filter((r) => r.type === UNIT_TYPES[_reportType].label) : everything;
   const kind = _reportType ? UNIT_TYPES[_reportType].label + ' ' : '';
   wrap.appendChild(el(`<div class="su-unit" style="font-size:17px;margin:4px 0 2px">${_reportType ? esc(kind) + 'units' : 'Units'} we clean</div>`));
-  wrap.appendChild(el(`<div class="su-guest" style="margin-bottom:10px">${rows.length} ${esc(kind.toLowerCase())}unit${rows.length === 1 ? '' : 's'} on the service list · ${esc(fmtDay(todayKey()))}</div>`));
+  wrap.appendChild(el(`<div class="su-guest" style="margin-bottom:10px">${rows.length} ${esc(kind.toLowerCase())}unit${rows.length === 1 ? '' : 's'} on the service list · ${esc(fmtDay(todayKey()))}`
+    + (_reportType ? ` · tap ${esc(UNIT_TYPES[_reportType].label)} again to see all` : ' · tap a total to see just that kind') + `</div>`));
 
-  const seg = el(`<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:10px"></div>`);
-  [['', 'All']].concat(UNIT_TYPE_ORDER.map((tk) => [tk, UNIT_TYPES[tk].label])).forEach(([key, label]) => {
-    const b = el(`<button class="freqmini${_reportType === key ? ' on' : ''}" style="flex:1 1 0;padding:8px 10px;font-size:12px">${esc(label)}</button>`);
-    b.onclick = () => { _reportType = key; render(); };
-    seg.appendChild(b);
-  });
-  wrap.appendChild(seg);
-
-  // The totals stay whole-building, and double as the filter: tap one to see just that kind.
+  // The totals stay whole-building and ARE the filter: tap one to see just that kind,
+  // tap it again for everything. A row of filter buttons above them was taken off the
+  // same day ("that new button is useless") — it only repeated the tiles.
   const tiles = el(`<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px"></div>`);
   UNIT_TYPE_ORDER.forEach((tk) => {
     const n = everything.filter((r) => r.type === UNIT_TYPES[tk].label).length;
