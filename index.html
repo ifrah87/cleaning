@@ -10287,6 +10287,7 @@ function menuSheet() {
   group('THE CREW', [['team', 'Team', 'Cleaners, teams, floors and the rota']]);
   group('THE RECORD', [
     ['history', 'Cleaning history', 'What was cleaned, by day'],
+    ['unitsreport', 'Units report', 'Every unit we clean — print or download'],
     ['tonight', 'Tonight’s round', 'What is still outstanding late on'],
   ]);
   group('THE MACHINERY', [['settings', 'Settings', 'Switches, kinds of room, the board itself']]);
@@ -11108,6 +11109,7 @@ function viewMore() {
     { id: 'building', label: 'Floors & Common Areas', ico: '▦', sub: 'Rooftop → floors → ground checklist' },
     { id: 'exterior', label: 'Exterior', ico: '⛅', sub: 'Outside areas and their frequencies' },
     { id: 'history', label: 'Cleaning History', ico: '◷', sub: 'What was cleaned, by day' },
+    { id: 'unitsreport', label: 'Units Report', ico: '▤', sub: 'Every unit we clean, in one list — print or download' },
     { id: 'settings', label: 'Settings', ico: '⚙', sub: 'App settings' },
   ];
   items.forEach(it => {
@@ -11121,6 +11123,90 @@ function viewMore() {
     card.onclick = () => setTab(it.id);
     wrap.appendChild(card);
   });
+  return wrap;
+}
+
+// UNITS REPORT. Ifrah, 2026-10-23: "a simple report built in of all the units we clean
+// for." One flat list of every room on the service list — type, who it is for, how
+// often, when it was last cleaned — with totals on top, to print or hand over as CSV.
+// Reads the same servicedUnits the Rooms tabs do, so it can never disagree with them.
+function unitsReportRows() {
+  return (state.servicedUnits || []).slice()
+    .sort((a, b) => UNIT_TYPE_ORDER.indexOf(unitType(a)) - UNIT_TYPE_ORDER.indexOf(unitType(b))
+      || String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }))
+    .map((u) => {
+      const last = lastCleanDate(u);
+      return {
+        unit: String(u.unit), type: UNIT_TYPES[unitType(u)].label, floor: floorOfUnit(u.unit) || '',
+        client: u.guest || '', schedule: schedLabel(u),
+        last: last || '', lastBy: last ? (u.lastCleanedByName || '') : '',
+      };
+    });
+}
+function downloadUnitsReportCsv(rows) {
+  const cols = [['unit', 'Unit'], ['type', 'Type'], ['floor', 'Floor'], ['client', 'Client / guest'],
+    ['schedule', 'Schedule'], ['last', 'Last cleaned'], ['lastBy', 'Cleaned by']];
+  const cell = (v) => '"' + String(v).replace(/"/g, '""') + '"';
+  const csv = [cols.map((c) => cell(c[1])).join(',')]
+    .concat(rows.map((r) => cols.map((c) => cell(r[c[0]])).join(','))).join('\r\n');
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  const a = document.createElement('a');
+  a.href = url; a.download = 'units-report-' + todayKey() + '.csv';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+function printUnitsReport(rows) {
+  const w = window.open('', '_blank');
+  if (!w) return;
+  const counts = UNIT_TYPE_ORDER.map((tk) => UNIT_TYPES[tk].label + ': ' + rows.filter((r) => r.type === UNIT_TYPES[tk].label).length);
+  w.document.write('<!doctype html><meta charset="utf-8"><title>Units report ' + todayKey() + '</title>'
+    + '<style>body{font:13px system-ui,sans-serif;margin:24px;color:#111}h1{font-size:18px;margin:0 0 4px}'
+    + 'p{margin:0 0 14px;color:#555}table{border-collapse:collapse;width:100%}'
+    + 'th,td{border:1px solid #ccc;padding:5px 8px;text-align:left}th{background:#f2f4f7}</style>'
+    + '<h1>Units we clean</h1><p>' + esc(fmtDay(todayKey())) + ' · ' + rows.length + ' units · ' + esc(counts.join(' · ')) + '</p>'
+    + '<table><tr><th>Unit</th><th>Type</th><th>Floor</th><th>Client / guest</th><th>Schedule</th><th>Last cleaned</th></tr>'
+    + rows.map((r) => '<tr><td>' + esc(r.unit) + '</td><td>' + esc(r.type) + '</td><td>' + esc(r.floor) + '</td><td>'
+      + esc(r.client) + '</td><td>' + esc(r.schedule) + '</td><td>' + (r.last ? esc(fmtDay(r.last)) + (r.lastBy ? ' · ' + esc(r.lastBy) : '') : '—') + '</td></tr>').join('')
+    + '</table>');
+  w.document.close();
+  w.focus(); w.print();
+}
+function viewUnitsReport() {
+  const wrap = el('<div class="body"></div>');
+  const rows = unitsReportRows();
+  wrap.appendChild(el(`<div class="su-unit" style="font-size:17px;margin:4px 0 2px">Units we clean</div>`));
+  wrap.appendChild(el(`<div class="su-guest" style="margin-bottom:10px">${rows.length} unit${rows.length === 1 ? '' : 's'} on the service list · ${esc(fmtDay(todayKey()))}</div>`));
+
+  const tiles = el(`<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px"></div>`);
+  UNIT_TYPE_ORDER.forEach((tk) => {
+    const n = rows.filter((r) => r.type === UNIT_TYPES[tk].label).length;
+    tiles.appendChild(el(`<div class="su-card" style="flex:1 1 90px;margin:0;text-align:center">`
+      + `<div style="font-size:22px;font-weight:800;color:${UNIT_TYPES[tk].color}">${n}</div>`
+      + `<div class="su-guest">${esc(UNIT_TYPES[tk].label)}</div></div>`));
+  });
+  wrap.appendChild(tiles);
+
+  const actions = el(`<div style="display:flex;gap:8px;margin-bottom:12px"></div>`);
+  const printBtn = el(`<button class="freqmini" style="flex:1;padding:9px">Print</button>`);
+  const csvBtn = el(`<button class="freqmini" style="flex:1;padding:9px">Download CSV</button>`);
+  printBtn.onclick = () => printUnitsReport(rows);
+  csvBtn.onclick = () => downloadUnitsReportCsv(rows);
+  actions.appendChild(printBtn); actions.appendChild(csvBtn);
+  wrap.appendChild(actions);
+
+  if (!rows.length) {
+    wrap.appendChild(el(`<div class="empty" style="text-align:center;padding:30px 0">No units on the service list yet.</div>`));
+    return wrap;
+  }
+  const box = el(`<div class="su-card" style="padding:0;overflow-x:auto"></div>`);
+  const th = 'style="text-align:left;padding:8px 10px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;opacity:.7;border-bottom:1px solid rgba(127,127,127,.3)"';
+  const td = 'style="padding:7px 10px;font-size:13px;border-bottom:1px solid rgba(127,127,127,.15);white-space:nowrap"';
+  box.appendChild(el(`<table style="width:100%;border-collapse:collapse">`
+    + `<tr><th ${th}>Unit</th><th ${th}>Type</th><th ${th}>Client / guest</th><th ${th}>Schedule</th><th ${th}>Last cleaned</th></tr>`
+    + rows.map((r) => `<tr><td ${td}><b>${esc(r.unit)}</b></td><td ${td}>${esc(r.type)}</td><td ${td}>${esc(r.client) || '—'}</td>`
+      + `<td ${td}>${esc(r.schedule)}</td><td ${td}>${r.last ? esc(fmtDay(r.last)) + (r.lastBy ? ' · ' + esc(r.lastBy) : '') : '—'}</td></tr>`).join('')
+    + `</table>`));
+  wrap.appendChild(box);
   return wrap;
 }
 
@@ -16050,7 +16136,7 @@ function render() {
   }
   const ROOMS_TITLE = { all: 'All Rooms', airbnb: 'Airbnb Rooms', office: 'Office Cleaning', building: 'Building Cleaning' };
   const titles = { board:'', setup:'Setup', more:'Setup', today:'', rollcall:'Morning set-up', tick:'',
-    building:'Floors & Common Areas', exterior:'Exterior', history:'Cleaning History', team:'Team',
+    building:'Floors & Common Areas', exterior:'Exterior', history:'Cleaning History', unitsreport:'Units Report', team:'Team',
     settings:'Settings', plan:'Plan a Day', calendar:'Calendar', rooms: ROOMS_TITLE[roomsFilter()], tonight:'Tonight’s Round' };
   // A tab with no view renders an empty screen, so never trust it blindly.
   if (titles[state.tab] === undefined) state.tab = 'board';
@@ -16195,6 +16281,7 @@ function render() {
   else if (state.tab==='building') app.appendChild(viewBuilding());
   else if (state.tab==='exterior') app.appendChild(viewExterior());
   else if (state.tab==='history') app.appendChild(viewHistory());
+  else if (state.tab==='unitsreport') app.appendChild(viewUnitsReport());
   else if (state.tab==='team') app.appendChild(viewTeam());
   else if (state.tab==='settings') app.appendChild(viewSettings());
 

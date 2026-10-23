@@ -112,7 +112,7 @@ for (const [label,vp] of [['PHONE',{width:420,height:900}],['DESKTOP',{width:144
  await page.locator('.tb-btn',{hasText:'☰'}).first().click(); await page.waitForTimeout(400);
  const menu=await page.locator('body').textContent();
  check('☰ opens everything else', /Everything else/.test(menu), menu.slice(0,120));
- for (const name of ['Rooms & schedules','Morning set-up','Team','Cleaning history','Settings']) {
+ for (const name of ['Rooms & schedules','Morning set-up','Team','Cleaning history','Units report','Settings']) {
    check(`the menu offers ${name}`, menu.includes(name));
  }
  await page.locator('button',{hasText:'Rooms & schedules'}).first().click(); await page.waitForTimeout(600);
@@ -136,6 +136,13 @@ for (const [label,vp] of [['PHONE',{width:420,height:900}],['DESKTOP',{width:144
  check('search finds unit 402 from any screen', hits.join(' ').includes('402'), hits.join(' | '));
  await page.locator('.sr-row').first().click(); await page.waitForTimeout(600);
  check('tapping a hit lands somewhere real', (await page.evaluate(()=>state.tab)).length>0, await page.evaluate(()=>state.tab));
+ // the units report: every serviced room, one row each, with the per-type totals
+ await page.evaluate(()=>setTab('unitsreport')); await page.waitForTimeout(500);
+ const rep=await page.evaluate(()=>({n:state.servicedUnits.length,rows:document.querySelectorAll('.body table tr').length-1,
+   title:document.querySelector('.header')&&document.querySelector('.header').textContent,text:document.querySelector('.body').textContent}));
+ check('Units report lists every serviced unit', rep.rows===rep.n && rep.n>0, rep.rows+' rows for '+rep.n+' units');
+ check('Units report is titled', (rep.title||'').includes('Units Report'), rep.title);
+ check('Units report shows the CSV and print buttons', /Download CSV/.test(rep.text) && /Print/.test(rep.text));
  // floors
  await page.evaluate(()=>setTab('team')); await page.waitForTimeout(600);
  const body=await page.locator('.body').first().textContent();
