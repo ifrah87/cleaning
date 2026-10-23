@@ -10268,58 +10268,86 @@ function viewToday() {
 // the record, then the machinery. It is a sheet rather than a screen because it is
 // always a detour — you came here to get somewhere, and the board is still behind it.
 let _menuOpen = false;
+// WHERE EVERYTHING IS — one list, used by the ☰ sheet and the More screen alike, so the
+// two can never drift apart. Ifrah, 2026-10-23: "right now it's hard to navigate around
+// it." The old sheet was twelve rows of long sentences under headings nobody would guess
+// ("The estate", "The machinery"), with a switch wedged in the middle. Now: plain
+// headings, big tiles, a few words each, and the page you are on lit up.
+const NAV_GROUPS = [
+  ['TODAY', [
+    ['board', 'The board', '▦', 'Today’s work'],
+    ['rollcall', 'Morning set-up', '☀', 'Who is in, hand-out'],
+    ['tonight', 'Tonight’s round', '☾', 'What is still left'],
+    ['plan', 'Plan a day', '✎', 'Lay out tomorrow'],
+    ['calendar', 'Calendar', '◫', 'Any day’s round'],
+  ]],
+  ['ROOMS', [
+    ['rooms', 'Rooms & schedules', '⌂', 'Add rooms, set days'],
+    ['building', 'Floors & common areas', '▤', 'Rooftop to ground'],
+    ['exterior', 'Exterior', '⛅', 'Outside areas'],
+  ]],
+  ['PEOPLE', [
+    ['team', 'Team', '☺', 'Cleaners, teams, rota'],
+  ]],
+  ['REPORTS', [
+    ['unitsreport', 'Units report', '≣', 'Every unit we clean'],
+    ['teamrooms', 'Rooms by team', '☷', 'Who keeps which rooms'],
+    ['history', 'Cleaning history', '◷', 'What was cleaned'],
+  ]],
+  ['SETTINGS', [
+    ['settings', 'Settings', '⚙', 'Switches and options'],
+  ]],
+];
+// The board answers to three names; any of them lights the board tile.
+const navHere = (tab) => (tab === 'board' ? ['board', 'today', 'tick'] : [tab]).indexOf(state.tab) >= 0;
+function navGrid(box, onPick) {
+  NAV_GROUPS.forEach(([label, items]) => {
+    box.appendChild(el(`<div style="font-size:11px;font-weight:800;letter-spacing:0.12em;color:#8a99ab;`
+      + `margin:16px 2px 8px">${esc(label)}</div>`));
+    const grid = el(`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px"></div>`);
+    items.forEach(([tab, name, ico, hint]) => {
+      const here = navHere(tab);
+      const b = el(`<button style="display:flex;align-items:center;gap:10px;padding:13px 12px;border-radius:12px;`
+        + `border:1px solid ${here ? '#3b82f6' : '#1e2f4d'};background:${here ? '#16305a' : '#16233a'};`
+        + `text-align:left;cursor:pointer;min-height:58px">`
+        + `<div style="font-size:20px;width:24px;text-align:center;color:#9cc3ff">${ico}</div>`
+        + `<div style="min-width:0"><div style="font-size:14px;font-weight:700;color:#eaf1fb">${esc(name)}</div>`
+        + `<div style="font-size:11px;color:#7f9abf">${here ? 'You are here' : esc(hint)}</div></div></button>`);
+      b.onclick = () => onPick(tab);
+      grid.appendChild(b);
+    });
+    box.appendChild(grid);
+    // ONE SWITCH, NOT A SCREEN: every room on today's board, or back to normal. It lives
+    // with the rest of today, under its own tiles, not in among the pages.
+    if (label === 'TODAY') box.appendChild(allRoomsSwitch());
+  });
+}
+function allRoomsSwitch() {
+  const day = workToday(), on = allRoomsOn(day);
+  const b = el(`<button style="display:flex;align-items:center;gap:12px;width:100%;margin-top:8px;padding:11px 12px;`
+    + `border-radius:12px;border:1px ${on ? 'solid #22c55e' : 'dashed #3d557f'};background:transparent;text-align:left;cursor:pointer">`
+    + `<div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:700;color:${on ? '#4ade80' : '#eaf1fb'}">`
+    + `${on ? '✓ Every room is on today' : 'Clean every room today'}</div>`
+    + `<div style="font-size:11px;color:#7f9abf">${on ? 'Tap to go back to the normal schedule for ' + esc(fmtDay(day))
+      : 'Puts every room on the board for ' + esc(fmtDay(day)) + ', whatever its days'}</div>`
+    + `</div><div style="font-size:12px;font-weight:800;color:${on ? '#4ade80' : '#8a99ab'}">${on ? 'ON' : 'OFF'}</div></button>`);
+  b.onclick = () => { _menuOpen = false; setAllRoomsDay(day, !on); };
+  return b;
+}
 function menuSheet() {
   const overlay = el('<div style="position:fixed;inset:0;z-index:900;background:rgba(10,18,32,0.55);'
     + 'display:flex;align-items:flex-end;justify-content:center"></div>');
   overlay.onclick = (e) => { if (e.target === overlay) { _menuOpen = false; render(); } };
   const sheet = el('<div style="width:100%;max-width:560px;max-height:88vh;overflow:auto;background:#101c30;'
     + 'border-radius:16px 16px 0 0;padding:14px 14px calc(18px + env(safe-area-inset-bottom,0))"></div>');
-  sheet.appendChild(el(`<div style="display:flex;align-items:center;margin-bottom:10px">`
-    + `<div style="flex:1;font-size:15px;font-weight:800;color:#eaf1fb">Everything else</div></div>`));
-  const group = (label, items) => {
-    sheet.appendChild(el(`<div style="font-size:10px;font-weight:800;letter-spacing:0.12em;color:#8a99ab;`
-      + `margin:14px 0 6px">${esc(label)}</div>`));
-    items.forEach(([tab, name, sub]) => {
-      const b = el(`<button style="display:flex;align-items:center;gap:12px;width:100%;padding:14px 12px;`
-        + `border:0;border-bottom:1px solid #1e2f4d;background:transparent;text-align:left;cursor:pointer">`
-        + `<div style="flex:1;min-width:0"><div style="font-size:15px;font-weight:700;color:#eaf1fb">${esc(name)}</div>`
-        + (sub ? `<div style="font-size:11px;color:#7f9abf">${esc(sub)}</div>` : '')
-        + `</div><div style="color:#8a99ab;font-size:18px">›</div></button>`);
-      b.onclick = () => { _menuOpen = false; setTab(tab); };
-      sheet.appendChild(b);
-    });
-  };
-  group('THE MORNING', [
-    ['rollcall', 'Morning set-up', 'Attendance, hand-out, what is not due, one-off jobs, tomorrow'],
-    ['calendar', 'Calendar', 'Tap through the month and see any day\u2019s round'],
-    ['plan', 'Plan a day', 'Lay tomorrow out and hand it round'],
-  ]);
-  // ONE SWITCH, NOT A SCREEN: put every room on today's board, or take that back.
-  {
-    const day = workToday(), on = allRoomsOn(day);
-    const b = el(`<button style="display:flex;align-items:center;gap:12px;width:100%;padding:14px 12px;`
-      + `border:0;border-bottom:1px solid #1e2f4d;background:transparent;text-align:left;cursor:pointer">`
-      + `<div style="flex:1;min-width:0"><div style="font-size:15px;font-weight:700;color:${on ? '#4ade80' : '#eaf1fb'}">`
-      + `${on ? '✓ Every room is on today' : 'Clean every room today'}</div>`
-      + `<div style="font-size:11px;color:#7f9abf">${on ? 'Tap to go back to the normal schedule for ' + esc(fmtDay(day))
-        : 'Puts every room we clean on the board for ' + esc(fmtDay(day)) + ', whatever its days'}</div>`
-      + `</div><div style="font-size:12px;font-weight:800;color:${on ? '#4ade80' : '#8a99ab'}">${on ? 'ON' : 'OFF'}</div></button>`);
-    b.onclick = () => { _menuOpen = false; setAllRoomsDay(day, !on); };
-    sheet.appendChild(b);
-  }
-  group('THE ESTATE', [
-    ['rooms', 'Rooms & schedules', 'Add a room, change how often it is cleaned'],
-    ['building', 'Floors & common areas', 'The rooftop-to-ground checklist'],
-    ['exterior', 'Exterior', 'Outside areas and their frequencies'],
-  ]);
-  group('THE CREW', [['team', 'Team', 'Cleaners, teams, floors and the rota']]);
-  group('THE RECORD', [
-    ['history', 'Cleaning history', 'What was cleaned, by day'],
-    ['unitsreport', 'Units report', 'Every unit we clean — print or download'],
-    ['teamrooms', 'Rooms by team', 'Which rooms each team keeps — print or download'],
-    ['tonight', 'Tonight’s round', 'What is still outstanding late on'],
-  ]);
-  group('THE MACHINERY', [['settings', 'Settings', 'Switches, kinds of room, the board itself']]);
+  const top = el(`<div style="display:flex;align-items:center;margin-bottom:2px">`
+    + `<div style="flex:1;font-size:17px;font-weight:800;color:#eaf1fb">Go to</div></div>`);
+  const x = el(`<button aria-label="Close" style="border:0;background:#16233a;color:#eaf1fb;border-radius:10px;`
+    + `width:38px;height:38px;font-size:18px;cursor:pointer">✕</button>`);
+  x.onclick = () => { _menuOpen = false; render(); };
+  top.appendChild(x);
+  sheet.appendChild(top);
+  navGrid(sheet, (tab) => { _menuOpen = false; setTab(tab); });
   const built = (() => {
     try { const d = new Date(document.lastModified);
       return isNaN(d) ? '' : d.toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
@@ -11132,27 +11160,7 @@ function viewTonight() {
 
 function viewMore() {
   const wrap = el('<div class="body"></div>');
-  const items = [
-    { id: 'tonight', label: 'Tonight', ico: '🌙', sub: 'What still needs cleaning on tonight’s round' },
-    { id: 'team', label: 'Team', ico: '☰', sub: 'Cleaners, teams, floors and the rota' },
-    { id: 'building', label: 'Floors & Common Areas', ico: '▦', sub: 'Rooftop → floors → ground checklist' },
-    { id: 'exterior', label: 'Exterior', ico: '⛅', sub: 'Outside areas and their frequencies' },
-    { id: 'history', label: 'Cleaning History', ico: '◷', sub: 'What was cleaned, by day' },
-    { id: 'unitsreport', label: 'Units Report', ico: '▤', sub: 'Every unit we clean, in one list — print or download' },
-    { id: 'teamrooms', label: 'Rooms by Team', ico: '▥', sub: 'Which rooms each team keeps — print or download' },
-    { id: 'settings', label: 'Settings', ico: '⚙', sub: 'App settings' },
-  ];
-  items.forEach(it => {
-    const card = el(`<div class="su-card" style="cursor:pointer;display:flex;align-items:center;gap:12px"></div>`);
-    card.appendChild(el(`<div style="font-size:22px;width:28px;text-align:center">${it.ico}</div>`));
-    const info = el(`<div style="flex:1;min-width:0"></div>`);
-    info.appendChild(el(`<div class="su-unit" style="font-size:15px">${it.label}</div>`));
-    info.appendChild(el(`<div class="su-guest">${it.sub}</div>`));
-    card.appendChild(info);
-    card.appendChild(el(`<div style="color:#5b6a7f;font-size:20px">›</div>`));
-    card.onclick = () => setTab(it.id);
-    wrap.appendChild(card);
-  });
+  navGrid(wrap, (tab) => setTab(tab));
   return wrap;
 }
 

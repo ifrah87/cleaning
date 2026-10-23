@@ -111,7 +111,9 @@ for (const [label,vp] of [['PHONE',{width:420,height:900}],['DESKTOP',{width:144
  // the menu, and every screen behind it
  await page.locator('.tb-btn',{hasText:'☰'}).first().click(); await page.waitForTimeout(400);
  const menu=await page.locator('body').textContent();
- check('☰ opens everything else', /Everything else/.test(menu), menu.slice(0,120));
+ check('☰ opens the Go to sheet', /Go to/.test(menu), menu.slice(0,120));
+ for (const h of ['TODAY','ROOMS','PEOPLE','REPORTS','SETTINGS']) check(`the menu has a ${h} heading`, menu.includes(h));
+ check('the board tile says you are here', /The board\s*You are here/.test(menu));
  for (const name of ['Rooms & schedules','Morning set-up','Team','Cleaning history','Units report','Rooms by team','Settings']) {
    check(`the menu offers ${name}`, menu.includes(name));
  }
