@@ -1943,7 +1943,20 @@ const dowOf = (day) => new Date(day + 'T00:00:00').getDay();
 // It is a SWEEP, not a change of pattern: no room's days move, and every room carries
 // on from its Thursday clean exactly as it would from any other.
 const SWEEP_DAY = 4;                         // Thursday
-const sweepsOn = (day) => state.thursdaySweep !== false && dowOf(day) === SWEEP_DAY;
+// EVERY ROOM, ON A DAY THE OFFICE NAMES. Ifrah, 2026-10-23 (a Friday): "we normally don't
+// clean on Fridays but today I want on the dashboard every room we clean." The same
+// sweep as Thursday's, switched on for one dated day from the ☰ menu — no room's own
+// days move, and it lapses by itself because it is keyed to the date.
+const allRoomsOn = (day) => !!(state.allRoomsDays && state.allRoomsDays[day]);
+const sweepsOn = (day) => allRoomsOn(day) || (state.thursdaySweep !== false && dowOf(day) === SWEEP_DAY);
+function setAllRoomsDay(day, on) {
+  const next = { ...(state.allRoomsDays || {}) };
+  if (on) next[day] = true; else delete next[day];
+  // Only the days still ahead are worth keeping; a past one can never matter again.
+  Object.keys(next).forEach((d) => { if (d < shiftDay(workToday(), -1)) delete next[d]; });
+  state.allRoomsDays = next;
+  save(); render();
+}
 const fixedDays = (u) => (u && Array.isArray(u.days) && u.days.length) ? u.days : null;
 // The most recent day this room was pinned to, on or before `day`. The mirror of
 // nextFixedDay, and what says whether a pinned day has come round unanswered.
@@ -2521,7 +2534,7 @@ const DEVICE_KEYS = ['tab', 'tickFilter', 'roomsFilter', 'expandedFloors', 'expa
   'editingEmp', 'editingUnit', 'editingArea', 'rcFold', 'rcSetupOpen', 'checkExpanded',
   'shutGroups', 'pendingCover'];
 const SETTING_KEYS = ['autoAssign', 'autoConfirm', 'autoBalance', 'autoDays', 'earlyCap',
-  'lockOnDeal', 'floors', 'rollCallTypes', 'teams', 'thursdaySweep', 'fridayAuto', 'teamShuffle'];
+  'lockOnDeal', 'floors', 'rollCallTypes', 'teams', 'thursdaySweep', 'fridayAuto', 'teamShuffle', 'allRoomsDays'];
 let _settingsSeen = null;
 // Stamped from one place rather than from every switch in Settings: there are a dozen
 // setters and a stamp missing from any one of them is a setting that can still be
@@ -6853,6 +6866,8 @@ function dueReason(u) {
   if (extraCleanDue(u, day)) return 'An extra clean was asked for today (' + fmtDay(day) + '). ' + lastTxt + '.';
   if (heldBack(u, day)) return 'It is held back until ' + fmtDay(u.holdUntil) + ', so it should not be here. ' + lastTxt + '.';
   if (sweepsOn(day) && String(last || '') !== String(day)) {
+    if (allRoomsOn(day)) return 'Every room was asked for today (' + fmtDay(day) + ') from the ☰ menu, so it is on whatever its own pattern says.\n\n'
+      + lastTxt + ' · ' + (FREQ_LABEL[u.freq] || 'Daily') + '. Its normal days are unchanged — it carries on from today as usual.';
     return 'Every room is cleaned on the Thursday, so the building goes into the Friday closure clean. '
       + 'That is why it is on today whatever its own pattern says.\n\n' + lastTxt + ' · '
       + (FREQ_LABEL[u.freq] || 'Daily') + '. Its normal days are unchanged — it carries on from today as usual.';
@@ -10279,6 +10294,19 @@ function menuSheet() {
     ['calendar', 'Calendar', 'Tap through the month and see any day\u2019s round'],
     ['plan', 'Plan a day', 'Lay tomorrow out and hand it round'],
   ]);
+  // ONE SWITCH, NOT A SCREEN: put every room on today's board, or take that back.
+  {
+    const day = workToday(), on = allRoomsOn(day);
+    const b = el(`<button style="display:flex;align-items:center;gap:12px;width:100%;padding:14px 12px;`
+      + `border:0;border-bottom:1px solid #1e2f4d;background:transparent;text-align:left;cursor:pointer">`
+      + `<div style="flex:1;min-width:0"><div style="font-size:15px;font-weight:700;color:${on ? '#4ade80' : '#eaf1fb'}">`
+      + `${on ? '✓ Every room is on today' : 'Clean every room today'}</div>`
+      + `<div style="font-size:11px;color:#7f9abf">${on ? 'Tap to go back to the normal schedule for ' + esc(fmtDay(day))
+        : 'Puts every room we clean on the board for ' + esc(fmtDay(day)) + ', whatever its days'}</div>`
+      + `</div><div style="font-size:12px;font-weight:800;color:${on ? '#4ade80' : '#8a99ab'}">${on ? 'ON' : 'OFF'}</div></button>`);
+    b.onclick = () => { _menuOpen = false; setAllRoomsDay(day, !on); };
+    sheet.appendChild(b);
+  }
   group('THE ESTATE', [
     ['rooms', 'Rooms & schedules', 'Add a room, change how often it is cleaned'],
     ['building', 'Floors & common areas', 'The rooftop-to-ground checklist'],
