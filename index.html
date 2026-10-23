@@ -11171,7 +11171,7 @@ function unitsReportRows() {
       };
     });
 }
-function downloadUnitsReportCsv(rows) {
+function downloadUnitsReportCsv(rows, kind) {
   const cols = [['unit', 'Unit'], ['type', 'Type'], ['floor', 'Floor'], ['client', 'Client / guest'],
     ['schedule', 'Schedule'], ['last', 'Last cleaned'], ['lastBy', 'Cleaned by']];
   const cell = (v) => '"' + String(v).replace(/"/g, '""') + '"';
@@ -11179,11 +11179,12 @@ function downloadUnitsReportCsv(rows) {
     .concat(rows.map((r) => cols.map((c) => cell(r[c[0]])).join(','))).join('\r\n');
   const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
   const a = document.createElement('a');
-  a.href = url; a.download = 'units-report-' + todayKey() + '.csv';
+  a.href = url; a.download = 'units-report-' + (kind ? kind.trim().toLowerCase() + '-' : '') + todayKey() + '.csv';
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
-function printUnitsReport(rows) {
+function printUnitsReport(rows, kind) {
+  kind = kind || '';
   const w = window.open('', '_blank');
   if (!w) return;
   const counts = UNIT_TYPE_ORDER.map((tk) => UNIT_TYPES[tk].label + ': ' + rows.filter((r) => r.type === UNIT_TYPES[tk].label).length);
@@ -11191,7 +11192,8 @@ function printUnitsReport(rows) {
     + '<style>body{font:13px system-ui,sans-serif;margin:24px;color:#111}h1{font-size:18px;margin:0 0 4px}'
     + 'p{margin:0 0 14px;color:#555}table{border-collapse:collapse;width:100%}'
     + 'th,td{border:1px solid #ccc;padding:5px 8px;text-align:left}th{background:#f2f4f7}</style>'
-    + '<h1>Units we clean</h1><p>' + esc(fmtDay(todayKey())) + ' · ' + rows.length + ' units · ' + esc(counts.join(' · ')) + '</p>'
+    + '<h1>' + (kind ? esc(kind) + 'units' : 'Units') + ' we clean</h1><p>' + esc(fmtDay(todayKey())) + ' · ' + rows.length + ' units'
+    + (kind ? '' : ' · ' + esc(counts.join(' · '))) + '</p>'
     + '<table><tr><th>Unit</th><th>Type</th><th>Floor</th><th>Client / guest</th><th>Schedule</th><th>Last cleaned</th></tr>'
     + rows.map((r) => '<tr><td>' + esc(r.unit) + '</td><td>' + esc(r.type) + '</td><td>' + esc(r.floor) + '</td><td>'
       + esc(r.client) + '</td><td>' + esc(r.schedule) + '</td><td>' + (r.last ? esc(fmtDay(r.last)) + (r.lastBy ? ' · ' + esc(r.lastBy) : '') : '—') + '</td></tr>').join('')
@@ -11199,31 +11201,51 @@ function printUnitsReport(rows) {
   w.document.close();
   w.focus(); w.print();
 }
+// Which kind of room the report is narrowed to — '' is all of them. This screen's own
+// choice, not the building's, so it is never saved or synced.
+let _reportType = '';
 function viewUnitsReport() {
   const wrap = el('<div class="body"></div>');
-  const rows = unitsReportRows();
-  wrap.appendChild(el(`<div class="su-unit" style="font-size:17px;margin:4px 0 2px">Units we clean</div>`));
-  wrap.appendChild(el(`<div class="su-guest" style="margin-bottom:10px">${rows.length} unit${rows.length === 1 ? '' : 's'} on the service list · ${esc(fmtDay(todayKey()))}</div>`));
+  const everything = unitsReportRows();
+  if (_reportType && !UNIT_TYPES[_reportType]) _reportType = '';
+  // FILTER BY KIND. Ifrah, 2026-10-23: "why can't I filter between the Airbnb and the
+  // offices." What is on screen is what prints and what downloads.
+  const rows = _reportType ? everything.filter((r) => r.type === UNIT_TYPES[_reportType].label) : everything;
+  const kind = _reportType ? UNIT_TYPES[_reportType].label + ' ' : '';
+  wrap.appendChild(el(`<div class="su-unit" style="font-size:17px;margin:4px 0 2px">${_reportType ? esc(kind) + 'units' : 'Units'} we clean</div>`));
+  wrap.appendChild(el(`<div class="su-guest" style="margin-bottom:10px">${rows.length} ${esc(kind.toLowerCase())}unit${rows.length === 1 ? '' : 's'} on the service list · ${esc(fmtDay(todayKey()))}</div>`));
 
+  const seg = el(`<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:10px"></div>`);
+  [['', 'All']].concat(UNIT_TYPE_ORDER.map((tk) => [tk, UNIT_TYPES[tk].label])).forEach(([key, label]) => {
+    const b = el(`<button class="freqmini${_reportType === key ? ' on' : ''}" style="flex:1 1 0;padding:8px 10px;font-size:12px">${esc(label)}</button>`);
+    b.onclick = () => { _reportType = key; render(); };
+    seg.appendChild(b);
+  });
+  wrap.appendChild(seg);
+
+  // The totals stay whole-building, and double as the filter: tap one to see just that kind.
   const tiles = el(`<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px"></div>`);
   UNIT_TYPE_ORDER.forEach((tk) => {
-    const n = rows.filter((r) => r.type === UNIT_TYPES[tk].label).length;
-    tiles.appendChild(el(`<div class="su-card" style="flex:1 1 90px;margin:0;text-align:center">`
+    const n = everything.filter((r) => r.type === UNIT_TYPES[tk].label).length;
+    const tile = el(`<div class="su-card" style="flex:1 1 90px;margin:0;text-align:center;cursor:pointer;`
+      + `${_reportType === tk ? 'outline:2px solid ' + UNIT_TYPES[tk].color : ''}">`
       + `<div style="font-size:22px;font-weight:800;color:${UNIT_TYPES[tk].color}">${n}</div>`
-      + `<div class="su-guest">${esc(UNIT_TYPES[tk].label)}</div></div>`));
+      + `<div class="su-guest">${esc(UNIT_TYPES[tk].label)}</div></div>`);
+    tile.onclick = () => { _reportType = _reportType === tk ? '' : tk; render(); };
+    tiles.appendChild(tile);
   });
   wrap.appendChild(tiles);
 
   const actions = el(`<div style="display:flex;gap:8px;margin-bottom:12px"></div>`);
   const printBtn = el(`<button class="freqmini" style="flex:1;padding:9px">Print</button>`);
   const csvBtn = el(`<button class="freqmini" style="flex:1;padding:9px">Download CSV</button>`);
-  printBtn.onclick = () => printUnitsReport(rows);
-  csvBtn.onclick = () => downloadUnitsReportCsv(rows);
+  printBtn.onclick = () => printUnitsReport(rows, kind);
+  csvBtn.onclick = () => downloadUnitsReportCsv(rows, kind);
   actions.appendChild(printBtn); actions.appendChild(csvBtn);
   wrap.appendChild(actions);
 
   if (!rows.length) {
-    wrap.appendChild(el(`<div class="empty" style="text-align:center;padding:30px 0">No units on the service list yet.</div>`));
+    wrap.appendChild(el(`<div class="empty" style="text-align:center;padding:30px 0">No ${esc(kind.toLowerCase())}units on the service list yet.</div>`));
     return wrap;
   }
   const box = el(`<div class="su-card" style="padding:0;overflow-x:auto"></div>`);
