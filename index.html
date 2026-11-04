@@ -1738,6 +1738,31 @@ function setLateShiftPer(n) {
   }
   save(); render();
 }
+// SOMEBODY CANNOT COME. The app picks, the office can overrule it: swap one person on one
+// Thursday, today's included, for a name the office chooses or, with no name given, the
+// fairest person who is not on that Thursday or either side of it. The tally reads the
+// people array, so the one who stood down keeps their turn and the cover has done one.
+let lateEditDay = null;
+function lateShiftCover(day, people) {
+  const pool = lateShiftPool().filter((id) => people.indexOf(id) < 0);
+  const near = [];
+  [shiftDay(day, -7), shiftDay(day, 7)].forEach((d) => {
+    const r = state.lateShiftDraws && state.lateShiftDraws[d];
+    if (r) near.push(...r.people);
+  });
+  const free = pool.filter((id) => near.indexOf(id) < 0);
+  const { worked, seen } = lateShiftTally(day);
+  return fairPick(free.length ? free : pool, 1, worked, seen, near)[0];
+}
+function swapLateShift(day, out, chosen) {
+  const d = state.lateShiftDraws && state.lateShiftDraws[day];
+  if (!d) return;
+  const who = chosen || lateShiftCover(day, d.people);
+  if (!who) return;
+  state.lateShiftDraws = { ...state.lateShiftDraws, [day]: { ...d,
+    people: d.people.map((id) => (id === out ? who : id)), redrawnAt: new Date().toISOString() } };
+  save(); render();
+}
 // Two words, not one: there are two Mahads on the crew.
 function lateShiftShort(p) { return String(p.name || '').split(/\s+/).slice(0, 2).join(' '); }
 function lateShiftNames(drawn) {
@@ -14322,8 +14347,32 @@ function viewTeam() {
       }
       lateShiftDays().forEach((day, i) => {
         const drawn = lateShiftFor(day);
-        info.appendChild(el(`<div style="color:${i ? '#b7c8de' : '#fcd34d'}">${esc(fmtDay(day))}: `
+        const line = el(`<div style="display:flex;align-items:center;gap:8px;margin-top:${i ? 6 : 0}px"></div>`);
+        line.appendChild(el(`<div style="flex:1;min-width:0;color:${i ? '#b7c8de' : '#fcd34d'}">${esc(fmtDay(day))}: `
           + `${drawn ? esc(lateShiftNames(drawn)) : 'not picked yet — it is picked when the app next opens'}</div>`));
+        if (drawn) {
+          const editing = lateEditDay === day;
+          const change = el(`<button class="add-btn" style="flex:0 0 auto;width:auto;padding:5px 10px;font-size:12px">${editing ? 'Done' : 'Change'}</button>`);
+          change.onclick = () => { lateEditDay = editing ? null : day; render(); };
+          line.appendChild(change);
+        }
+        info.appendChild(line);
+        if (drawn && lateEditDay === day) {
+          drawn.people.forEach((id) => {
+            const r = el(`<div style="display:flex;align-items:center;gap:8px;margin-top:6px"></div>`);
+            const sel = el(`<select class="area-select" style="flex:1;min-width:0"></select>`);
+            const nameOf = (x) => { const p = (state.staff || []).find((s) => s.id === x); return p ? p.name : 'No longer on the crew'; };
+            sel.appendChild(el(`<option value="${esc(id)}" selected>${esc(nameOf(id))}</option>`));
+            lateShiftPool().filter((x) => drawn.people.indexOf(x) < 0).forEach((x) => {
+              sel.appendChild(el(`<option value="${esc(x)}">${esc(nameOf(x))}</option>`));
+            });
+            sel.onchange = () => swapLateShift(day, id, sel.value);
+            const auto = el(`<button class="add-btn" style="flex:0 0 auto;width:auto;padding:5px 10px;font-size:12px">Pick for me</button>`);
+            auto.onclick = () => swapLateShift(day, id);
+            r.appendChild(sel); r.appendChild(auto);
+            info.appendChild(r);
+          });
+        }
       });
       const { worked, seen } = lateShiftTally();
       if (Object.keys(seen).length) {

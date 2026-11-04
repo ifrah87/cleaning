@@ -155,6 +155,38 @@ const check = (n, ok, d) => { results.push([n, !!ok]); console.log((ok ? '  \x1b
     out.perApplied = rota.every((d) => state.lateShiftDraws[d].people.length === 3 && state.lateShiftDraws[d].redrawnAt);
     setLateShiftPer(4);
 
+    // SOMEBODY CANNOT COME: fixed rota, so the neighbours are known.
+    // Everybody already on this Thursday or next to it: nobody is free, the shift still fills.
+    const tight = [['L0', 'L1', 'L2', 'L3'], ['L4', 'L5', 'A0', 'H0'], ['H1', 'H2', 'L0', 'L1'], ['L2', 'L3', 'L4', 'L5']];
+    rota.forEach((d, i) => { state.lateShiftDraws[d] = { people: tight[i], pool: lateShiftPool(), drawnAt: 'x' }; });
+    swapLateShift(rota[1], 'H0');
+    const tightNow = state.lateShiftDraws[rota[1]].people;
+    out.tightCover = new Set(tightNow).size === 4 && tightNow.indexOf('H0') < 0;
+
+    // H1 and H2 are free, so the cover must be one of them.
+    const swapRota = [['L0', 'L1', 'L2', 'L3'], ['L4', 'L5', 'A0', 'H0'], ['L0', 'L1', 'L2', 'L3'], ['L2', 'L3', 'L4', 'L5']];
+    rota.forEach((d, i) => { state.lateShiftDraws[d] = { people: swapRota[i], pool: lateShiftPool(), drawnAt: 'x' }; });
+    swapLateShift(rota[1], 'H0');
+    const auto1 = state.lateShiftDraws[rota[1]];
+    const cover = auto1.people.find((id) => swapRota[1].indexOf(id) < 0);
+    const neighbours = swapRota[0].concat(swapRota[2]);
+    out.autoCover = auto1.people.length === 4 && auto1.people.indexOf('H0') < 0 && !!cover
+      && neighbours.indexOf(cover) < 0 && lateShiftPool().indexOf(cover) >= 0 && !!auto1.redrawnAt;
+    swapLateShift(rota[3], 'L2', 'H0');
+    out.manualCover = state.lateShiftDraws[rota[3]].people.join() === 'H0,L3,L4,L5';
+    out.swapStands = ensureLateShift() === false && state.lateShiftDraws[rota[3]].people.indexOf('H0') >= 0;
+    const tally = lateShiftTally();
+    out.swapTally = !!tally.worked.H0 && tally.worked.H0 === 1;
+    // And the same through the screen: Change opens the Thursday, Pick for me swaps.
+    state.tab = 'team'; render();
+    const btn = (txt) => Array.from(document.querySelectorAll('button')).filter((b) => b.textContent.trim() === txt);
+    btn('Change')[0].click();
+    const peopleBefore = state.lateShiftDraws[rota[0]].people.join();
+    const opened = btn('Pick for me').length === 4 && btn('Done').length === 1;
+    btn('Pick for me')[0].click();
+    out.screenSwap = opened && state.lateShiftDraws[rota[0]].people.join() !== peopleBefore;
+    lateEditDay = null;
+
     // The Friday draw still works through the shared helper.
     const fri = drawFriday(shiftDay(thu, 1));
     out.fridayGot = { teams: fri.teams, pool: fri.pool };
@@ -199,6 +231,12 @@ const check = (n, ok, d) => { results.push([n, !!ok]); console.log((ok ? '  \x1b
   check('somebody who leaves comes off the rota, and the shift stays full', q.leaverGone);
   check('Thursdays before the leaver stand', q.earlierStand);
   check('a new headcount reaches the whole rota', q.perApplied);
+  check('Pick for me finds a fair cover who is not on the Thursdays either side', q.autoCover);
+  check('with nobody free the shift still fills, no one twice', q.tightCover);
+  check('the office can choose the cover by hand', q.manualCover);
+  check('a swap is not undone when the app next opens', q.swapStands);
+  check('the cover has the turn, not the person who stood down', q.swapTally);
+  check('Change and Pick for me work on the Team tab', q.screenSwap);
   check('names read "Helper One, Leader3 Surname"', q.names === 'Helper One, Leader3 Surname', q.names);
   check('the board names the late people and their hours', q.board);
   check('the Team tab has the switch', q.teamTab);
