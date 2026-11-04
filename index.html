@@ -9147,6 +9147,7 @@ function assignNewPlanJobs(day, keys, skip) {
 // The hold is what separates a drag from a tap, so both still work.
 // ============================================================
 const DRAG_HOLD_MS = 300;
+const BOARD_HOLD_MS = 600;   // longer: a tap on the board ticks a room, so a hold must be meant
 let _movePick = null;   // {day, key} while "move this to…" is open
 
 // Hold a room to move it. Dragging it onto somebody was worse than it sounds: on a
@@ -11150,6 +11151,37 @@ function viewTick() {
           if (j.area) toggleAreaDone(a.id); else toggleServicedDone(u.id);
         };
         chip.appendChild(lbl);
+
+        // HOLD A ROOM TO TAKE IT OFF TODAY (right-click, with a mouse). The board is where
+        // a wrong room is seen, and it had no way off: the only remove was on Plan a Day.
+        // A skip, so the room is back on its next day and today does not count as missed.
+        // A ticked room was cleaned, so that has to be unticked first.
+        if (!readOnly && !j.area) {
+          const askOff = () => {
+            if (j.done) { showInfo(j.label + ' is ticked as cleaned', 'Tap it to untick it first, then hold it again.'); return; }
+            showConfirm('Take ' + String(j.label).replace(/^Unit\s+/, '') + ' off today?',
+              'It comes off the board and goes back on its next day. It does not count as missed, and nobody else\'s rooms move.\n\nChanged your mind? It is listed under Skipped today on Roll Call.',
+              () => toggleSkipToday(u.id), 'Take it off', 'safe');
+          };
+          let holdT = null, hx = 0, hy = 0, holdFired = false;
+          const dropHold = () => { clearTimeout(holdT); holdT = null; };
+          chip.addEventListener('pointerdown', (e) => {
+            if (e.button) return;
+            if (e.target.closest && e.target.closest('.bd-grip')) return;
+            hx = e.clientX; hy = e.clientY; holdFired = false;
+            holdT = setTimeout(() => { holdT = null; holdFired = true; askOff(); }, BOARD_HOLD_MS);
+          });
+          chip.addEventListener('pointermove', (e) => {
+            if (holdT && Math.abs(e.clientX - hx) + Math.abs(e.clientY - hy) > 8) dropHold();
+          });
+          chip.addEventListener('pointerup', () => {
+            dropHold();
+            // The finger lifting off the room would tick it, unless the sheet is covering it.
+            if (holdFired) { holdFired = false; swallowClick = true; setTimeout(() => { swallowClick = false; }, 400); }
+          });
+          chip.addEventListener('pointercancel', dropHold);
+          chip.addEventListener('contextmenu', (e) => { e.preventDefault(); dropHold(); if (!holdFired) askOff(); });
+        }
 
         // THE GRIP IS THE MOVE. Drag it with a mouse, or tap it and then tap whoever
         // should have the room — a finger dragging down a screen is the page scrolling,
