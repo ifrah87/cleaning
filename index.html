@@ -7518,7 +7518,7 @@ function floorAllocationBox() {
   allFloors().forEach((f) => {
     const owner = ownerOfFloor(f);
     const row = el(`<div class="sr-row" style="cursor:default"></div>`);
-    row.appendChild(el(`<div style="font-size:13px;font-weight:800;color:#0f1a27;width:62px">Floor ${f}</div>`));
+    row.appendChild(el(`<div style="font-size:13px;font-weight:800;color:#eaf1fb;width:62px">Floor ${f}</div>`));
     const sel = el(`<select class="area-select" style="flex:1;min-width:0"></select>`);
     sel.appendChild(el(`<option value="">— nobody —</option>`));
     crew.forEach((c) => {
