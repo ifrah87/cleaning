@@ -5720,6 +5720,12 @@ function reassignRooms(when) {
     const plan = (state.plans || {})[reassignDay(when)] || {};
     list = all.filter((u) => plan[planKey('unit', u.id)] && !plan[planKey('unit', u.id)].dropped);
   }
+  // AIRBNB ROOMS, FOR A DAY. They stay a separate job off the roll call and nobody keeps one
+  // for good, because who does a flat depends on who is staying. But the office hands them
+  // out by name (Ahmed Daahir, 2026-11-04), so Today and Tomorrow offer them all.
+  if (when !== 'always') {
+    list = list.concat((state.servicedUnits || []).filter((u) => !u.paused && !onRollCall(u) && unitType(u) === 'airbnb'));
+  }
   return list.sort((a, b) => String(a.unit).localeCompare(String(b.unit), undefined, { numeric: true }));
 }
 // Who can be given them: leaders as their boxes (equal leaders together), then for a day
@@ -5749,6 +5755,13 @@ function applyReassign(pid) {
     rooms.forEach((u) => {
       if (cleanedToday(u)) { kept.push(u.unit); return; }   // already done — that is history
       setUnitAssignee(u.id, pid);
+      // Off the roll call, a name alone does not put it in their box: the plan has to say so.
+      if (!onRollCall(u)) {
+        const k = planKey('unit', u.id), day = workToday();
+        getPlan(day)[k] = { kind: 'unit', refId: u.id, label: 'Unit ' + u.unit, assignedTo: pid, byHand: true };
+        unmarkPlanDropped(day, k);
+        stampPlanEdit(day);
+      }
       moved.push(u.unit);
     });
   } else {
@@ -5817,7 +5830,7 @@ function reassignSheet() {
       const on = r.ids.indexOf(u.id) >= 0;
       const done = r.when === 'today' && cleanedToday(u);
       const b = el(`<button class="freqmini ${on ? 'on' : ''}" style="flex:0 0 auto;padding:8px 11px;${done ? 'opacity:0.5;' : ''}`
-        + `${on ? 'background:#0284c7;border-color:#0284c7;color:#fff' : ''}">${on ? '✓ ' : ''}${esc(u.unit)}${done ? ' ✓done' : ''}</button>`);
+        + `${on ? 'background:#0284c7;border-color:#0284c7;color:#fff' : ''}">${on ? '✓ ' : ''}${esc(u.unit)}${unitType(u) === 'airbnb' ? ' Airbnb' : ''}${done ? ' ✓done' : ''}</button>`);
       b.onclick = () => {
         const i = r.ids.indexOf(u.id);
         if (i >= 0) r.ids.splice(i, 1); else r.ids.push(u.id);
@@ -7015,8 +7028,9 @@ function plannedRoomsToday() {
   (state.servicedUnits || []).forEach((u) => { byId[u.id] = u; });
   const areasById = {};
   areasInterior().forEach((a) => { areasById[a.id] = a; });
-  const rooms = jobs.filter((j) => j.kind === 'unit').map((j) => byId[j.refId])
-    .filter((u) => u && onRollCall(u) && !u.paused);
+  // A room off the roll call counts only when somebody handed it out for the day.
+  const rooms = jobs.filter((j) => j.kind === 'unit' && byId[j.refId] && !byId[j.refId].paused
+    && (onRollCall(byId[j.refId]) || j.byHand)).map((j) => byId[j.refId]);
   const areas = jobs.filter((j) => j.kind !== 'unit').map((j) => areasById[j.refId]).filter(Boolean);
 
   // WORK THAT WAS MISSED. A day ahead is planned from a projection that assumes
