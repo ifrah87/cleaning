@@ -14824,7 +14824,9 @@ const TV_COLS_PER_PAGE = TV_MAX_ACROSS * TV_MAX_ROWS;
 // Tuned against the real television rather than guessed: at 0.72 a two-row board
 // with both an OFFICES and a COMMUNAL group ran off the bottom of the screen, and
 // content falling off a wall display is worse than content being small on one.
-const TV_ROW_SCALE = { 1: 1, 2: 0.62, 3: 0.46 };
+// Three rows start large (2026-11-04, one box per cleaner): most boxes hold two or three
+// rooms and the crew read them from across the room. tvFitColumns steps it down on a busy day.
+const TV_ROW_SCALE = { 1: 1, 2: 0.62, 3: 0.66 };
 
 // Squarest arrangement that holds n columns: 9 people is 5 across and 2 deep, not
 // 5 and then a row of 4 hanging off the end at a different width.
