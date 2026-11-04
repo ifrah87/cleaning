@@ -1567,6 +1567,11 @@ function drawFriday(day) {
   const { worked, seen } = fridayTally(day);
   const earlier = Object.keys(state.fridayDraws || {}).filter((d) => d < day).sort();
   const last = earlier.length ? (state.fridayDraws[earlier[earlier.length - 1]].teams || []) : [];
+  return { teams: fairPick(pool, per, worked, seen, last), pool, drawnAt: new Date().toISOString() };
+}
+// Fewest turns so far first, last time's teams lose a tie, random among the level.
+// Shared by the Friday draw and the Thursday late shift so both take turns the same way.
+function fairPick(pool, per, worked, seen, last) {
   const expected = pool.length ? per / pool.length : 0;
   const share = (t) => (seen[t] ? (worked[t] || 0) / seen[t] : expected);
   const order = pool.slice();
@@ -1577,9 +1582,8 @@ function drawFriday(day) {
   // Stable sort: the shuffle decides between teams that are level.
   order.sort((a, b) => (share(a) - share(b))
     || ((last.indexOf(a) >= 0 ? 1 : 0) - (last.indexOf(b) >= 0 ? 1 : 0)));
-  const teams = order.slice(0, per)
+  return order.slice(0, per)
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-  return { teams, pool, drawnAt: new Date().toISOString() };
 }
 // Make the coming Friday's draw if it is due and nobody has made it. Only a device that
 // writes, and only once it has the server's copy — a starter board drawing its own Friday
@@ -1605,6 +1609,140 @@ function setFridayDraw(on) {
   state.fridayAuto = { per: cur.per || 2, ...cur, on: !!on, from };
   ensureFridayDraw();
   save(); render();
+}
+
+// THE THURSDAY LATE SHIFT. Asked for on 3 Nov 2026: every Thursday some of the crew work
+// 10:00–20:00 instead of the usual hours, picked at random and changing week to week.
+// People, not teams (decided 4 Nov): teams run from one person to three, so drawing whole
+// teams gave a different headcount every Thursday. Everybody else works Thursday as normal;
+// this only says who stays late. Which rooms are left for them is the cleaners' call
+// ("depending on the cleaners"), so nothing here moves a room: the board and the wall name
+// the people and their hours, and rooms are handed over the usual way (⇄ Reassign).
+//
+// Drawn with fairPick: fewest late Thursdays first, random among the level, and last
+// week's people sit out whenever there are enough others to fill the shift, so the list
+// always changes. Drawn once per date and stored in lateShiftDraws so every screen names
+// the same people.
+//
+// THE ROTA. The next LATE_ROTA_WEEKS Thursdays are always picked, so the Team tab reads as
+// a rota and people know weeks ahead; the first one is at least LATE_NOTICE_DAYS out. If
+// somebody on it leaves, the Thursdays after the coming one are picked again from there,
+// because a rota that keeps a leaver leaves that shift a person short.
+const THURSDAY_DOW = 4;
+const LATE_NOTICE_DAYS = 3;
+const LATE_SHIFT_HOURS = { start: '10:00', end: '20:00' };
+const LATE_SHIFT_PEOPLE = 4;   // about two teams' worth
+const LATE_ROTA_WEEKS = 4;
+function lateShiftOn() { return !!(state.lateShift && state.lateShift.on); }
+function lateShiftHours() {
+  const ls = state.lateShift || {};
+  return { start: ls.start || LATE_SHIFT_HOURS.start, end: ls.end || LATE_SHIFT_HOURS.end };
+}
+function lateShiftPer() { return (state.lateShift && state.lateShift.per) || LATE_SHIFT_PEOPLE; }
+// The office's own crew: everybody on a team that runs a round. Not the outside pairs,
+// and not Lead, who supervises rather than cleans.
+function lateShiftPool() {
+  const teams = rotaTeams().filter((t) => t !== 'Lead');
+  return cleaningStaff().filter((p) => teams.indexOf(String(p.crew || '').trim()) >= 0).map((p) => p.id);
+}
+function lateShiftFor(day) {
+  if (!lateShiftOn()) return null;
+  const d = state.lateShiftDraws && state.lateShiftDraws[day];
+  return d && Array.isArray(d.people) && Array.isArray(d.pool) ? d : null;
+}
+function comingThursday(day) {
+  let d = day || workToday();
+  for (let i = 0; i < 7; i += 1) {
+    if (new Date(d + 'T00:00:00').getDay() === THURSDAY_DOW) return d;
+    d = shiftDay(d, 1);
+  }
+  return d;
+}
+function lateShiftTally(before) {
+  const draws = state.lateShiftDraws || {};
+  const from = (state.lateShift && state.lateShift.from) || '';
+  const worked = {}, seen = {};
+  Object.keys(draws).sort().forEach((d) => {
+    if (d < from || (before && d >= before)) return;
+    const r = draws[d];
+    (r.pool || []).forEach((t) => { seen[t] = (seen[t] || 0) + 1; });
+    (r.people || []).forEach((t) => { worked[t] = (worked[t] || 0) + 1; });
+  });
+  return { worked, seen };
+}
+function drawLateShift(day) {
+  const pool = lateShiftPool();
+  const per = Math.min(pool.length, Math.max(1, lateShiftPer()));
+  const { worked, seen } = lateShiftTally(day);
+  const earlier = Object.keys(state.lateShiftDraws || {}).filter((d) => d < day).sort();
+  const last = earlier.length ? (state.lateShiftDraws[earlier[earlier.length - 1]].people || []) : [];
+  const rested = pool.filter((id) => last.indexOf(id) < 0);
+  return { people: fairPick(rested.length >= per ? rested : pool, per, worked, seen, last), pool, drawnAt: new Date().toISOString() };
+}
+// The Thursdays on the rota, soonest first.
+function lateShiftDays() {
+  const coming = comingThursday(workToday());
+  const from = (state.lateShift && state.lateShift.from) || '';
+  const start = coming < from ? from : coming;
+  const days = [];
+  for (let i = 0; i < LATE_ROTA_WEEKS; i += 1) days.push(shiftDay(start, 7 * i));
+  return days;
+}
+// Same guard as ensureFridayDraw: only a writing device, only against the server's copy.
+// Oldest first, because each pick rests the people on the Thursday before it.
+function ensureLateShift() {
+  if (TV_MODE || !_everSynced || !lateShiftOn()) return false;
+  const pool = lateShiftPool();
+  if (!pool.length) return false;
+  const coming = comingThursday(workToday());
+  let changed = false, stale = false;
+  state.lateShiftDraws = { ...(state.lateShiftDraws || {}) };
+  lateShiftDays().forEach((day) => {
+    const had = state.lateShiftDraws[day];
+    if (had && day > coming && had.people.some((id) => pool.indexOf(id) < 0)) stale = true;
+    if (had && !stale) return;
+    delete state.lateShiftDraws[day];
+    state.lateShiftDraws[day] = had
+      ? { ...drawLateShift(day), redrawnAt: new Date().toISOString() } : drawLateShift(day);
+    changed = true;
+  });
+  return changed;
+}
+function setLateShift(on) {
+  const cur = state.lateShift || {};
+  let from = cur.from;
+  if (on && !from) {
+    const today = workToday();
+    from = comingThursday(today);
+    const gap = Math.round((new Date(from + 'T00:00:00') - new Date(today + 'T00:00:00')) / 864e5);
+    if (gap < LATE_NOTICE_DAYS) from = shiftDay(from, 7);
+  }
+  state.lateShift = { per: LATE_SHIFT_PEOPLE, ...cur, on: !!on, from };
+  ensureLateShift();
+  save(); render();
+}
+// A new headcount applies to every Thursday on the rota, unless one is today: by then
+// the people picked have been told. redrawnAt lets these picks beat the old ones on the
+// server, where a plain draw would lose (see applyRemote).
+function setLateShiftPer(n) {
+  const pool = lateShiftPool().length;
+  const per = Math.max(1, Math.min(pool || 1, n));
+  state.lateShift = { ...(state.lateShift || {}), per };
+  if (lateShiftOn() && pool) {
+    state.lateShiftDraws = { ...(state.lateShiftDraws || {}) };
+    const days = lateShiftDays().filter((day) => day > workToday());
+    days.forEach((day) => { delete state.lateShiftDraws[day]; });
+    days.forEach((day) => {
+      state.lateShiftDraws[day] = { ...drawLateShift(day), redrawnAt: new Date().toISOString() };
+    });
+  }
+  save(); render();
+}
+// Two words, not one: there are two Mahads on the crew.
+function lateShiftShort(p) { return String(p.name || '').split(/\s+/).slice(0, 2).join(' '); }
+function lateShiftNames(drawn) {
+  return (state.staff || []).filter((p) => drawn.people.indexOf(p.id) >= 0)
+    .map(lateShiftShort).sort((a, b) => a.localeCompare(b)).join(', ');
 }
 
 // THE TEAMS RESHUFFLE EVERY SATURDAY. Leaders stay where they are — a leader IS the round,
@@ -2539,7 +2677,7 @@ const DEVICE_KEYS = ['tab', 'tickFilter', 'roomsFilter', 'expandedFloors', 'expa
   'editingEmp', 'editingUnit', 'editingArea', 'rcFold', 'rcSetupOpen', 'checkExpanded',
   'shutGroups', 'pendingCover'];
 const SETTING_KEYS = ['autoAssign', 'autoConfirm', 'autoBalance', 'autoDays', 'earlyCap',
-  'lockOnDeal', 'floors', 'rollCallTypes', 'teams', 'thursdaySweep', 'fridayAuto', 'teamShuffle'];
+  'lockOnDeal', 'floors', 'rollCallTypes', 'teams', 'thursdaySweep', 'fridayAuto', 'teamShuffle', 'lateShift'];
 let _settingsSeen = null;
 // Stamped from one place rather than from every switch in Settings: there are a dozen
 // setters and a stamp missing from any one of them is a setting that can still be
@@ -3192,6 +3330,7 @@ function applyRemote(saved, merging) {
   // honest reason to drop one is that what it points at no longer exists, which is the
   // check below, after the merged lists have landed.
   const myDraws = TV_MODE ? {} : (state.fridayDraws || {});
+  const myLate = TV_MODE ? {} : (state.lateShiftDraws || {});
   state = { ...state, ...saved, ...mineDevice, ...mineSettings,
     settingsEditedAt: mergedStamps, tab: keepTab };
   // A FRIDAY IS DRAWN ONCE. The server's draw for a date stands — two phones that drew
@@ -3204,6 +3343,18 @@ function applyRemote(saved, merging) {
     Object.keys(myDraws).forEach((d) => { if (!merged[d]) { merged[d] = myDraws[d]; keptDraws += 1; } });
     state.fridayDraws = merged;
     if (keptDraws) markDirty();
+  }
+  // The Thursday late shift, the same way: the server's draw for a date stands, unless
+  // this device has re-picked it for a new headcount and that has not landed yet.
+  {
+    const merged = { ...(saved.lateShiftDraws || {}) };
+    let kept = 0;
+    Object.keys(myLate).forEach((d) => {
+      const mine = myLate[d].redrawnAt || '', theirs = (merged[d] && merged[d].redrawnAt) || '';
+      if (!merged[d] || mine > theirs) { merged[d] = myLate[d]; kept += 1; }
+    });
+    state.lateShiftDraws = merged;
+    if (kept) markDirty();
   }
   // A setting this device won on is a change the server has not got. Deliver it.
   if (Object.keys(mineSettings).length && !TV_MODE) markDirty();
@@ -10576,6 +10727,15 @@ function viewTick() {
     top.appendChild(seg);
   }
 
+  {
+    const late = lateShiftFor(readOnly ? shiftDay(workToday(), _boardDay) : workToday());
+    if (late) {
+      const hrs = lateShiftHours();
+      top.appendChild(el(`<div class="bd-tally" style="color:#c4b5fd">🌙 Late shift ${esc(hrs.start)}–${esc(hrs.end)}: `
+        + `<b style="color:#ede9fe">${esc(lateShiftNames(late))}</b></div>`));
+    }
+  }
+
   const tally = el('<div class="bd-tally"></div>');
   tally.appendChild(el(`<b style="color:${left ? '#fbbf24' : '#22c55e'}">${left}</b>`));
   tally.appendChild(el(`<span>left</span>`));
@@ -14118,6 +14278,64 @@ function viewTeam() {
     wrap.appendChild(box);
   }
 
+  // THE THURSDAY LATE SHIFT — see setLateShift. Random people, 10:00–20:00, changing weekly.
+  if (cleaners) {
+    const box = el('<div style="margin-bottom:14px"></div>');
+    const hrs = lateShiftHours();
+    box.appendChild(el(`<div class="section-label">Thursday rota — late shift ${esc(hrs.start)}–${esc(hrs.end)}</div>`));
+    const on = lateShiftOn();
+    const tog = el(`<button class="add-btn" style="background:${on ? '#15803d' : '#101c30'};`
+      + `color:${on ? '#ffffff' : '#7ea6dc'};border:1px solid ${on ? '#15803d' : '#3d557f'}">`
+      + (on ? '🌙 Picked at random each week — ON' : '🌙 Pick people to stay late each Thursday — OFF') + `</button>`);
+    tog.onclick = () => {
+      if (on) {
+        showConfirm('Stop the Thursday late shift?',
+          'Thursdays already picked stay as picked. After that, nobody is down for the late shift.',
+          () => setLateShift(false), 'Stop it', 'safe');
+      } else {
+        showConfirm('Pick people for the late shift each Thursday?',
+          lateShiftPer() + ' of the ' + lateShiftPool().length + ' cleaners work ' + hrs.start + '–' + hrs.end
+          + ' each Thursday. Everybody else works Thursday as normal.\n\n'
+          + 'They are picked at random and it changes every week: last week\'s people sit out, and '
+          + 'whoever has done the fewest late Thursdays goes first.\n\nThe next ' + LATE_ROTA_WEEKS
+          + ' Thursdays are always on the rota, so people know weeks ahead. No rooms are moved — '
+          + 'the people staying late take whichever rooms are left for later.',
+          () => setLateShift(true), 'Start it', 'safe');
+      }
+    };
+    box.appendChild(tog);
+    if (on) {
+      const step = el(`<div style="display:flex;align-items:center;gap:10px;margin-top:8px;font-size:13px;font-weight:700;color:#b7c8de"></div>`);
+      const less = el('<button class="add-btn" style="flex:0 0 auto;width:44px;padding:6px 0">−</button>');
+      const more = el('<button class="add-btn" style="flex:0 0 auto;width:44px;padding:6px 0">+</button>');
+      less.onclick = () => setLateShiftPer(lateShiftPer() - 1);
+      more.onclick = () => setLateShiftPer(lateShiftPer() + 1);
+      step.appendChild(less);
+      step.appendChild(el(`<span>${lateShiftPer()} people each Thursday</span>`));
+      step.appendChild(more);
+      box.appendChild(step);
+      const info = el(`<div style="font-size:12px;font-weight:700;color:#b7c8de;background:#101c30;`
+        + `border-radius:8px;padding:8px 10px;margin-top:8px;line-height:1.6"></div>`);
+      const thu = comingThursday(workToday());
+      if (thu < state.lateShift.from) {
+        info.appendChild(el(`<div style="color:#7f9abf">${esc(fmtDay(thu))}: no late shift. The first one is ${esc(fmtDay(state.lateShift.from))}.</div>`));
+      }
+      lateShiftDays().forEach((day, i) => {
+        const drawn = lateShiftFor(day);
+        info.appendChild(el(`<div style="color:${i ? '#b7c8de' : '#fcd34d'}">${esc(fmtDay(day))}: `
+          + `${drawn ? esc(lateShiftNames(drawn)) : 'not picked yet — it is picked when the app next opens'}</div>`));
+      });
+      const { worked, seen } = lateShiftTally();
+      if (Object.keys(seen).length) {
+        const rows = cleaningStaff().filter((p) => seen[p.id])
+          .map((p) => lateShiftShort(p) + ' ' + (worked[p.id] || 0) + '/' + seen[p.id]);
+        info.appendChild(el(`<div style="color:#5f7189;font-weight:600">Late Thursdays so far: ${esc(rows.join(' · '))}</div>`));
+      }
+      box.appendChild(info);
+    }
+    wrap.appendChild(box);
+  }
+
   // SHARE OUT THE REST DAY — the Friday off alternates, so half the crew is in one
   // week and half the next. Doing that by hand across a whole crew is where it drifts
   // and somebody quietly ends up working most Fridays.
@@ -15775,6 +15993,8 @@ function renderTV() {
   left.appendChild(el(`<div class="tv-date">`
     + `${esc(boardDay.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }))}`
     + (stillLastNight ? ` <span style="opacity:0.75">· tonight's round, until 3am</span>` : '')
+    + (lateShiftFor(shownDay) ? ` <span style="color:#c4b5fd">· 🌙 late shift ${esc(lateShiftHours().start)}–${esc(lateShiftHours().end)}: `
+        + `${esc(lateShiftNames(lateShiftFor(shownDay)))}</span>` : '')
     + (tvDayOffset ? ` <span style="color:#fbbf24">· PLANNED, not today`
         + `${tvDayOffset === 1 ? ' (tomorrow)' : ' (' + tvDayOffset + ' days ahead)'}</span>` : '')
     + `</div>`));
@@ -16939,6 +17159,7 @@ function startDayWatch() {
       if (expireAttendance()) save();
       if (ensureTeamShuffle()) save();  // a Saturday deals the assistants out again
       if (ensureFridayDraw()) save();   // the Friday just gone opens the draw for the next
+      if (ensureLateShift()) save();    // and the Thursday just gone, the next late shift
       placeUnplacedEodRooms();   // a new every-other-day room onto A or B, level
       autoBalanceEod();          // and keep the two timetables level
       autoPinDaysFromFreq();
@@ -16969,6 +17190,7 @@ async function boot() {
   // Only against the server's copy: a draw made from a stale one would be a second Friday.
   if (pulled && ensureTeamShuffle()) save();
   if (pulled && ensureFridayDraw()) save();
+  if (pulled && ensureLateShift()) save();
   // Days first: the planning pass reads the schedule, so the rooms need to be ON
   // their days before it runs, not after. It is a property of the rota rather than
   // of who has badged in, so it does not wait for the roll call.
