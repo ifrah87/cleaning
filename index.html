@@ -14880,6 +14880,17 @@ const tvTeam = (p) => {
 // Every job on today's board, grouped by who is holding it. Rooms and communal
 // areas together: from across the room a walk is another thing somebody has to
 // get through, and splitting them into two lists hides half the load.
+// Red first, then whatever is still open, then the finished ones out of the way. The order
+// on screen is the instruction, so today's board and a day ahead read the same.
+function jobOrder(x, y) {
+  return (x.done ? 1 : 0) - (y.done ? 1 : 0)
+    || (y.early ? 1 : 0) - (x.early ? 1 : 0)
+    // The morning's own rooms first, then the guest flats that follow them, which is
+    // the order the work is actually done in.
+    || (x.late ? 1 : 0) - (y.late ? 1 : 0)
+    || (x.air ? 1 : 0) - (y.air ? 1 : 0)
+    || String(x.label).localeCompare(String(y.label), undefined, { numeric: true });
+}
 function tvJobsByPerson() {
   const buckets = {}, order = [];
   const bucket = (id) => {
@@ -14996,17 +15007,7 @@ function tvJobsByPerson() {
       });
     });
   });
-  // Red first, then whatever is still open, then the finished ones out of the way.
-  Object.keys(buckets).forEach((k) => {
-    buckets[k].sort((x, y) =>
-      (x.done ? 1 : 0) - (y.done ? 1 : 0)
-      || (y.early ? 1 : 0) - (x.early ? 1 : 0)
-      // The morning's own rooms first, then the guest flats that follow them, which is
-      // the order the work is actually done in.
-      || (x.late ? 1 : 0) - (y.late ? 1 : 0)
-      || (x.air ? 1 : 0) - (y.air ? 1 : 0)
-      || String(x.label).localeCompare(String(y.label), undefined, { numeric: true }));
-  });
+  Object.keys(buckets).forEach((k) => { buckets[k].sort(jobOrder); });
   return { buckets: buckets, order: order };
 }
 
@@ -15243,6 +15244,7 @@ function tvColumnsForDay(day) {
     delete buckets[k];
     order.splice(order.indexOf(k), 1);
   });
+  order.forEach((k) => { buckets[k].sort(jobOrder); });
   return order.sort((a, b) => (a === '__none__' ? -1 : 0) - (b === '__none__' ? -1 : 0)
       || buckets[b].length - buckets[a].length)
     .map((k) => {

@@ -135,6 +135,19 @@ const check = (n, ok, d) => { results.push([n, !!ok]); console.log((ok ? '  \x1b
   await hold('705', 800);
   check('a ticked room is not offered for removal', !(await dialog()) && (await onBoard('705')));
 
+  const ahead = await page.evaluate(() => {
+    const d = shiftDay(workToday(), 1), plan = getPlan(d);
+    [['l1', '101', 'preferLate'], ['a1', '102', null], ['e1', '901', 'preferEarly']].forEach(([id, n, slot]) => {
+      const u = { id, unit: n, type: 'office', freq: 'daily', days: null, assignedTo: 'p1' };
+      if (slot) u[slot] = true;
+      state.servicedUnits.push(u);
+      plan['unit:' + id] = { kind: 'unit', refId: id, label: 'Unit ' + n, assignedTo: 'p1' };
+    });
+    const col = tvColumnsForDay(d).find((c) => !c.none);
+    return col.jobs.map((j) => String(j.label).replace('Unit ', '')).filter((x) => ['101', '102', '901'].indexOf(x) >= 0).join();
+  });
+  check('tomorrow lists early rooms first, late ones last', ahead === '901,102,101', ahead);
+
   check('no console errors', errs.length === 0, errs.join(' | '));
   const failed = results.filter((r) => !r[1]).length;
   console.log((results.length - failed) + ' passed, ' + failed + ' failed');
