@@ -1657,7 +1657,12 @@ function serve() {
 
     const before = levelPlan(14).settledBefore;
     const ran = autoLevelIfLopsided();                 // what opening the app does
-    const settled = Object.values(projectedCounts(14)).slice(7);
+    // THE SWEEP DAY IS NOT LEVELLABLE. Every room is cleaned on the Thursday by decree,
+    // so that day carries the whole building and there is nothing the leveller could do
+    // about it. Levelness is a statement about the days it can actually change, which is
+    // the same set of days levelPlan reports its own peaks over.
+    const cs = projectedCounts(14);
+    const settled = Object.keys(cs).sort().slice(7).filter((d) => !sweepsOn(d)).map((d) => cs[d]);
     // Pressing on shouldn't keep churning the schedule all day.
     const again = autoLevelIfLopsided();
 
@@ -2246,7 +2251,10 @@ function serve() {
     const promised = plan.peakAfter;
     applyLevelPlan(plan);
     const counts = projectedCounts(14);
-    return { promised, realised: Math.max(...Object.values(counts)) };
+    // Measured over the days the promise was about — the sweep days are full whatever
+    // the levelling does, so counting them compares two different questions.
+    const live = Object.keys(counts).filter((d) => !sweepsOn(d)).map((d) => counts[d]);
+    return { promised, realised: Math.max(...live) };
   });
   eq('the schedule really ends up as level as it promised', lvlAfter.realised, lvlAfter.promised);
 
@@ -2264,7 +2272,7 @@ function serve() {
     const before = levelPlan(14);
     applyLevelPlan(before);
     const counts = projectedCounts(14);
-    const tail = Object.keys(counts).sort().slice(7).map((d) => counts[d]);
+    const tail = Object.keys(counts).sort().slice(7).filter((d) => !sweepsOn(d)).map((d) => counts[d]);
     const out = {
       settledBefore: before.settledBefore, settledAfter: before.settledAfter,
       moves: before.moves.length,

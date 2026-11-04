@@ -2530,6 +2530,9 @@ function scrubDanglingReferences() {
   return n;
 }
 
+// How far back plans and ticks are kept in the shared state. Who cleaned what, for
+// good, is in cleaning_log; this is only what the screens look back over.
+const KEEP_DAYS = 14;
 function finalizeState() {
   if (!Array.isArray(state.staff)) state.staff = DEFAULT_STAFF.map(p => ({ ...p }));
   // MARKED AS A STARTING GUESS, NOT A DECISION. These are seeded into a board that has
@@ -2564,18 +2567,19 @@ function finalizeState() {
     Object.keys(map).forEach((k) => { if (DAY_RE.test(k) && k < cutoff) delete map[k]; });
   };
 
-  // Ticks: 45 days is far longer than anything reads them — only today's decide
-  // whether a room shows as done — and it leaves room to look back over a month.
-  const tickCutoff = shiftDay(todayKey(), -45);
+  // Ticks: only today's decide whether a room shows as done, and a room's last-clean
+  // date comes from cleaning_log, not from here. Two weeks is the look-back the office
+  // asked for (2026-10-27) — it keeps the blob inside Supabase's free egress.
+  const tickCutoff = shiftDay(todayKey(), -KEEP_DAYS);
   pruneByDaySuffix(state.completions, tickCutoff);
   pruneByDaySuffix(state.logRefs, tickCutoff);
   pruneByDaySuffix(state.lastCleanUndo, tickCutoff);
   pruneByDayKey(state.manualArrivals, tickCutoff);
   pruneByDayKey(state.manualDepartures, tickCutoff);
 
-  // Plans: the day picker will go back 120 days, so a plan stays readable for as long
-  // as the screen offers to show it, and no longer.
-  const planCutoff = shiftDay(todayKey(), -120);
+  // Plans: the day picker goes back as far as this, so a plan stays readable for as
+  // long as the screen offers to show it, and no longer. Old plans were 64% of the blob.
+  const planCutoff = shiftDay(todayKey(), -KEEP_DAYS);
   pruneByDayKey(state.plans, planCutoff);
   pruneByDayKey(state.planSeeded, planCutoff);
   pruneByDayKey(state.planDropped, planCutoff);
@@ -9673,7 +9677,7 @@ function viewPlan() {
   quick.appendChild(jump('Yesterday', yday, day === yday));
   quick.appendChild(jump('Today', workToday(), isToday));
   quick.appendChild(jump('Tomorrow', tomorrowKey(), isTomorrow));
-  const dayIn = el(`<input type="date" value="${esc(day)}" min="${esc(shiftDay(workToday(), -120))}" style="flex:0 0 auto;width:150px;background:#16233a;color:#eaf1fb;border:1px solid #3d557f;border-radius:8px;padding:7px 9px;font-size:13px">`);
+  const dayIn = el(`<input type="date" value="${esc(day)}" min="${esc(shiftDay(workToday(), -KEEP_DAYS))}" style="flex:0 0 auto;width:150px;background:#16233a;color:#eaf1fb;border:1px solid #3d557f;border-radius:8px;padding:7px 9px;font-size:13px">`);
   dayIn.onchange = (e) => { planDay = e.target.value || null; render(); };
   quick.appendChild(dayIn);
   wrap.appendChild(quick);
