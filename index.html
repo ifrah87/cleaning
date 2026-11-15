@@ -4099,7 +4099,7 @@ function setTab(t, opts) {
     _navStack.push(state.tab);
     if (_navStack.length > 12) _navStack.shift();
   }
-  state.tab = t; _assignPick = null; _roomMove = null; _reassign = null; save(); render();
+  state.tab = t; _assignPick = null; _roomMove = null; _reassign = null; _leaving = null; save(); render();
 }
 function goBack() {
   const prev = _navStack.pop();
@@ -5947,6 +5947,93 @@ function applyReassign(pid) {
     + (r.when === 'today' ? ' today' : r.when === 'tomorrow' ? ' tomorrow' : ' from now on') : '')
     + (kept.length ? (moved.length ? ' · ' : '') + kept.join(', ') + ' already cleaned today, left as is' : '') };
   save(); render();
+}
+// SOMEBODY HAS LEFT — ONE SHEET. Ifrah, 15 Nov 2026: when Abdullahi left it took a room
+// move per room and then a role change, through two different screens, and a communal job
+// in his name was still on the board next morning. Here: every room of theirs with who
+// takes it (a suggestion already picked — fewest rooms, early cap respected), one button.
+// The person stays on the staff list as "not cleaning", so their history keeps its name.
+let _leaving = null;       // { pid, picks: { unitId: pid|'' } }
+function leavingCandidates(pid) {
+  // Rooms go to the people who keep rooms (leaders) — the same rule as the hand-out.
+  return cleaningStaff().filter((p) => p.id !== pid && p.isCleaner && p.isLeader && takesRooms(p) && !(state.removedStaff || {})[p.id]);
+}
+function leavingLoad(id, picks, leaverId) {
+  let rooms = 0, early = 0;
+  (state.servicedUnits || []).forEach((u) => {
+    if (u.paused) return;
+    const who = u.usualTo === leaverId ? (picks[u.id] || null) : u.usualTo;
+    if (who !== id) return;
+    rooms += 1; if (timeSlot(u) === 'early') early += 1;
+  });
+  return { rooms, early };
+}
+function openLeaving(pid) {
+  const mine = (state.servicedUnits || []).filter((u) => u.usualTo === pid && !u.paused)
+    .sort((a, b) => (timeSlot(a) === 'early' ? 0 : 1) - (timeSlot(b) === 'early' ? 0 : 1));
+  const picks = {};
+  const cands = leavingCandidates(pid);
+  mine.forEach((u) => {
+    const early = timeSlot(u) === 'early';
+    const best = cands.map((p) => ({ p, l: leavingLoad(p.id, picks, pid) }))
+      .filter((x) => !early || x.l.early < earlyCap())
+      .sort((a, b) => (a.l.rooms - b.l.rooms) || (a.l.early - b.l.early) || String(a.p.name).localeCompare(String(b.p.name)))[0];
+    picks[u.id] = best ? best.p.id : '';
+  });
+  _leaving = { pid, picks };
+  render();
+}
+function confirmLeaving() {
+  const L = _leaving;
+  if (!L) return;
+  Object.keys(L.picks).forEach((uid) => moveRoomTo(uid, L.picks[uid] || null));
+  setRole(L.pid, 'none');            // also releases anything else still in their name
+  _leaving = null;
+  save(); render();
+}
+function leavingSheet() {
+  const L = _leaving;
+  const who = (state.staff || []).find((p) => p.id === L.pid);
+  const overlay = el('<div class="modal-overlay"></div>');
+  const modal = el('<div class="modal" style="max-height:88vh;overflow:auto"></div>');
+  modal.appendChild(el(`<div class="modal-title">${esc(who ? who.name : '')} has left</div>`));
+  modal.appendChild(el(`<div class="modal-sub" style="margin-bottom:12px">`
+    + `They come off the board and the cleaners list (kept on staff, so their history stays). `
+    + `Choose who takes each of their rooms from today on — a fair pick is already made.</div>`));
+  const cands = leavingCandidates(L.pid);
+  const ids = Object.keys(L.picks);
+  if (!ids.length) modal.appendChild(el('<div class="empty">They have no rooms of their own.</div>'));
+  ids.forEach((uid) => {
+    const u = state.servicedUnits.find((x) => x.id === uid);
+    if (!u) return;
+    const early = timeSlot(u) === 'early';
+    const row = el('<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"></div>');
+    row.appendChild(el(`<div style="flex:0 0 74px;font-weight:800;color:#eaf1fb">${early ? '🌅 ' : ''}${esc(u.unit)}</div>`));
+    const sel = el('<select class="area-select" style="flex:1;min-width:0"></select>');
+    sel.appendChild(el(`<option value="">Nobody yet</option>`));
+    cands.forEach((p) => {
+      const l = leavingLoad(p.id, L.picks, L.pid);
+      const mineNow = L.picks[uid] === p.id;
+      const over = early && !mineNow && l.early >= earlyCap();
+      const o = el(`<option value="${esc(p.id)}">${esc(p.name)} — ${l.rooms} room${l.rooms === 1 ? '' : 's'}, ${l.early} early${over ? ' (over early cap)' : ''}</option>`);
+      sel.appendChild(o);
+    });
+    sel.value = L.picks[uid] || '';
+    sel.onchange = () => { L.picks[uid] = sel.value; render(); };
+    row.appendChild(sel);
+    modal.appendChild(row);
+    if (early && !L.picks[uid]) modal.appendChild(el(`<div style="font-size:11px;color:#fbbf24;margin:-4px 0 8px 82px">`
+      + `Everybody already has ${earlyCap()} early rooms — pick somebody anyway, or leave it in NOBODY YET.</div>`));
+  });
+  const row = el('<div class="modal-btns"></div>');
+  const cancel = el('<button class="modal-skip">Cancel</button>');
+  cancel.onclick = () => { _leaving = null; render(); };
+  const ok = el(`<button class="modal-confirm">Confirm — ${esc(who ? String(who.name).split(' ')[0] : '')} has left</button>`);
+  ok.onclick = confirmLeaving;
+  row.appendChild(cancel); row.appendChild(ok);
+  modal.appendChild(row);
+  overlay.appendChild(modal);
+  return overlay;
 }
 function reassignSheet() {
   const r = _reassign;
@@ -8216,13 +8303,53 @@ function addUnitForm(opts) {
   });
   form.appendChild(freqRow);
 
+  // EVERYTHING ABOUT A NEW ROOM IN ONE GO. Ifrah, 15 Nov 2026 ("make sure the app is easy
+  // to use"): adding 902 as once-a-week-on-Thursday, not early, Abukar's, took the add
+  // form, then the room's card for its days, then the Team page for its cleaner — and
+  // the days already planned did not get it until the app was opened again. Days, the
+  // morning tick and the cleaner are asked here; all optional, so a quick add is still
+  // just a number and a button.
+  const pickedDays = new Set();
+  const daysRow = el(`<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px;align-items:center"></div>`);
+  daysRow.appendChild(el(`<div style="font-size:11px;color:#5f7189;font-weight:600;width:100%;margin-bottom:2px">Days (optional — leave blank to follow how often)</div>`));
+  [[6, 'Sat'], [0, 'Sun'], [1, 'Mon'], [2, 'Tue'], [3, 'Wed'], [4, 'Thu'], [5, 'Fri']].forEach(([d, lbl]) => {
+    const b = el(`<button class="freqmini" style="flex:0 0 auto;padding:6px 9px">${lbl}</button>`);
+    b.onclick = () => { if (pickedDays.has(d)) { pickedDays.delete(d); b.classList.remove('on'); } else { pickedDays.add(d); b.classList.add('on'); } };
+    daysRow.appendChild(b);
+  });
+  let wantEarly = false;
+  const earlyBtn = el(`<button class="freqmini" style="flex:0 0 auto;padding:6px 9px;margin-left:auto">🌅 Early room</button>`);
+  earlyBtn.onclick = () => { wantEarly = !wantEarly; earlyBtn.classList.toggle('on', wantEarly); };
+  daysRow.appendChild(earlyBtn);
+  // Guest flats are given out by hand after the offices (OFF_ROLL_CALL_TYPES): no extras.
+  const fullAdd = types.indexOf('airbnb') < 0;
+  if (fullAdd) form.appendChild(daysRow);
+  const who = el(`<select class="area-select" style="width:100%;margin-bottom:10px"><option value="">Cleaner: nobody yet</option></select>`);
+  cleaningStaff().filter((p) => takesRooms(p)).forEach((p) => {
+    const n = (state.servicedUnits || []).filter((u) => u.usualTo === p.id && !u.paused).length;
+    who.appendChild(el(`<option value="${esc(p.id)}">Cleaner: ${esc(p.name)} (${n} room${n === 1 ? '' : 's'})</option>`));
+  });
+  if (fullAdd) form.appendChild(who);
+
   const addBtn = el(`<button class="add-btn">+ Add unit</button>`);
   addBtn.onclick = () => {
     const u = document.getElementById('newUnit').value;
     const g = document.getElementById('newGuest').value;
     const tm = inT ? inT.value : '';
     if (!u.trim()) { document.getElementById('newUnit').focus(); return; }
+    const days = Array.from(pickedDays).sort(), pid = who.value, early = wantEarly;
+    const before = new Set((state.servicedUnits || []).map((x) => x.id));
     addServicedUnit(u, g, chosenFreq, chosenType, tm);
+    const added = (state.servicedUnits || []).find((x) => !before.has(x.id));
+    if (!added) return;                                     // already in the list — the add said so
+    let touched = false;
+    if (days.length) { added.days = days; added.daysAuto = false; touched = true; }
+    if (early) { added.preferEarly = true; added.preferLate = false; touched = true; }
+    if (touched) stampUnitEdit(added);
+    if (pid) moveRoomTo(added.id, pid);
+    // Onto the days already planned now, not the next time somebody opens the app.
+    ensureWeekPlanned();
+    save(); render();
   };
   form.appendChild(addBtn);
   return form;
@@ -13808,7 +13935,11 @@ function employeeCard(p) {
   info.appendChild(el(`<div class="person-name">${esc(p.name)}`
     + ` <span style="color:${ROLES[role].color};font-size:12px;font-weight:700">`
     + `${ROLES[role].icon}${ROLES[role].label}</span></div>`));
-  info.appendChild(el(`<div class="person-floors">${esc(p.crew || 'No team')} · ${esc(personFloors(p))}</div>`));
+  // Their rooms, not the old team letter and floors (see OLD_TEAM_LETTER).
+  info.appendChild(el(`<div class="person-floors">${esc([OLD_TEAM_LETTER.test(String(p.crew || '').trim()) ? '' : (p.crew || ''),
+    (() => { const r = (state.servicedUnits || []).filter((u) => u.usualTo === p.id && !u.paused).map((u) => String(u.unit))
+      .sort((x, y) => x.localeCompare(y, undefined, { numeric: true }));
+      return r.length ? 'Rooms ' + r.join(', ') : 'No rooms'; })()].filter(Boolean).join(' · '))}</div>`));
   top.appendChild(info);
   card.appendChild(top);
 
@@ -13867,7 +13998,13 @@ function employeeCard(p) {
   ed.onclick = () => startEditEmp(p.id);
   const rm = el(`<button class="su-rm">Remove</button>`);
   rm.onclick = () => removeEmployee(p.id);
-  ctl.appendChild(shift); ctl.appendChild(ctype); ctl.appendChild(ed); ctl.appendChild(rm);
+  ctl.appendChild(shift); ctl.appendChild(ctype); ctl.appendChild(ed);
+  if (p.isCleaner) {
+    const lf = el(`<button class="su-rm" style="color:#fbbf24;border-color:#a16207">👋 Left</button>`);
+    lf.onclick = () => openLeaving(p.id);
+    ctl.appendChild(lf);
+  }
+  ctl.appendChild(rm);
   card.appendChild(ctl);
 
   // WORKS AT — which building, on which day. Sits above the rest-day rota because it is
@@ -15185,10 +15322,14 @@ const tvFloorLabel = (p) => {
   const txt = runs.map(([a, b]) => (a === b ? a : a + '-' + b)).join(', ');
   return (f.length > 1 ? 'Floors ' : 'Floor ') + txt;
 };
+// NO OLD TEAM LETTERS, NO FLOORS. Ifrah, 15 Nov 2026: since 4 Nov everybody keeps their
+// own rooms, so "Team I · Floor 8" under a name was a leftover from the old way of
+// working and often wrong (Abdullahi read "Floor 8" with floor 8 long given away). A
+// crew that names a real job — Outside team, Security/Mosque — still says so.
+const OLD_TEAM_LETTER = /^team\s+[a-z]$/i;
 const tvTeam = (p) => {
   const crew = String((p && p.crew) || '').trim();
-  const fl = tvFloorLabel(p);
-  return fl ? (crew ? crew + ' \u00b7 ' + fl : fl) : crew;
+  return OLD_TEAM_LETTER.test(crew) ? '' : crew;
 };
 
 // Every job on today's board, grouped by who is holding it. Rooms and communal
@@ -15993,8 +16134,7 @@ function tvAlsoStrip() {
     // Off the round does not always mean off the building's floor plan - somebody can
     // hold a floor and still not be on this morning's office round. Where they do,
     // say which, because "who is on six?" is the question this line gets asked.
-    const fl = tvFloorLabel(p);
-    if (fl) row.appendChild(el(`<span class="at">${esc(fl)}</span>`));
+    // (No floor printed here any more — floors stopped meaning anything on 4 Nov 2026.)
     // BOTH TIMES HERE, unlike the roll call above. The crew chips deliberately carry
     // one time and not two - twelve of them at double width took four rows and pushed
     // the board off the bottom of the screen. This line is text rather than chips and
@@ -17173,6 +17313,7 @@ function render() {
     + `</div>`));
 
   if (_reassign) app.appendChild(reassignSheet());
+  if (_leaving) app.appendChild(leavingSheet());
 
   // --- Cover confirmation popup ---
   if (state.pendingCover) {

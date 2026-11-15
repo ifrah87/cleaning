@@ -132,7 +132,7 @@ const check = (n, ok, d) => { results.push([n, !!ok]); console.log((ok ? '  \x1b
     out.rotaChanges = !rp.slice(1).some((x, i) => x.some((id) => rp[i].indexOf(id) >= 0));
     const before = JSON.stringify(state.lateShiftDraws);
     out.rotaStill = ensureLateShift() === false && JSON.stringify(state.lateShiftDraws) === before;
-    state.tab = 'team'; render();
+    state.tab = 'team'; _teamMoreOpen = true; render();   // the rota sits under "More team settings"
     const shown = document.body.innerText;
     out.rotaShown = shown.toLowerCase().indexOf('thursday rota') >= 0
       && rota.every((d) => shown.indexOf(fmtDay(d)) >= 0 && shown.indexOf(lateShiftNames(state.lateShiftDraws[d])) >= 0);
@@ -178,7 +178,7 @@ const check = (n, ok, d) => { results.push([n, !!ok]); console.log((ok ? '  \x1b
     const tally = lateShiftTally();
     out.swapTally = !!tally.worked.H0 && tally.worked.H0 === 1;
     // And the same through the screen: Change opens the Thursday, Pick for me swaps.
-    state.tab = 'team'; render();
+    state.tab = 'team'; _teamMoreOpen = true; render();   // the rota sits under "More team settings"
     const btn = (txt) => Array.from(document.querySelectorAll('button')).filter((b) => b.textContent.trim() === txt);
     btn('Change')[0].click();
     const peopleBefore = state.lateShiftDraws[rota[0]].people.join();
@@ -200,7 +200,7 @@ const check = (n, ok, d) => { results.push([n, !!ok]); console.log((ok ? '  \x1b
     state.tab = 'board'; render();
     out.board = document.body.innerText.indexOf('Late shift 10:00–20:00') >= 0
       && document.body.innerText.indexOf('Helper One, Leader1 Surname') >= 0;
-    state.tab = 'team'; render();
+    state.tab = 'team'; _teamMoreOpen = true; render();   // the rota sits under "More team settings"
     out.teamTab = document.body.innerText.toLowerCase().indexOf('thursday rota') >= 0;
 
     // Switched off, nothing shows anywhere.
