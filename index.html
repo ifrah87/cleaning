@@ -1891,6 +1891,165 @@ function setTeamShuffle(on) {
   save(); render();
 }
 
+// THE DAILY ROOM SHUFFLE. Ifrah, 15 Nov 2026: "shuffle the rooms daily … so people are
+// never doing the same rooms unless I've fixed them". With it on, every day ahead is dealt
+// out fresh, once, when it is laid out: a room ticked FIXED stays with its regular cleaner,
+// a room somebody put on a person by hand stays where it was put, and everything else goes
+// round the crew rostered on that day.
+//
+// The rules are the hand-out's own: leaders only, nobody "rooms by hand only", the early
+// cap (a morning room nobody can take stays in NOBODY YET rather than going over it), and
+// the load kept level. On top of that, nobody is given a room they had on any of the last
+// SHUFFLE_LOOKBACK days if anybody else rostered on can take it.
+//
+// SEEDED BY THE DAY, not Math.random, for the same reason as the team draw: two devices
+// laying out the same day from the same state must come out with the same answer.
+//
+// A dealt room is marked byHand, so every other pass leaves it alone exactly as it leaves
+// a hand move alone — the five-minute re-pin, the rebuild, the morning carry — and also
+// `shuffled`, so the shuffle (and only the shuffle) can tell its own picks from a person's.
+const SHUFFLE_LOOKBACK = 3;
+function dailyShuffleOn() { return !!(state.dailyShuffle && state.dailyShuffle.on); }
+const isFixedRoom = (u) => !!(u && u.fixed);
+function dayWasShuffled(plan) {
+  return Object.keys(plan || {}).some((k) => plan[k] && plan[k].shuffled);
+}
+// Who had this room on the days just before — nearer days weigh more.
+function recentRoomHolders(u, day) {
+  const w = {};
+  const k = planKey('unit', u.id);
+  for (let i = 1; i <= SHUFFLE_LOOKBACK; i += 1) {
+    const d = shiftDay(day, -i);
+    const j = state.plans && state.plans[d] && state.plans[d][k];
+    if (j && j.assignedTo) w[j.assignedTo] = (w[j.assignedTo] || 0) + (SHUFFLE_LOOKBACK + 1 - i);
+  }
+  // Whoever actually ticked it most recently counts too: the plan says who was meant to.
+  if (u.lastCleanedBy && u.lastCleaned && u.lastCleaned >= shiftDay(day, -SHUFFLE_LOOKBACK)) {
+    w[u.lastCleanedBy] = (w[u.lastCleanedBy] || 0) + SHUFFLE_LOOKBACK;
+  }
+  return w;
+}
+function shuffleDay(day, force) {
+  if (TV_MODE || !dailyShuffleOn() || day <= workToday()) return 0;
+  const plan = state.plans && state.plans[day];
+  if (!plan || !Object.keys(plan).length) return 0;
+  if (!force && dayWasShuffled(plan)) return 0;
+  const crew = cleaningStaff().filter((p) => takesRooms(p) && p.isLeader && worksOnDay(p, day));
+  if (!crew.length) return 0;
+  const ids = crew.map((p) => p.id);
+  const inCrew = new Set(ids);
+  const unitById = {};
+  (state.servicedUnits || []).forEach((u) => { unitById[u.id] = u; });
+  const roomOf = (k) => unitById[plan[k].refId];
+  const keys = Object.keys(plan).filter((k) => plan[k].kind === 'unit' && roomOf(k) && !neverAutoDealt(roomOf(k)));
+  const load = {}, early = {};
+  ids.forEach((id) => { load[id] = 0; early[id] = 0; });
+  const count = (k, id) => {
+    if (!inCrew.has(id)) return;
+    load[id] += 1;
+    if (timeSlot(roomOf(k)) === 'early') early[id] += 1;
+  };
+  const open = [];
+  keys.forEach((k) => {
+    const j = plan[k], u = roomOf(k);
+    if (j.byHand && !j.shuffled && j.assignedTo) { count(k, j.assignedTo); return; }   // a person's decision
+    if (isFixedRoom(u)) {
+      const owner = pinnedOwnerFor(u, day);
+      delete j.shuffled; delete j.byHand;
+      j.assignedTo = owner ? owner.id : null;
+      if (owner) count(k, owner.id);
+      return;
+    }
+    open.push(k);
+  });
+  const rnd = seededRandom('shuffle|' + day);
+  const tie = {};
+  ids.slice().sort().forEach((id) => { tie[id] = rnd(); });
+  const order = open.slice().sort().map((k) => ({ k, r: rnd(), e: timeSlot(roomOf(k)) === 'early' ? 0 : 1 }))
+    .sort((a, b) => (a.e - b.e) || (a.r - b.r)).map((x) => x.k);
+  const CAP = earlyCap();
+  order.forEach((k) => {
+    const u = roomOf(k), j = plan[k];
+    const isEarly = timeSlot(u) === 'early';
+    const recent = recentRoomHolders(u, day);
+    // The room's regular cleaner is exactly what the shuffle sets aside, so it is asked
+    // the hand-out's question about everything EXCEPT that tie (mayGiveRoomTo refuses
+    // anybody but the regular cleaner while they are in).
+    const loose = { ...u, usualTo: null };
+    const able = ids.filter((id) => mayGiveRoomTo(loose, id, day) && (!isEarly || early[id] < CAP));
+    const fresh = able.filter((id) => !recent[id]);
+    const pool = fresh.length ? fresh : able;
+    const pick = pool.slice().sort((a, b) => (load[a] - load[b])
+      || ((recent[a] || 0) - (recent[b] || 0)) || (tie[a] - tie[b]))[0];
+    j.shuffled = true;
+    if (pick) { j.assignedTo = pick; j.byHand = true; count(k, pick); }
+    else { j.assignedTo = null; delete j.byHand; }           // nobody can take it: NOBODY YET
+  });
+  // EVEN IT OUT WITHOUT A REPEAT. Steering clear of yesterday's cleaner can leave one
+  // person two rooms ahead of another. Move a shuffled room from the busiest to the
+  // quietest — only to somebody who has not had it lately and has early room to spare.
+  const uncount = (k, id) => { load[id] -= 1; if (timeSlot(roomOf(k)) === 'early') early[id] -= 1; };
+  for (let guard = order.length * 2; guard > 0; guard -= 1) {
+    const ranked = ids.slice().sort((a, b) => (load[a] - load[b]) || (tie[a] - tie[b]));
+    const lo = ranked[0], hi = ranked[ranked.length - 1];
+    if (load[hi] - load[lo] <= 1) break;
+    let moved = false;
+    for (const from of ranked.slice().reverse()) {
+      if (load[from] - load[lo] <= 1) break;
+      const k = order.find((x) => {
+        if (plan[x].assignedTo !== from) return false;
+        const u = roomOf(x);
+        // Levelling may hand back a room somebody had two or three days ago; never yesterday's.
+        const y = state.plans && state.plans[shiftDay(day, -1)] && state.plans[shiftDay(day, -1)][x];
+        if (y && y.assignedTo === lo) return false;
+        if (timeSlot(u) === 'early' && early[lo] >= CAP) return false;
+        return mayGiveRoomTo({ ...u, usualTo: null }, lo, day);
+      });
+      if (!k) continue;
+      uncount(k, from); plan[k].assignedTo = lo; count(k, lo); moved = true; break;
+    }
+    if (!moved) break;
+  }
+  stampPlanEdit(day);
+  return order.length;
+}
+function setDailyShuffle(on) {
+  state.dailyShuffle = { ...(state.dailyShuffle || {}), on: !!on };
+  const today = workToday();
+  Object.keys(state.plans || {}).filter((d) => d > today).sort().forEach((d) => {
+    if (on) { shuffleDay(d, true); return; }
+    // Off: the shuffle's picks are cleared and the day is dealt the usual way again.
+    // Anything a person put down by hand stays.
+    const plan = state.plans[d];
+    let touched = false;
+    Object.keys(plan).forEach((k) => {
+      if (!plan[k].shuffled) return;
+      delete plan[k].shuffled; delete plan[k].byHand; plan[k].assignedTo = null; touched = true;
+    });
+    if (touched) { autoPlanDay(d); stampPlanEdit(d); }
+  });
+  save(); render();
+}
+function setUnitFixed(id, on) {
+  const u = (state.servicedUnits || []).find((x) => x.id === id);
+  if (!u) return;
+  if (on) u.fixed = true; else delete u.fixed;
+  stampUnitEdit(u);
+  // Fixing a room takes it back to its cleaner on the days already shuffled.
+  if (on) {
+    const k = planKey('unit', id);
+    Object.keys(state.plans || {}).filter((d) => d > workToday()).forEach((d) => {
+      const j = state.plans[d][k];
+      if (!j || !j.shuffled) return;
+      const owner = pinnedOwnerFor(u, d);
+      delete j.shuffled; delete j.byHand;
+      j.assignedTo = owner ? owner.id : null;
+      stampPlanEdit(d);
+    });
+  }
+  save(); render();
+}
+
 function buildTeamAltRota(dow, picked, day) {
   const all = rotaTeams();
   const inNow = (picked || []).filter((t) => all.indexOf(t) >= 0);
@@ -2706,7 +2865,7 @@ const DEVICE_KEYS = ['tab', 'tickFilter', 'roomsFilter', 'expandedFloors', 'expa
   'editingEmp', 'editingUnit', 'editingArea', 'rcFold', 'rcSetupOpen', 'checkExpanded',
   'shutGroups', 'pendingCover'];
 const SETTING_KEYS = ['autoAssign', 'autoConfirm', 'autoBalance', 'autoDays', 'earlyCap',
-  'lockOnDeal', 'floors', 'rollCallTypes', 'teams', 'thursdaySweep', 'fridayAuto', 'teamShuffle', 'lateShift'];
+  'lockOnDeal', 'floors', 'rollCallTypes', 'teams', 'thursdaySweep', 'fridayAuto', 'teamShuffle', 'lateShift', 'dailyShuffle'];
 let _settingsSeen = null;
 // Stamped from one place rather than from every switch in Settings: there are a dozen
 // setters and a stamp missing from any one of them is a setting that can still be
@@ -8800,6 +8959,7 @@ function ensureWeekPlanned(nDays) {
   // from the rota, because the door reader decides who is actually in.
   for (let i = 0; i <= span; i += 1) {
     const r = ensureDayPlanned(shiftDay(workToday(), i));
+    if (i >= 1) shuffleDay(shiftDay(workToday(), i));   // the daily shuffle, if it is on — once per day
     const n = (r.seeded || 0) + (r.added || 0);
     if (n || r.assigned) days += 1;
     jobs += n; assigned += (r.assigned || 0);
@@ -8973,7 +9133,7 @@ function resyncPlanDay(day, addOnly) {
     // Only a hand-out somebody actually made is protected now. Rooms dealt by the
     // machine have no such claim, and jobs from before this flag existed carry no
     // mark — which is what lets the days already wrong put themselves right.
-    if (plan[k].byHand) return;
+    if (plan[k].byHand && !plan[k].shuffled) return;   // a shuffle pick is not a person's claim
     // Drawn up before the schedule moved under it — see keepTodayThroughDayChange.
     if (plan[k].keep) return;
     delete plan[k]; removed += 1;
@@ -9296,6 +9456,18 @@ function togglePlanJob(day, kind, id, label) {
   else { plan[k] = { kind, refId: id, label, assignedTo: null }; unmarkPlanDropped(day, k); }
   save(); render();
 }
+// Take one room off one future day's plan — the same as unticking it on Plan a Day:
+// dropped, so the re-sync does not put it straight back.
+function takeRoomOffDay(day, unitId) {
+  if (!day || day <= workToday()) return;
+  const k = planKey('unit', unitId);
+  const plan = getPlan(day);
+  if (!plan[k]) return;
+  delete plan[k];
+  markPlanDropped(day, k);
+  stampPlanEdit(day);
+  save(); render();
+}
 function droppedFor(day) { if (!state.planDropped) state.planDropped = {}; return state.planDropped[day] || null; }
 function markPlanDropped(day, k) {
   if (!state.planDropped) state.planDropped = {};
@@ -9325,6 +9497,7 @@ function setPlanAssignee(day, k, pid) {
   if (plan[k]) {
     plan[k].assignedTo = pid || null;
     if (pid) plan[k].byHand = true; else delete plan[k].byHand;
+    delete plan[k].shuffled;        // a person has decided now; the shuffle must not re-deal it
   }
   mirrorPlanToBoard(day, k);
   save(); render();
@@ -11174,6 +11347,26 @@ function viewTick() {
         // a wrong room is seen, and it had no way off: the only remove was on Plan a Day.
         // A skip, so the room is back on its next day and today does not count as missed.
         // A ticked room was cleaned, so that has to be unticked first.
+        // …AND ON THE TOMORROW VIEW (Ifrah, 15 Nov: "I should be able to delete rooms on the
+        // schedule"). There it takes the room off that day's plan, as Plan a Day does —
+        // nothing about today is touched, so it is safe on a board that is otherwise read-only.
+        const offDay = readOnly ? shiftDay(workToday(), _boardDay) : null;
+        if (readOnly && offDay > workToday() && !j.area && u) {
+          const askOffDay = () => showConfirm('Take ' + String(j.label).replace(/^Unit\s+/, '') + ' off ' + fmtDay(offDay) + '?',
+            'It comes off that day only and is back on its next day. Nobody else\'s rooms move.\n\n'
+            + 'Changed your mind? Put it back on Plan a Day.',
+            () => takeRoomOffDay(offDay, u.id), 'Take it off', 'safe');
+          let holdT = null;
+          const dropHold = () => { clearTimeout(holdT); holdT = null; };
+          chip.addEventListener('pointerdown', (e) => {
+            if (e.button) return;
+            holdT = setTimeout(() => { holdT = null; askOffDay(); }, BOARD_HOLD_MS);
+          });
+          chip.addEventListener('pointerup', dropHold);
+          chip.addEventListener('pointerleave', dropHold);
+          chip.addEventListener('pointercancel', dropHold);
+          chip.addEventListener('contextmenu', (e) => { e.preventDefault(); dropHold(); askOffDay(); });
+        }
         if (!readOnly && !j.area) {
           const askOff = () => {
             if (j.done) { showInfo(j.label + ' is ticked as cleaned', 'Tap it to untick it first, then hold it again.'); return; }
@@ -11889,6 +12082,10 @@ function servicedCard(u, isDue) {
   const late = el(`<button class="freqmini ${u.preferLate?'on':''}" title="Customer would rather this was left until the afternoon">${u.preferLate?'🌇 Afternoon':'🌇 Prefers afternoon'}</button>`);
   late.onclick = () => setUnitPreferLate(u.id, !u.preferLate);
   ctl.appendChild(late);
+  // FIXED: the daily shuffle leaves this room with its regular cleaner every day.
+  const fixedBtn = el(`<button class="freqmini ${u.fixed ? 'on' : ''}" title="Daily shuffle: always the same cleaner">${u.fixed ? '📌 Fixed' : '📌 Fix cleaner'}</button>`);
+  fixedBtn.onclick = () => setUnitFixed(u.id, !u.fixed);
+  ctl.appendChild(fixedBtn);
   // Between the preferences and Remove, because that is what it is: a standing fact about
   // the room, and the thing to reach for instead of Remove when a suite stops taking
   // cleaning. Says what it does in the office's own words rather than "paused".
@@ -14249,6 +14446,39 @@ function viewTeam() {
   if (cleaners) roomOwnersPanel(wrap);
   if (cleaners) roundListPanel(wrap);
   if (cleaners) wrap.appendChild(floorAllocationBox());
+
+  // THE DAILY ROOM SHUFFLE — see shuffleDay. One switch; the per-room "📌 Fix cleaner"
+  // tick on the Rooms page is the only other setting.
+  if (cleaners) {
+    const box = el('<div style="margin-bottom:14px"></div>');
+    box.appendChild(el(`<div class="section-label">Rooms — shuffled every day</div>`));
+    const on = dailyShuffleOn();
+    const tog = el(`<button class="add-btn" style="background:${on ? '#15803d' : '#101c30'};`
+      + `color:${on ? '#ffffff' : '#7ea6dc'};border:1px solid ${on ? '#15803d' : '#3d557f'}">`
+      + (on ? '🔀 Rooms shuffled daily — ON' : '🔀 Shuffle the rooms every day — OFF') + `</button>`);
+    tog.onclick = () => {
+      if (on) {
+        showConfirm('Stop shuffling the rooms?',
+          'From tomorrow every room goes back to its regular cleaner. Rooms you moved by hand stay where you put them.',
+          () => setDailyShuffle(false), 'Stop', 'safe');
+      } else {
+        showConfirm('Shuffle the rooms every day?',
+          'From tomorrow, every room is dealt out fresh each day to whoever is working, '
+          + 'so nobody gets a room they had in the last ' + SHUFFLE_LOOKBACK + ' days.\n\n'
+          + 'Still 2 early rooms each at most, and the rooms are spread evenly.\n\n'
+          + 'A room ticked "📌 Fixed" on the Rooms page always stays with its regular cleaner. '
+          + 'A room you move by hand stays where you put it.\n\nToday is not changed.',
+          () => setDailyShuffle(true), 'Start', 'safe');
+      }
+    };
+    box.appendChild(tog);
+    const fixed = (state.servicedUnits || []).filter((u) => u.fixed && !u.paused)
+      .map((u) => String(u.unit)).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    box.appendChild(el(`<div style="font-size:12px;font-weight:700;color:#b7c8de;background:#101c30;`
+      + `border-radius:8px;padding:8px 10px;margin-top:8px;line-height:1.6">📌 Fixed rooms: `
+      + esc(fixed.length ? fixed.join(', ') : 'none — tick "📌 Fix cleaner" on a room') + `</div>`));
+    wrap.appendChild(box);
+  }
 
   // THE WEEKLY RESHUFFLE — see drawTeams. Shows who is with whom now and, when it is on,
   // who will be from Saturday, so the office can tell people before it happens.
