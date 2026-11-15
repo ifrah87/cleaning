@@ -15673,9 +15673,15 @@ function tvColumnsForDay(day) {
   const byId = {}; (state.staff || []).forEach((p) => { byId[p.id] = p; });
   const uById = {}; (state.servicedUnits || []).forEach((u) => { uById[u.id] = u; });
   const buckets = {}, order = [];
+  const aById = {}; (state.areas || []).forEach((a) => { aById[a.id] = a; });
   Object.values(plan).forEach((j) => {
+    // AN AREA BELONGS TO ITS STANDING OWNER UNLESS THE PLAN SAYS OTHERWISE. The plan
+    // never names anybody on an area — the live board reads the area's own owner — so
+    // tomorrow showed Business, the Lobby and the rest under NOBODY YET and Abdullahi,
+    // who has only Business, was missing from tomorrow altogether (Ifrah, 15 Nov 2026).
+    const who = j.assignedTo || (j.kind !== 'unit' && aById[j.refId] ? aById[j.refId].assignedTo : null);
     // Same rule as the live board: a name the rota has off that day is not holding it.
-    const k = (j.assignedTo && onDutyForDay(byId[j.assignedTo], day)) ? j.assignedTo : '__none__';
+    const k = (who && onDutyForDay(byId[who], day)) ? who : '__none__';
     if (!buckets[k]) { buckets[k] = []; order.push(k); }
     const u = j.kind === 'unit' ? uById[j.refId] : null;
     buckets[k].push({
