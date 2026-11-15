@@ -6051,11 +6051,16 @@ function roomOwnersPanel(wrap) {
   const card = (title, list) => {
     const c = el('<div style="border:1px solid #1e2f4d;border-radius:10px;padding:10px 12px;margin-bottom:8px;background:#101c30"></div>');
     c.appendChild(el(`<div style="font-size:13px;font-weight:800;color:#eaf1fb;margin-bottom:6px">${esc(title)} `
-      + `<span style="font-size:11px;font-weight:700;color:#5f7189">${list.length} room${list.length === 1 ? '' : 's'}</span></div>`));
+      + `<span style="font-size:11px;font-weight:700;color:#5f7189">${list.length} room${list.length === 1 ? '' : 's'}`
+      // The early count beside the room count, red over the cap: the rule the office set
+      // ("2 early rooms maximum") is checked here at a glance instead of by counting.
+      + (() => { const e = list.filter((u) => timeSlot(u) === 'early').length; const over = e > earlyCap();
+          return e ? ` · <span style="color:${over ? '#f87171' : '#fbbf24'}">🌅 ${e} early${over ? ' — over ' + earlyCap() : ''}</span>` : ''; })()
+      + `</span></div>`));
     const chips = el('<div style="display:flex;flex-wrap:wrap;gap:6px"></div>');
     list.forEach((u) => {
       const t = eodTimetableOf(u);
-      const b = el(`<button class="freqmini" style="flex:0 0 auto;padding:7px 10px">${esc(u.unit)}`
+      const b = el(`<button class="freqmini" style="flex:0 0 auto;padding:7px 10px">${timeSlot(u) === 'early' ? '🌅 ' : ''}${esc(u.unit)}${u.fixed ? ' 📌' : ''}`
         + (t === 'A' || t === 'B' ? ` <span style="opacity:0.6">${t}</span>` : '') + `</button>`);
       b.onclick = () => { _roomMove = u.id; render(); };
       chips.appendChild(b);
@@ -7810,12 +7815,45 @@ function setRole(id, role) {
   p.isCleaner = role !== 'none';
   p.isLeader = role === 'leader';
   stampStaffEdit(p);
+  if (!p.isCleaner) releaseWorkOf(id);
   save(); render();
 }
 function toggleCleaner(id) {
   const p = state.staff.find((s) => s.id === id);
-  if (p) { p.isCleaner = !p.isCleaner; stampStaffEdit(p); }
+  if (p) { p.isCleaner = !p.isCleaner; stampStaffEdit(p); if (!p.isCleaner) releaseWorkOf(id); }
   save(); render();
+}
+// SOMEBODY WHO IS NOT A CLEANER ANY MORE HOLDS NO WORK. Ifrah, 15 Nov 2026: Abdullahi was
+// taken off the crew, and the board still showed a column for him the next morning
+// because the Mosque was still in his name — nobody was coming to do it, and nothing
+// on screen said so. Everything in his name from today on goes back to NOBODY YET, where
+// it can be seen and given out. Days already worked keep their record.
+function releaseWorkOf(pid) {
+  const today = workToday();
+  (state.servicedUnits || []).forEach((u) => {
+    let hit = false;
+    if (u.assignedTo === pid && !cleanedToday(u)) { u.assignedTo = null; hit = true; }
+    if (u.usualTo === pid) { u.usualTo = null; hit = true; }
+    if (Array.isArray(u.assignedWith) && u.assignedWith.includes(pid)) {
+      const keep = u.assignedWith.filter((x) => x !== pid); u.assignedWith = keep.length ? keep : null; hit = true;
+    }
+    if (hit) stampUnitEdit(u);
+  });
+  (state.areas || []).forEach((a) => {
+    if (a.assignedTo === pid) a.assignedTo = null;
+    if (Array.isArray(a.assignedWith) && a.assignedWith.includes(pid)) {
+      const keep = a.assignedWith.filter((x) => x !== pid); a.assignedWith = keep.length ? keep : null;
+    }
+  });
+  Object.keys(state.plans || {}).filter((d) => d >= today).forEach((d) => {
+    const plan = state.plans[d];
+    let hit = false;
+    Object.keys(plan).forEach((k) => {
+      if (plan[k].assignedTo !== pid) return;
+      plan[k].assignedTo = null; delete plan[k].byHand; delete plan[k].shuffled; hit = true;
+    });
+    if (hit) stampPlanEdit(d);
+  });
 }
 // Team leader — mark as many as you like. This used to allow exactly one per team
 // and silently un-marked the previous leader, which looked like the button was
@@ -14424,6 +14462,7 @@ function viewHistory() {
   return wrap;
 }
 
+let _teamMoreOpen = false;   // this screen only: is "More team settings" unfolded
 function viewTeam() {
   const wrap = el('<div class="body"></div>');
   const total = (state.staff || []).length;
@@ -14444,8 +14483,16 @@ function viewTeam() {
   // below the fold is the same as not existing. Somebody stood with the list in their
   // hand and could not find the box to paste it into.
   if (cleaners) roomOwnersPanel(wrap);
+  // EVERYTHING BELOW THE ROOMS AND THE SHUFFLE IS FOLDED AWAY. Ifrah, 15 Nov 2026: "make
+  // sure the app is easy to use". The tab had grown to twenty phone screens — teams
+  // reshuffle, Friday draw, Thursday rota, floor list, paste a round — most of it for a
+  // way of working (teams) the building stopped using on 4 Nov. Who cleans which room and
+  // the shuffle switch stay on top; the rest sits under one "More team settings" fold,
+  // in the same order, and the people list follows as before.
+  const foldA = wrap.children.length;
   if (cleaners) roundListPanel(wrap);
   if (cleaners) wrap.appendChild(floorAllocationBox());
+  const foldB = wrap.children.length;
 
   // THE DAILY ROOM SHUFFLE — see shuffleDay. One switch; the per-room "📌 Fix cleaner"
   // tick on the Rooms page is the only other setting.
@@ -14870,6 +14917,23 @@ function viewTeam() {
     };
     box.appendChild(btn);
     wrap.appendChild(box);
+  }
+
+  if (cleaners) {
+    // Shuffle box is wrap.children[foldB]; everything from foldA..foldB and after the
+    // shuffle box goes into the fold, which sits right under the shuffle box.
+    const kids = Array.from(wrap.children);
+    const shuffleBox = kids[foldB];
+    const moved = kids.slice(foldA, foldB).concat(kids.slice(foldB + 1));
+    if (shuffleBox && moved.length) {
+      const fold = el(`<details style="margin:4px 0 16px;background:#101c30;border:1px solid #3d557f;border-radius:10px;padding:10px 12px">`
+        + `<summary style="cursor:pointer;font-weight:800;color:#7ea6dc;font-size:14px">⚙️ More team settings</summary>`
+        + `<div style="font-size:12px;color:#7f9abf;margin:6px 0 12px">Paste a round list · floors · weekly team reshuffle · Friday draw · Thursday late shift · Friday rota</div></details>`);
+      if (_teamMoreOpen) fold.open = true;
+      fold.addEventListener('toggle', () => { _teamMoreOpen = fold.open; });
+      moved.forEach((n) => fold.appendChild(n));
+      shuffleBox.after(fold);
+    }
   }
 
   // Add-employee form only matters when viewing everyone.

@@ -168,6 +168,8 @@ for (const [label,vp] of [['PHONE',{width:420,height:900}],['DESKTOP',{width:144
  check('every roll-call room is on it once', tr.total===tr.rolled && tr.want.reduce((n,g)=>n+g.rooms.length,0)+tr.loose.length===tr.rolled);
  // floors
  await page.evaluate(()=>setTab('team')); await page.waitForTimeout(600);
+ // The floor list now sits under "More team settings" (folded on 15 Nov 2026): open it.
+ await page.evaluate(()=>document.querySelectorAll('.body details').forEach(d=>{d.open=true})); await page.waitForTimeout(200);
  const body=await page.locator('.body').first().textContent();
  check('Team shows the floor-by-floor allocation', body.includes('Who cleans which floor'), body.slice(0,160));
  const floorRows=await page.locator('.sr-row').count();
