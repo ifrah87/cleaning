@@ -2013,6 +2013,14 @@ function shuffleDay(day, force) {
   stampPlanEdit(day);
   return order.length;
 }
+// A SHUFFLED ROOM IS NOT HELD FOR ITS USUAL CLEANER. Ifrah, 16 Nov 2026: the first
+// shuffled morning arrived with 20 of 21 rooms in NOBODY YET. The plan had them dealt;
+// the carry onto the board still said "a room tied to somebody goes to nobody else" and
+// refused every one, because setting the usual cleaner aside is the whole point of the
+// shuffle. On a shuffled job the tie is lifted — unless the room is 📌 Fixed.
+function shuffleLiftsTie(j, u) {
+  return !!(j && j.shuffled && u && dailyShuffleOn() && !isFixedRoom(u));
+}
 function setDailyShuffle(on) {
   state.dailyShuffle = { ...(state.dailyShuffle || {}), on: !!on };
   const today = workToday();
@@ -5315,8 +5323,10 @@ function applyPlannedAssignments() {
   planKeys.forEach((k) => {
     const j = plan[k];
     if (j.kind !== 'unit' || !j.assignedTo) return;
-    const u = unitById[j.refId];
-    if (!u || !onRollCall(u) || u.paused) return;
+    const real = unitById[j.refId];
+    if (!real || !onRollCall(real) || real.paused) return;
+    // The room as the rules should see it: a shuffled pick is not held for the usual cleaner.
+    const u = shuffleLiftsTie(j, real) ? { ...real, usualTo: null } : real;
     // BEING ON THE PLAN IS WHY THE ROOM IS ON TODAY. This also demanded the room be
     // due by its own schedule, so a room deliberately ADDED to tomorrow — which is
     // the entire reason for planning a day — was dropped on the very morning it was
@@ -5371,8 +5381,8 @@ function applyPlannedAssignments() {
     // either way, just not all to one person.
     if (timeSlot(u) === 'early' && u.usualTo !== j.assignedTo
         && (out.slotLoad.early[j.assignedTo] || 0) >= earlyCap()) return;
-    if (u.assignedTo !== j.assignedTo) out.carried += 1;
-    u.assignedTo = j.assignedTo;
+    if (real.assignedTo !== j.assignedTo) out.carried += 1;
+    real.assignedTo = j.assignedTo;
     // Planned BY HAND the night before is a decision, not a suggestion awaiting a
     // yes/no. Planned by the app from the rota is only a starting point — see
     // mirrorPlanToBoard — so it stays open and the morning can even it up.
@@ -9723,7 +9733,7 @@ function mirrorPlanToBoard(day, key, keepBoard) {
       //
       // Same predicate as mayGiveRoomTo, so there is one answer to "is this tie in force
       // today" rather than two that drift apart.
-      if (j.assignedTo && u.usualTo && u.usualTo !== j.assignedTo) {
+      if (j.assignedTo && u.usualTo && u.usualTo !== j.assignedTo && !shuffleLiftsTie(j, u)) {
         const owner = (state.staff || []).find((x) => x.id === u.usualTo);
         const ownerCanTakeIt = !!owner && worksToday(owner) && !isAway(owner.id);
         if (ownerCanTakeIt) return;

@@ -123,7 +123,26 @@ const check = (n, ok, d) => { results.push([n, !!ok]); console.log((ok ? '  \x1b
     takeRoomOffDay(d1, 'u103'); ensureWeekPlanned();
     const offDay = !state.plans[d1]['unit:u103'];
     const othersStay = Object.keys(state.plans[d1]).filter((k) => k.startsWith('unit:')).length === 9;
-    return { offDay, othersStay, before, on, off, handKept, same: a === b, early: [...early], days, usual: Object.fromEntries(state.servicedUnits.map((u) => [u.id, u.usualTo])) };
+    // THE MORNING CARRY. Ifrah, 16 Nov 2026: the first shuffled morning reached the board
+    // with every shuffled room in NOBODY YET — the carry still held each room for its
+    // usual cleaner. Today's plan, shuffled, then carried onto the board both ways.
+    setDailyShuffle(true);
+    const tt = workToday();
+    state.plans[tt] = {};
+    state.servicedUnits.forEach((u) => { u.assignedTo = null; delete state.assignConfirmed[u.id]; });
+    const other = { p1: 'p2', p2: 'p3', p3: 'p4', p4: 'p1' };
+    state.servicedUnits.forEach((u) => {
+      state.plans[tt]['unit:' + u.id] = { kind: 'unit', refId: u.id, label: 'Unit ' + u.unit,
+        assignedTo: u.fixed ? u.usualTo : other[u.usualTo], byHand: !u.fixed, shuffled: !u.fixed, auto: true };
+    });
+    mirrorPlanToBoard(tt, null, true);
+    const mirrored = state.servicedUnits.filter((u) => !u.fixed).every((u) => u.assignedTo === other[u.usualTo]);
+    state.servicedUnits.forEach((u) => { u.assignedTo = null; delete state.assignConfirmed[u.id]; });
+    delete state.planCarried;
+    ['p1', 'p2', 'p3', 'p4'].forEach((id) => { hikArrivals[id] = { raw: '06:30' }; });
+    applyPlannedAssignments();
+    const carriedOk = state.servicedUnits.filter((u) => !u.fixed).filter((u) => u.assignedTo === other[u.usualTo]).length;
+    return { mirrored, carriedOk, offDay, othersStay, before, on, off, handKept, same: a === b, early: [...early], days, usual: Object.fromEntries(state.servicedUnits.map((u) => [u.id, u.usualTo])) };
   });
 
   const early = new Set(q.early);
@@ -161,6 +180,8 @@ const check = (n, ok, d) => { results.push([n, !!ok]); console.log((ok ? '  \x1b
   check('switching off puts every room back on its regular cleaner (hand moves stay)', offOk, JSON.stringify(q.off[0]));
   check('a room taken off a future day stays off after a re-sync', q.offDay);
   check('…and the other rooms that day are untouched', q.othersStay);
+  check('the morning board takes the shuffled names from the plan (day turnover)', q.mirrored);
+  check('the morning carry puts shuffled rooms on the people the plan names', q.carriedOk >= 8, q.carriedOk + ' of 9 carried');
   check('no console errors', errs.length === 0, errs.join(' | '));
 
   const failed = results.filter((r) => !r[1]).length;
