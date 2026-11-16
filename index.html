@@ -10991,6 +10991,17 @@ window.addEventListener('pointercancel', clearGhost);
 // way to put a room right was to remember who had it and move it again.
 // Same snapshot, same button, so there is nothing new to learn.
 function assignPicked(kind, id, pid) {
+  // TOMORROW'S BOARD MOVES TOMORROW'S PLAN (Ifrah, 16 Nov 2026: "tomorrow's schedule — I
+  // want the flexibility to move them around"). Same gesture as today, but it writes to
+  // state.plans for that day through setPlanAssignee — the call Plan a Day makes — and
+  // never touches the room's own assignedTo, which is TODAY's board.
+  if (_boardDay > 0) {
+    const day = shiftDay(workToday(), _boardDay);
+    _picked = null;
+    if (day > workToday()) setPlanAssignee(day, planKey(kind, id), pid || null);
+    else render();
+    return;
+  }
   const u = (kind === 'area') ? (state.areas || []).find((x) => x.id === id)
                               : (state.servicedUnits || []).find((x) => x.id === id);
   if (u) {
@@ -11069,6 +11080,10 @@ function viewTick() {
   // silently clean it today. Tomorrow's round is edited on Plan a Day, which is built
   // for it; here it is something to look at.
   const readOnly = _boardDay !== 0;
+  // Ticking stays today-only; MOVING is allowed on a future day, where it edits that
+  // day's plan (assignPicked). Nothing can be cleaned tomorrow yet, but who does what can.
+  const planDay = readOnly ? shiftDay(workToday(), _boardDay) : null;
+  const movable = !readOnly || planDay > workToday();
   const cols = readOnly ? tvColumnsForDay(shiftDay(workToday(), _boardDay)) : tvColumns();
 
   // ONE JOB AT A TIME, ON ITS OWN BUTTON. The offices and the guest flats are two
@@ -11102,7 +11117,9 @@ function viewTick() {
   // its own here would push the round down the screen to say something the header is
   // already saying. All this needs to add is why nothing responds to a tap.
   if (readOnly) top.appendChild(el(`<div class="bd-tally" style="color:#94a3b8">`
-    + `Tomorrow's plan — nothing here can be ticked or moved. Edit it on Plan a Day.</div>`));
+    + (movable
+      ? `Tomorrow's plan — drag a room to someone else, or tap ⠿ then tap a name. Ticking starts on the day.`
+      : `This day's plan — nothing here can be ticked or moved. Edit it on Plan a Day.`) + `</div>`));
 
   {
     const kinds = [['all', 'All']];
@@ -11447,7 +11464,7 @@ function viewTick() {
     // unhanded work sits in is the obvious place to drop work you are taking back, and
     // it was the one column on the board that refused. An empty target means "no
     // cleaner", which is what setUnitAssignee already does with a blank id.
-    if (!readOnly) makeDropTarget(col, c.none ? '' : c.key);
+    if (movable) makeDropTarget(col, c.none ? '' : c.key);
 
     const hd = el('<div class="bd-hd"></div>');
     const whoEl = el(`<div class="bd-who" style="${c.none ? '' : 'cursor:pointer'}">${esc(c.none ? 'NOBODY YET' : c.name)}</div>`);
@@ -11531,11 +11548,17 @@ function viewTick() {
             'It comes off that day only and is back on its next day. Nobody else\'s rooms move.\n\n'
             + 'Changed your mind? Put it back on Plan a Day.',
             () => takeRoomOffDay(offDay, u.id), 'Take it off', 'safe');
-          let holdT = null;
+          let holdT = null, hx = 0, hy = 0;
           const dropHold = () => { clearTimeout(holdT); holdT = null; };
           chip.addEventListener('pointerdown', (e) => {
             if (e.button) return;
+            if (e.target.closest && e.target.closest('.bd-grip')) return;
+            hx = e.clientX; hy = e.clientY;
             holdT = setTimeout(() => { holdT = null; askOffDay(); }, BOARD_HOLD_MS);
+          });
+          // A drag is not a hold: moving a room on tomorrow's board must not ask to take it off.
+          chip.addEventListener('pointermove', (e) => {
+            if (holdT && Math.abs(e.clientX - hx) + Math.abs(e.clientY - hy) > 8) dropHold();
           });
           chip.addEventListener('pointerup', dropHold);
           chip.addEventListener('pointerleave', dropHold);
@@ -11573,11 +11596,11 @@ function viewTick() {
         // should have the room — a finger dragging down a screen is the page scrolling,
         // so touch gets the two-tap version of the same gesture.
         const grip = el(`<button class="bd-grip" title="Drag to move, or tap then tap a person"`
-          + `${readOnly ? ' style="visibility:hidden;pointer-events:none"' : ''}>⠿</button>`);
+          + `${!movable ? ' style="visibility:hidden;pointer-events:none"' : ''}>⠿</button>`);
         let from = null, moved = false;
 
         grip.addEventListener('pointerdown', (e) => {
-          if (readOnly) return;
+          if (!movable) return;
           from = { x: e.clientX, y: e.clientY, mouse: e.pointerType === 'mouse' };
           moved = false;
           if (grip.setPointerCapture) grip.setPointerCapture(e.pointerId);
@@ -11617,7 +11640,7 @@ function viewTick() {
         // touch is left exactly as it was.
         let cFrom = null, cMoved = false;
         chip.addEventListener('pointerdown', (e) => {
-          if (readOnly) return;
+          if (!movable) return;
           if (e.pointerType !== 'mouse') return;
           if (e.target.closest && e.target.closest('.bd-grip')) return;   // the grip has its own
           cFrom = { x: e.clientX, y: e.clientY }; cMoved = false;
@@ -11710,9 +11733,11 @@ function viewTick() {
   // nothing, and reasonably conclude the board was broken.
   wrap.appendChild(el(`<div class="note" style="font-size:11px;color:#6f8ab0;margin-top:12px">`
     + (readOnly
-      ? `Tomorrow's round, as it has been laid out. Nothing here is ticked because nobody `
-        + `has worked it yet — open Plan a Day to change who has what, or ‹ Today to get back `
-        + `to the round in front of you.`
+      ? (movable
+        ? `Tomorrow's round. Drag a room by the ⠿ grip — or tap the grip, then tap a person — to `
+          + `move it; drop it on NOBODY YET to take it off them. Hold a room to take it off the day. `
+          + `Nothing is ticked until the day itself. ‹ Today gets you back to the round in front of you.`
+        : `This day's round, as it was laid out. ‹ Today gets you back to the round in front of you.`)
       : `Tap a chip to mark it clean. Drag it by the ⠿ grip — or tap the grip, then tap a `
         + `person — to move it. Tap a name to give them more. The TV follows within a minute.`)
     + `</div>`));
