@@ -11121,6 +11121,43 @@ function viewTick() {
       ? `Tomorrow's plan — drag a room to someone else, or tap ⠿ then tap a name. Ticking starts on the day.`
       : `This day's plan — nothing here can be ticked or moved. Edit it on Plan a Day.`) + `</div>`));
 
+  // A ROOM IN THE HAND SAYS SO, AND SAYS WHAT ELSE YOU CAN DO WITH IT. Skipping a room
+  // for the day was a hidden gesture — hold the chip, or right-click it — and on an
+  // iPhone the long press is taken by the phone's own menu, so it could not be done at
+  // all (Ifrah, 17 Nov 2026: "why can't I skip the room being cleaned"). Pick the room
+  // up with ⠿ and the choices are written out: give it to somebody, skip it, put it down.
+  if (_picked && _picked.kind === 'unit' && movable) {
+    const pu = (state.servicedUnits || []).find((x) => x.id === _picked.id);
+    if (pu) {
+      const room = String(_picked.label || ('Unit ' + pu.unit)).replace(/^Unit\s+/, '');
+      const hand = el(`<div class="bd-tally" style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;`
+        + `background:#0c2a44;border:1px solid #0284c7;border-radius:10px;padding:10px 12px;color:#e0f2fe">`
+        + `<span>🖐 <b>Unit ${esc(room)}</b> picked up — tap a person to give it to them</span></div>`);
+      const btn = (label, bg) => el(`<button style="margin-left:auto;padding:7px 12px;border-radius:8px;border:0;`
+        + `font-weight:800;font-size:13px;background:${bg};color:#fff;cursor:pointer">${esc(label)}</button>`);
+      if (!readOnly) {
+        const skip = btn('Skip today', '#b45309');
+        skip.onclick = (e) => {
+          e.stopPropagation();
+          if (cleanedToday(pu)) { showInfo('Unit ' + room + ' is ticked as cleaned', 'Tap it to untick it first, then skip it.'); return; }
+          showConfirm('Skip ' + room + ' today?',
+            'It comes off today\'s board and is back on its next day. It does not count as missed, and nobody else\'s rooms move.\n\nChanged your mind? It is listed under Skipped today on Roll Call.',
+            () => { _picked = null; toggleSkipToday(pu.id); }, 'Skip it', 'safe');
+        };
+        hand.appendChild(skip);
+      } else {
+        const off = btn('Take off ' + fmtDay(planDay), '#b45309');
+        off.onclick = (e) => { e.stopPropagation(); _picked = null; takeRoomOffDay(planDay, pu.id); };
+        hand.appendChild(off);
+      }
+      const down = btn('Put it down', '#334155');
+      down.style.marginLeft = '0';
+      down.onclick = (e) => { e.stopPropagation(); _picked = null; render(); };
+      hand.appendChild(down);
+      top.appendChild(hand);
+    }
+  }
+
   {
     const kinds = [['all', 'All']];
     UNIT_TYPE_ORDER.forEach((tk) => {
