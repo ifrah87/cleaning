@@ -710,6 +710,20 @@
     font-size: 1.0vw; font-weight: 800; padding: 0.5vh 0.8vw; border-radius: 0.7vw;
     background: var(--tv-chip); border: 0.18vw solid transparent; letter-spacing: 0.02em;
   }
+  /* The roll band: three labelled groups, on one line where it fits. */
+  .tv-roll { display: flex; flex-wrap: wrap; gap: 0.6vh 2.2vw; align-items: baseline; width: 100%; }
+  .tv-rollgrp { display: flex; flex-wrap: wrap; gap: 0.5vh 1.1vw; align-items: baseline; }
+  .tv-rollgrp .lab { font-size: 0.9vw; font-weight: 800; letter-spacing: 0.12em; }
+  .tv-rollgrp.here .lab { color: #22c55e; }
+  .tv-rollgrp.gone .lab { color: var(--tv-muted); }
+  .tv-rollgrp.out .lab { color: #fbbf24; }
+  .tv-rollgrp .who { font-size: 1.05vw; font-weight: 800; white-space: nowrap; }
+  .tv-rollgrp .who i { font-style: normal; font-weight: 700; color: var(--tv-muted); margin-left: 0.35vw;
+                       font-variant-numeric: tabular-nums; }
+  .tv-rollgrp.gone .who { opacity: 0.55; }
+  .tv-rollgrp.out .who { color: #fbbf24; }
+  .tv-rollgrp.out .who i { color: #fbbf24; opacity: 0.8; }
+  .tv-rollgrp .who.other { opacity: 0.6; }
   .tv-crewhead { display: flex; gap: 1.4vw; align-items: baseline; }
   .tv-crewhead .on { font-size: 1.0vw; font-weight: 800; letter-spacing: 0.1em; color: #22c55e; }
   .tv-crewhead .off { font-size: 1.0vw; font-weight: 800; letter-spacing: 0.1em; color: var(--tv-muted); }
@@ -900,6 +914,29 @@
 
   .tv-group { font-size: calc(0.95vw * var(--tvs)); font-weight: 800; letter-spacing: 0.12em;
               color: var(--tv-muted); margin-top: calc(0.6vh * var(--tvs)); }
+  /* Boxes stacked down each column like a pinboard: every box as tall as its rooms, no
+     gaps under a short one. Flows top-to-bottom, so NOBODY YET stays top-left. */
+  .tv-cols.tv-hug { display: block; column-count: var(--tvacross, 5); column-gap: calc(1.2vw * var(--tvs));
+                    column-fill: balance; height: 100%; overflow: hidden; }
+  .tv-cols.tv-hug > .tv-col { break-inside: avoid; margin-bottom: calc(1.2vw * var(--tvs)); overflow: visible; }
+  .tv-cols.tv-hug > .tv-col .tv-body { overflow: visible; }
+  /* Board + repairs side by side. The grid keeps every bit of width the panel does not take. */
+  .tv-boardrow { flex: 1; min-height: 0; display: flex; gap: 1.2vw; }
+  .tv-boardrow > .tv-cols { min-width: 0; }
+  .tv-maint { flex: 0 0 17vw; min-height: 0; display: flex; flex-direction: column; gap: 0.8vh;
+              background: var(--tv-card); border-radius: 1vw; padding: 1.4vh 1vw; overflow: hidden; }
+  .tv-maint-hd { display: flex; justify-content: space-between; align-items: baseline;
+                 font-size: 1.15vw; font-weight: 800; letter-spacing: 0.12em; color: var(--tv-muted); }
+  .tv-maint-hd b { font-size: 2.2vw; letter-spacing: 0; line-height: 1; }
+  .tv-maint-urg { font-size: 1vw; font-weight: 800; letter-spacing: 0.1em; color: #ef4444; margin-top: -0.4vh; }
+  .tv-maint-list { display: flex; flex-direction: column; gap: 0.8vh; min-height: 0; overflow: hidden; }
+  .tv-maint-card { border-left: 0.4vw solid #f59e0b; background: rgba(245,158,11,0.10);
+                   border-radius: 0.6vw; padding: 0.7vh 0.8vw; }
+  .tv-maint-card.urgent { border-left-color: #ef4444; background: rgba(239,68,68,0.14); }
+  .tv-maint-where { font-size: 0.95vw; font-weight: 800; letter-spacing: 0.1em; color: var(--tv-muted); }
+  .tv-maint-what { font-size: 1.2vw; font-weight: 800; line-height: 1.15; overflow-wrap: anywhere; }
+  .tv-maint-age { font-size: 0.95vw; font-weight: 700; color: #fbbf24; margin-top: 0.2vh; }
+  .tv-maint-card.urgent .tv-maint-age { color: #fca5a5; }
   .tv-empty { font-size: 1.4vw; font-weight: 700; color: var(--tv-empty); padding: 1vh 0; }
   /* WHAT THE REMOTE DOES, ON THE SCREEN THAT THE REMOTE DRIVES. The keys have worked
      since the day the pages went in and nothing ever said so, so the board read as a
@@ -10908,23 +10945,28 @@ const NAV_GROUPS = [
 ];
 // The board answers to three names; any of them lights the board tile.
 const navHere = (tab) => (tab === 'board' ? ['board', 'today', 'tick'] : [tab]).indexOf(state.tab) >= 0;
+// ONE LIST, ONE ROW PER PLACE. Two tiles across left gaps wherever a group had an odd
+// number, and the hint text wrapped differently in every tile. A list reads top to
+// bottom, every row is the same height, and the whole row is the thing you tap.
 function navGrid(box, onPick) {
   NAV_GROUPS.forEach(([label, items]) => {
-    box.appendChild(el(`<div style="font-size:11px;font-weight:800;letter-spacing:0.12em;color:#8a99ab;`
-      + `margin:16px 2px 8px">${esc(label)}</div>`));
-    const grid = el(`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px"></div>`);
-    items.forEach(([tab, name, ico, hint]) => {
+    box.appendChild(el(`<div style="font-size:11px;font-weight:800;letter-spacing:0.12em;color:#7f8ea3;`
+      + `margin:18px 4px 6px">${esc(label)}</div>`));
+    const list = el(`<div style="border-radius:12px;overflow:hidden;background:#16233a;border:1px solid #1e2f4d"></div>`);
+    items.forEach(([tab, name, ico, hint], i) => {
       const here = navHere(tab);
-      const b = el(`<button style="display:flex;align-items:center;gap:10px;padding:13px 12px;border-radius:12px;`
-        + `border:1px solid ${here ? '#3b82f6' : '#1e2f4d'};background:${here ? '#16305a' : '#16233a'};`
-        + `text-align:left;cursor:pointer;min-height:58px">`
-        + `<div style="font-size:20px;width:24px;text-align:center;color:#9cc3ff">${ico}</div>`
-        + `<div style="min-width:0"><div style="font-size:14px;font-weight:700;color:#eaf1fb">${esc(name)}</div>`
-        + `<div style="font-size:11px;color:#7f9abf">${here ? 'You are here' : esc(hint)}</div></div></button>`);
+      const b = el(`<button style="display:flex;align-items:center;gap:12px;width:100%;padding:0 14px;min-height:56px;`
+        + `text-align:left;cursor:pointer;background:${here ? '#1d3a66' : 'transparent'};`
+        + `${i ? 'border-top:1px solid #1e2f4d;' : ''}">`
+        + `<div style="font-size:19px;width:26px;text-align:center;color:${here ? '#ffffff' : '#9cc3ff'};flex:0 0 auto">${ico}</div>`
+        + `<div style="flex:1;min-width:0"><div style="font-size:15px;font-weight:700;color:#eaf1fb">${esc(name)}</div>`
+        + `<div style="font-size:12px;color:${here ? '#bcd3f5' : '#7f9abf'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">`
+        + `${here ? 'You are here' : esc(hint)}</div></div>`
+        + `<div style="flex:0 0 auto;font-size:18px;color:#4b6584">›</div></button>`);
       b.onclick = () => onPick(tab);
-      grid.appendChild(b);
+      list.appendChild(b);
     });
-    box.appendChild(grid);
+    box.appendChild(list);
   });
 }
 // FROM THE LEFT, UNDER THE BUTTON THAT OPENS IT. Ifrah, 2026-10-23: "why can't it pop up
@@ -16286,87 +16328,43 @@ function tvCrewStrip() {
     wrap.appendChild(el(`<div class="tv-empty">Nobody is rostered on today</div>`)); return wrap;
   }
 
-  // WHO IS STILL IN THE BUILDING. Counted before the chips, because "how many are
-  // still here" is a question people were answering by counting green outlines.
-  const here = crew.filter((p) => !tvLeft(p) && AWAY.indexOf(state.attendance[p.id] || 'present') < 0);
-  const gone = crew.filter((p) => tvLeft(p));
-  const head = el(`<div class="tv-crewhead"></div>`);
-  head.appendChild(el(`<span class="on">${here.length} STILL HERE</span>`));
-  if (gone.length) head.appendChild(el(`<span class="off">${gone.length} LEFT</span>`));
-  // Counted at the top for the same reason NEED COVER is: it is the thing you want to
-  // know without reading every chip, and the answer to "who is missing?" at 7am.
-  // Assistants count here even though they get no chip of their own. The roll call is
-  // deliberately leaders-only, but "who has not punched in?" is a question about every
-  // pair of hands expected today, and an assistant is exactly the person whose absence
-  // is otherwise invisible - their name simply rides along on a leader's column.
-  const noScanCrew = cleaningStaff().filter((p) => worksToday(p) && (tvOnTeam(p) || tvOutside(p))
-    && !tvArrival(p) && !tvLeft(p)
-    && AWAY.indexOf(state.attendance[p.id] || 'present') < 0);
-  if (noScanCrew.length) head.appendChild(el(`<span class="noscan">${noScanCrew.length} NO SCAN</span>`));
-  wrap.appendChild(head);
-
-  // Away first — who is missing is what you want without hunting. Then the people
-  // still in, then the ones who have gone home: the board reads down the day.
-  // CHRONOLOGICAL. This used to group away / in / gone and then sort each group by
-  // name, which put a 05:53 arrival after an 07:25 one because of the alphabet. The
-  // strip is a record of the morning arriving, so it reads in the order the morning
-  // actually happened.
-  //
-  // The two cases with no time keep their place at the front: somebody marked away,
-  // and somebody the door has not seen. Neither has a clock reading to sort by, and
-  // both are the thing you want to notice before you start reading times.
-  crew.slice().sort((a, b) => {
-    const rank = (p) => AWAY.indexOf(state.attendance[p.id] || 'present') >= 0 ? 0
-      : !tvArrival(p) ? 1 : 2;
-    const r = rank(a) - rank(b);
-    if (r) return r;
-    return String(tvArrival(a)).localeCompare(String(tvArrival(b)))
-      || String(a.name).localeCompare(String(b.name));
-  }).forEach((p) => {
-    const st = state.attendance[p.id] || 'present';
-    const meta = STATUS[st] || STATUS.present;
-    // The time is the more useful fact when somebody is in — it answers "was the
-    // 6am round covered?" — so it takes the slot the word PRESENT was using.
-    const at = tvArrival(p), left = tvLeft(p);
-    // Gone home reads as gone: dimmed, and told in the words the roll call uses.
-    // Somebody who has gone home is told in one time, not two. Carrying both made
-    // every chip wide enough that twelve of them took four rows and pushed the board
-    // itself off the bottom of the screen — the roll call is the smaller question and
-    // must not crowd out the work. What time they arrived is on their column.
-    // PRESENT IS A CLAIM NOBODY MADE. Attendance defaults to 'present' for everyone on
-    // the roster - finalizeState does it so a new person is not born absent - so the
-    // word was being printed against people the door has never seen today. It reads as
-    // a confirmation and it is the opposite: it is the absence of one. Say so.
-    //
-    // "NO SCAN YET", not "NOT IN": Hik's Time Card fills in through the morning, so an
-    // early blank is far more often data that has not arrived than a person who has
-    // not. The board should report what it knows - no scan - and let the office decide
-    // what that means at 6am versus at 11am.
-    const noScan = (st === 'present' && !left && !at);
-    const tail = (st !== 'present') ? meta.label
-      : (at && left) ? (at + ' → ' + left)      // came in AND went home: say both
-      : left ? ('LEFT ' + left)
-      : at ? ('IN ' + at) : 'NO SCAN YET';
-    const chip = el(`<div class="tv-chip${(st === 'present' && left) ? ' gone' : ''}${noScan ? ' noscan' : ''}"><span>${esc(tvName(p))}</span><span class="st">${esc(tail)}</span></div>`);
-    if (noScan) chip.style.borderColor = '#fbbf24';
-    if (!noScan) chip.style.borderColor = meta.color;
-    // Present takes the board's own text colour rather than a hardcoded near-white:
-    // on the light ground that was white-on-white and the whole roll call vanished.
-    chip.style.color = noScan ? '#fbbf24' : (st === 'present') ? '' : meta.color;
-    wrap.appendChild(chip);
-  });
-  // AND THE ONES THE DOOR SAW WHO ARE NOT TAGGED AS CLEANERS. They are in the building
-  // and their badge-in is as real as anybody's; the tag decides who gets ROOMS, not who
-  // the wall is allowed to admit exists. Slate, because nothing is expected of them
-  // here — the same slate an off column wears.
-  (hikOther || []).slice().sort((a, b) => String(a.time || '').localeCompare(String(b.time || '')))
-    .forEach((o) => {
-      const chip = el(`<div class="tv-chip"><span>${esc(o.name)}</span>`
-        + `<span class="st">IN ${esc(o.time || '')}</span></div>`);
-      chip.style.borderColor = 'var(--tv-off-fg)';
-      chip.style.color = 'var(--tv-off-fg)';
-      wrap.appendChild(chip);
+  // THREE GROUPS, READ LEFT TO RIGHT: who is here and since when, who has gone and
+  // when, who has not come in. Short names (first name + initial), times in a quieter
+  // colour, no outlines — the colour of the group label says which group you are in.
+  // Each group in the order the morning happened (a time, not the alphabet: "10:34"
+  // sorts before "5:33" as text). Away (sick, off) sits with NOT IN, saying why. The
+  // people the door saw who are not crew ride at the end of HERE, dimmed.
+  const short = (n) => { const w = String(n || '').trim().split(/\s+/);
+    return w.length > 1 ? w[0] + ' ' + w[1][0].toUpperCase() + '.' : (w[0] || ''); };
+  const t = (x) => String(x || '').replace(/\s?([AP])M$/i, (m, ap) => (ap.toUpperCase() === 'P' ? 'pm' : ''));
+  const mins = (x) => { const m = String(x || '').match(/(\d+):(\d+)\s*([AP])?/i);
+    if (!m) return 9999; let h = +m[1] % 12; if (m[3] && m[3].toUpperCase() === 'P') h += 12; return h * 60 + +m[2]; };
+  const isAway = (p) => AWAY.indexOf(state.attendance[p.id] || 'present') >= 0;
+  const byTime = (f) => (a, b) => (mins(f(a)) - mins(f(b))) || String(a.name).localeCompare(String(b.name));
+  const groups = [
+    { key: 'here', label: 'HERE', people: crew.filter((p) => !isAway(p) && tvArrival(p) && !tvLeft(p)).sort(byTime(tvArrival)),
+      time: (p) => t(tvArrival(p)) },
+    { key: 'gone', label: 'LEFT', people: crew.filter((p) => !isAway(p) && tvLeft(p)).sort(byTime(tvLeft)),
+      time: (p) => (tvArrival(p) ? t(tvArrival(p)) + '–' : '') + t(tvLeft(p)) },
+    { key: 'out', label: 'NOT IN YET', people: crew.filter((p) => isAway(p) || (!tvArrival(p) && !tvLeft(p)))
+        .sort((a, b) => String(a.name).localeCompare(String(b.name))),
+      time: (p) => (isAway(p) ? ((STATUS[state.attendance[p.id]] || {}).label || '') : '') },
+  ];
+  const band = el(`<div class="tv-roll"></div>`);
+  groups.forEach((g) => {
+    const others = g.key === 'here' ? (hikOther || []) : [];
+    if (!g.people.length && !others.length) return;
+    const grp = el(`<div class="tv-rollgrp ${g.key}"></div>`);
+    grp.appendChild(el(`<span class="lab">${g.label} ${g.people.length + others.length}</span>`));
+    g.people.forEach((p) => {
+      const tm = g.time(p);
+      grp.appendChild(el(`<span class="who">${esc(short(p.name))}${tm ? `<i>${esc(tm)}</i>` : ''}</span>`));
     });
+    others.slice().sort((x, y) => mins(x.time) - mins(y.time))
+      .forEach((o) => grp.appendChild(el(`<span class="who other">${esc(short(o.name))}<i>${esc(t(o.time))}</i></span>`)));
+    band.appendChild(grp);
+  });
+  wrap.appendChild(band);
   return wrap;
 }
 
@@ -16668,6 +16666,41 @@ function tvGuestStrip(flats) {
   return wrap;
 }
 
+function tvBoardWithRepairs(grid) {
+  const side = tvMaintSide();
+  if (!side) return grid;
+  const row = el(`<div class="tv-boardrow"></div>`);
+  row.appendChild(grid);
+  row.appendChild(side);
+  return row;
+}
+
+// THE REPAIRS, DOWN THE RIGHT OF THE BOARD. The cleaners' columns keep the left and
+// the middle; open repairs stand in a narrow panel beside them — urgent first and red,
+// the rest amber, oldest first — so nobody has to reach for the remote to know the AC
+// in 804 is still out. Gone entirely when nothing is open: the board is as it was.
+// The REPAIRS page on the remote is the full version, with contractors.
+function tvMaintSide() {
+  const open = maintOpen();
+  if (!open.length) return null;
+  const urgent = open.filter((m) => m.urgent).length;
+  const side = el(`<div class="tv-maint"></div>`);
+  side.appendChild(el(`<div class="tv-maint-hd"><span>🔧 REPAIRS</span>`
+    + `<b style="color:${urgent ? '#ef4444' : '#f59e0b'}">${open.length}</b></div>`));
+  if (urgent) side.appendChild(el(`<div class="tv-maint-urg">${urgent} URGENT</div>`));
+  const list = el(`<div class="tv-maint-list"></div>`);
+  open.forEach((m) => {
+    const where = String(m.where || '').replace(/^room\s+/i, '');
+    const card = el(`<div class="tv-maint-card${m.urgent ? ' urgent' : ''}"></div>`);
+    if (where) card.appendChild(el(`<div class="tv-maint-where">${esc(where.toUpperCase())}</div>`));
+    card.appendChild(el(`<div class="tv-maint-what">${esc(m.what)}</div>`));
+    card.appendChild(el(`<div class="tv-maint-age">${esc(maintAgeLabel(m))}</div>`));
+    list.appendChild(card);
+  });
+  side.appendChild(list);
+  return side;
+}
+
 // Named after whatever is actually on it rather than hardcoded to "Airbnb" — the
 // off-roll-call list is a rule about roll call, not a room type, and the day the
 // office switches something else off this page should say so without being edited.
@@ -16929,7 +16962,9 @@ function renderTV() {
   const perPage = Math.max(1, Math.ceil(cols.length / boardPages));
   const shown = (onAir || onCal || onRounds) ? [] : cols.slice(tvPage * perPage, tvPage * perPage + perPage);
 
-  const grid = el(`<div class="tv-cols"></div>`);
+  // tv-hug: each cleaner's box is as tall as what is in it, rows packed at the top —
+  // a box holding one room no longer stands as tall as the busiest one on the wall.
+  const grid = el(`<div class="tv-cols tv-hug"></div>`);
   // NOBODY YET TAKES TWO COLUMNS WHEN IT IS THE BIGGEST CARD ON THE WALL. Every card
   // gets one equal cell, so the box holding work nobody has been given — which on a bad
   // morning is most of the morning — was the card that decided how small every NAME on
@@ -16944,6 +16979,9 @@ function renderTV() {
   let g = tvGrid(shown.length + (span2 ? 1 : 0));
   if (span2 && g.across < 3) { span2 = false; g = tvGrid(shown.length); }
   grid.style.gridTemplateColumns = 'repeat(' + g.across + ', minmax(0, 1fr))';
+  // The pinboard stacks and nothing spans, so it counts the cards alone; the double
+  // width only applies if a busy morning sends the board back to the fixed grid.
+  grid.style.setProperty('--tvacross', String(tvGrid(shown.length).across));
   grid.style.setProperty('--tvs', String(g.scale));
   if (!cols.length) {
     grid.appendChild(el(`<div class="tv-empty">Nothing on today's board yet</div>`));
@@ -17039,7 +17077,7 @@ function renderTV() {
     : onRounds ? roundsGrid
     : onGuests ? tvGuestsPage(flats)
     : onMaint ? tvMaintPage()
-    : onAir ? tvAirGrid(air) : grid);
+    : onAir ? tvAirGrid(air) : tvBoardWithRepairs(grid));
 
   // THE REMOTE, SPELLED OUT. Left and right walk the pages, up and down walk the days —
   // true since the pages went in, and said out loud only at the bottom of the month.
@@ -17172,13 +17210,39 @@ function tvFitColumns(grid) {
   // gets cut off. Asking the card said "nothing is clipped" however much was hidden.
   const boxOf = (c) => c.querySelector('.tv-body') || c;
   const over = (c) => boxOf(c).scrollHeight > boxOf(c).clientHeight + 1;
-  const clipped = () => cols.some(over);
-  let s = parseFloat(grid.style.getPropertyValue('--tvs')) || 1;
+  // A hugging grid never clips a box — it grows past the bottom of the screen instead,
+  // so that counts as not fitting too.
+  // ...and in a pinboard, a box taller than the screen or stacked off its edge is not
+  // seen by either of those (multi-column overflow is not scroll overflow), so every
+  // card is measured against the edges of the board itself.
+  const offEdge = () => {
+    const g = grid.getBoundingClientRect();
+    // A box split across two stacked columns (getClientRects > 1) is one the pinboard
+    // could not hold whole — a card broken in half is not a card anybody can read.
+    return cols.some((c) => { const r = c.getBoundingClientRect();
+      return c.getClientRects().length > 1 || r.bottom > g.bottom + 1 || r.right > g.right + 1; });
+  };
+  const clipped = () => cols.some(over) || grid.scrollHeight > grid.clientHeight + 1
+    || grid.scrollWidth > grid.clientWidth + 1 || (grid.classList.contains('tv-hug') && offEdge());
+  const s0 = parseFloat(grid.style.getPropertyValue('--tvs')) || 1;
+  let s = s0;
   // Floor of 0.28: past that a name stops reading from the far side of the office, and
   // a board nobody can read is not an improvement on one that is cut off.
-  for (let i = 0; i < 16 && s > 0.28 && clipped(); i += 1) {
-    s = Math.round((s - 0.04) * 100) / 100;
-    grid.style.setProperty('--tvs', String(s));
+  const shrink = () => {
+    for (let i = 0; i < 16 && s > 0.28 && clipped(); i += 1) {
+      s = Math.round((s - 0.04) * 100) / 100;
+      grid.style.setProperty('--tvs', String(s));
+    }
+  };
+  shrink();
+  // THE PINBOARD MAY NOT HIDE A WHOLE CARD. Stacked boxes that still do not fit at the
+  // floor spill into a column off the side of the screen — a cleaner gone from the wall
+  // with nothing to say so. So a morning that busy goes back to the fixed grid, where a
+  // card that cannot fit is cut off INSIDE itself and says how much it is hiding.
+  if (grid.classList.contains('tv-hug') && clipped()) {
+    grid.classList.remove('tv-hug');
+    s = s0; grid.style.setProperty('--tvs', String(s));
+    shrink();
   }
   // A BOARD THAT HIDES WORK MUST SAY SO. Everything above is an attempt to make the
   // whole morning fit; the floor is where that attempt gives up. Past it the card simply
