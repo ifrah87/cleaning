@@ -3434,6 +3434,27 @@ function applyRemote(saved, merging) {
     if (mergedStaff.length !== beforeP) staffKept = Math.max(staffKept, 1);
   }
 
+  // REPAIRS, ONE RECORD AT A TIME. A repair is reported on one phone and marked fixed
+  // on another, often minutes apart, and the whole state travels as one blob — so the
+  // list is merged per job, newest edit winning, the same as staff. A job this device
+  // holds that the server has not seen yet is kept and sent back, and a deleted job
+  // stays deleted because the deletion travels with it.
+  const goneMaint = { ...(saved.removedMaintenance || {}), ...(state.removedMaintenance || {}) };
+  let maintKept = 0;
+  const mergedMaint = (() => {
+    const remote = Array.isArray(saved.maintenance) ? saved.maintenance.filter((m) => m && m.id) : [];
+    const mine = {};
+    (TV_MODE ? [] : (state.maintenance || [])).forEach((m) => { if (m && m.id) mine[m.id] = m; });
+    const have = new Set(remote.map((m) => m.id));
+    const out = remote.map((m) => {
+      const x = mine[m.id];
+      if (x && x.editedAt && (!m.editedAt || String(x.editedAt) > String(m.editedAt))) { maintKept += 1; return x; }
+      return m;
+    });
+    Object.values(mine).forEach((m) => { if (!have.has(m.id)) { out.push(m); maintKept += 1; } });
+    return out.filter((m) => !goneMaint[m.id]);
+  })();
+
   if (mergedUnits) {
     const mineById = {};
     (state.servicedUnits || []).forEach((u) => { mineById[u.id] = u; });
@@ -3594,6 +3615,9 @@ function applyRemote(saved, merging) {
   if (mergedUnits) state.servicedUnits = mergedUnits;
   if (mergedStaff) { state.staff = mergedStaff; STAFF = state.staff; }
   state.removedStaff = goneStaff;
+  state.maintenance = mergedMaint;
+  state.removedMaintenance = goneMaint;
+  if (maintKept && !TV_MODE) markDirty();
   // ...and now that the lists have landed, drop an open sheet only if its subject is
   // actually gone. Somebody deleted the room you were editing on another phone; there is
   // nothing left to edit and holding the sheet open would be a lie.
@@ -10870,6 +10894,9 @@ const NAV_GROUPS = [
   ['PEOPLE', [
     ['team', 'Team', '☺', 'Cleaners, teams, rota'],
   ]],
+  ['BUILDING', [
+    ['maintenance', 'Maintenance', '🔧', 'Repairs to be fixed'],
+  ]],
   ['REPORTS', [
     ['unitsreport', 'Units report', '≣', 'Every unit we clean'],
     ['teamrooms', 'Rooms by team', '☷', 'Who keeps which rooms'],
@@ -13912,6 +13939,172 @@ function viewExterior() {
   return wrap;
 }
 
+// ============================================================
+// MAINTENANCE — repairs somebody reported, done by an outside contractor.
+// Not cleaning work: nobody on the crew is handed it, it never lands in a column, and
+// it is not counted in the day's jobs. A repair stays open until somebody says it is
+// fixed, however many days that takes, and the oldest urgent one is always on top.
+// ============================================================
+let _maintDraft = { what: '', where: '', who: '', urgent: false };
+const maintJobs = () => (Array.isArray(state.maintenance) ? state.maintenance : []);
+function maintOpen() {
+  return maintJobs().filter((m) => !m.doneOn).sort((a, b) =>
+    ((b.urgent ? 1 : 0) - (a.urgent ? 1 : 0))
+    || String(a.raisedOn || '').localeCompare(String(b.raisedOn || '')));
+}
+function maintDaysOpen(m) {
+  if (!m.raisedOn) return 0;
+  return Math.max(0, Math.round((new Date(todayKey() + 'T00:00:00') - new Date(m.raisedOn + 'T00:00:00')) / 86400000));
+}
+function maintAgeLabel(m) {
+  const n = maintDaysOpen(m);
+  return n === 0 ? 'reported today' : n === 1 ? 'open 1 day' : 'open ' + n + ' days';
+}
+function maintTouch(m) { m.editedAt = new Date().toISOString(); }
+function addMaintJob() {
+  const d = _maintDraft;
+  if (!d.what.trim()) return false;
+  state.maintenance = maintJobs();
+  const m = {
+    id: 'mj' + Date.now() + Math.random().toString(36).slice(2, 6),
+    what: d.what.trim(), where: d.where.trim(), who: d.who.trim(),
+    urgent: !!d.urgent, raisedOn: todayKey(), doneOn: null,
+  };
+  maintTouch(m);
+  state.maintenance.push(m);
+  _maintDraft = { what: '', where: '', who: '', urgent: false };
+  save(); render();
+  return true;
+}
+function setMaint(id, patch) {
+  const m = maintJobs().find((x) => x.id === id);
+  if (!m) return;
+  Object.assign(m, patch);
+  maintTouch(m);
+  save(); render();
+}
+function removeMaint(id) {
+  showConfirm('Delete this repair?', 'It is removed for good, from every phone and the TV.', () => {
+    state.maintenance = maintJobs().filter((x) => x.id !== id);
+    state.removedMaintenance = state.removedMaintenance || {};
+    state.removedMaintenance[id] = todayKey();
+    save(); render();
+  });
+}
+// Places a repair can be: every room the app knows, then the common areas. Typed
+// freely as well — "roof tank" or "lift 2" is a place even if no list has it.
+function maintPlaces() {
+  const rooms = (state.servicedUnits || []).map((u) => String(u.unit || '')).filter(Boolean)
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).map((u) => 'Room ' + u);
+  const areas = (state.areas || []).filter((a) => !a.oneOff).map((a) => String(a.label || '')).filter(Boolean).sort();
+  return [...new Set(rooms.concat(areas))];
+}
+function maintContractors() {
+  return [...new Set(maintJobs().map((m) => String(m.who || '').trim()).filter(Boolean))].sort();
+}
+function viewMaintenance() {
+  const wrap = el('<div class="body"></div>');
+
+  const form = el('<div class="addbox"></div>');
+  form.appendChild(el('<div class="section-label" style="margin:0 0 10px">Report a repair</div>'));
+  const what = el('<input placeholder="What is wrong — e.g. AC not cooling" style="margin-bottom:8px">');
+  what.value = _maintDraft.what;
+  what.oninput = () => { _maintDraft.what = what.value; };
+  form.appendChild(what);
+  const where = el('<input list="maintWhereList" placeholder="Where — room or area" style="margin-bottom:8px">');
+  where.value = _maintDraft.where;
+  where.oninput = () => { _maintDraft.where = where.value; };
+  form.appendChild(where);
+  const whereList = el('<datalist id="maintWhereList"></datalist>');
+  maintPlaces().forEach((p) => { const o = document.createElement('option'); o.value = p; whereList.appendChild(o); });
+  form.appendChild(whereList);
+  const who = el('<input list="maintWhoList" placeholder="Contractor — optional" style="margin-bottom:8px">');
+  who.value = _maintDraft.who;
+  who.oninput = () => { _maintDraft.who = who.value; };
+  form.appendChild(who);
+  const whoList = el('<datalist id="maintWhoList"></datalist>');
+  maintContractors().forEach((p) => { const o = document.createElement('option'); o.value = p; whoList.appendChild(o); });
+  form.appendChild(whoList);
+  const urgRow = el('<div style="display:flex;gap:6px;margin-bottom:10px"></div>');
+  const normalB = el(`<button class="freqpick${_maintDraft.urgent ? '' : ' on'}">Normal</button>`);
+  const urgentB = el(`<button class="freqpick${_maintDraft.urgent ? ' on' : ''}">🔴 Urgent</button>`);
+  const paintUrg = () => {
+    normalB.classList.toggle('on', !_maintDraft.urgent);
+    urgentB.classList.toggle('on', _maintDraft.urgent);
+    urgentB.style.background = _maintDraft.urgent ? '#dc2626' : '';
+    urgentB.style.borderColor = _maintDraft.urgent ? '#dc2626' : '';
+  };
+  normalB.onclick = () => { _maintDraft.urgent = false; paintUrg(); };
+  urgentB.onclick = () => { _maintDraft.urgent = true; paintUrg(); };
+  paintUrg();
+  urgRow.appendChild(normalB); urgRow.appendChild(urgentB);
+  form.appendChild(urgRow);
+  const add = el('<button class="add-btn">＋ Add repair</button>');
+  add.onclick = () => { if (!addMaintJob()) what.focus(); };
+  form.appendChild(add);
+  wrap.appendChild(form);
+
+  const open = maintOpen();
+  wrap.appendChild(el(`<div class="section-label" style="margin-top:18px">Open · ${open.length}</div>`));
+  if (!open.length) wrap.appendChild(el('<div style="font-size:13px;color:#5b6a7f;padding:4px 2px 10px">Nothing waiting to be fixed.</div>'));
+  open.forEach((m) => wrap.appendChild(maintCard(m)));
+
+  // Fixed in the last 30 days, newest first: enough to answer "did the plumber come?"
+  // without the list growing for ever.
+  const cutoff = shiftDay(todayKey(), -30);
+  const fixed = maintJobs().filter((m) => m.doneOn && String(m.doneOn) >= cutoff)
+    .sort((a, b) => String(b.doneOn).localeCompare(String(a.doneOn)));
+  if (fixed.length) {
+    wrap.appendChild(el(`<div class="section-label" style="margin-top:18px">Fixed · last 30 days</div>`));
+    fixed.forEach((m) => wrap.appendChild(maintCard(m)));
+  }
+  return wrap;
+}
+// Colour is the instruction: urgent is red, waiting is amber, fixed is green.
+function maintCard(m) {
+  const done = !!m.doneOn;
+  const tone = done ? '#15803d' : m.urgent ? '#dc2626' : '#d97706';
+  const card = el(`<div class="zone${done ? ' done' : ''}" style="flex-direction:column;align-items:stretch;gap:8px;`
+    + `border-left:5px solid ${tone}"></div>`);
+  const head = el('<div></div>');
+  head.appendChild(el(`<div class="zone-freq" style="color:${tone};font-size:11px;font-weight:800;letter-spacing:0.06em">`
+    + `${done ? '✓ FIXED ' + esc(fmtDay(m.doneOn)) : (m.urgent ? 'URGENT · ' : '') + esc(maintAgeLabel(m)).toUpperCase()}</div>`));
+  head.appendChild(el(`<div class="zone-name">${m.where ? '<b>' + esc(m.where) + '</b> · ' : ''}${esc(m.what)}</div>`));
+  head.appendChild(el(`<div style="font-size:12px;color:#5f7189;margin-top:2px">`
+    + `${m.who ? 'Contractor: ' + esc(m.who) : 'No contractor yet'} · reported ${esc(fmtDay(m.raisedOn))}</div>`));
+  card.appendChild(head);
+  const row = el('<div style="display:flex;gap:6px;flex-wrap:wrap"></div>');
+  if (!done) {
+    const fix = el('<button class="zone-mark" style="background:#15803d">✓ Fixed</button>');
+    fix.onclick = () => setMaint(m.id, { doneOn: todayKey() });
+    row.appendChild(fix);
+    const urg = el(`<button class="freqmini" style="flex:0 0 auto;padding:7px 10px">${m.urgent ? 'Not urgent' : '🔴 Make urgent'}</button>`);
+    urg.onclick = () => setMaint(m.id, { urgent: !m.urgent });
+    row.appendChild(urg);
+    const whoB = el(`<button class="freqmini" style="flex:0 0 auto;padding:7px 10px">${m.who ? 'Change contractor' : 'Add contractor'}</button>`);
+    whoB.onclick = () => {
+      const box = el('<div style="display:flex;gap:6px;width:100%"></div>');
+      const inp = el(`<input list="maintWhoList" placeholder="Contractor" style="flex:1;background:#f4f7fb;border:1px solid #d8e0ea;border-radius:8px;padding:9px">`);
+      inp.value = m.who || '';
+      const ok = el('<button class="zone-mark">Save</button>');
+      ok.onclick = () => setMaint(m.id, { who: inp.value.trim() });
+      box.appendChild(inp); box.appendChild(ok);
+      row.replaceWith(box);
+      inp.focus();
+    };
+    row.appendChild(whoB);
+  } else {
+    const re = el('<button class="freqmini" style="flex:0 0 auto;padding:7px 10px">Reopen</button>');
+    re.onclick = () => setMaint(m.id, { doneOn: null });
+    row.appendChild(re);
+  }
+  const del = el('<button class="freqmini" style="flex:0 0 auto;padding:7px 10px;color:#b91c1c">Delete</button>');
+  del.onclick = () => removeMaint(m.id);
+  row.appendChild(del);
+  card.appendChild(row);
+  return card;
+}
+
 // Shared add-employee form (used in Team tab and Settings)
 function employeeAddForm() {
   const form = el(`<div class="addbox"></div>`);
@@ -16351,6 +16544,7 @@ function tvPageList(opts) {
   for (let i = 0; i < boardPages; i += 1) list.push({ key: 'board', label: 'BOARD', board: i });
   if (air.length) list.push({ key: 'air', label: 'AIRBNB' });
   if (flats.length) list.push({ key: 'guests', label: "WHO'S IN" });
+  if (maintOpen().length) list.push({ key: 'maint', label: 'REPAIRS' });
   list.push({ key: 'rounds', label: 'ROUNDS' });
   list.push({ key: 'cal', label: 'MONTH' });
   return list;
@@ -16364,6 +16558,26 @@ function tvPageList(opts) {
  * empty ones stay on, quietly, because "which are free" is the other half of the same
  * answer and a list that only shows half of it cannot be counted against the building.
  */
+// THE OPEN REPAIRS, AT WALL DISTANCE. Urgent first and red, the rest amber, oldest
+// first within each, with how long each has been waiting — the number that makes
+// somebody pick up the phone to the contractor.
+function tvMaintPage() {
+  const box = el(`<div class="tv-cols" style="display:flex;flex-direction:column;min-height:0;gap:1.2vh"></div>`);
+  const open = maintOpen();
+  if (!open.length) { box.appendChild(el(`<div class="tv-empty">Nothing waiting to be fixed.</div>`)); return box; }
+  const grid = el(`<div class="tv-stays"></div>`);
+  open.forEach((m) => {
+    const card = el(`<div class="tv-stay" style="border-left-color:${m.urgent ? '#ef4444' : '#f59e0b'}"></div>`);
+    card.appendChild(el(`<div class="tv-stayunit">${esc((m.where || 'NO PLACE GIVEN').toUpperCase())}</div>`));
+    card.appendChild(el(`<div class="tv-stayname">${esc(m.what)}</div>`));
+    card.appendChild(el(`<div class="tv-stayleft${m.urgent ? ' soon' : ''}" style="${m.urgent ? 'color:#ef4444' : ''}">`
+      + `${m.urgent ? 'URGENT · ' : ''}${esc(maintAgeLabel(m))}${m.who ? ' · ' + esc(m.who) : ''}</div>`));
+    grid.appendChild(card);
+  });
+  box.appendChild(grid);
+  return box;
+}
+
 function tvGuestsPage(flats) {
   const box = el(`<div class="tv-cols" style="display:flex;flex-direction:column;min-height:0;gap:1.2vh"></div>`);
   const rooms = occupiedFlats(flats);
@@ -16577,6 +16791,7 @@ function renderTV() {
   const onRounds = cur.key === 'rounds';
   const onAir = cur.key === 'air';
   const onGuests = cur.key === 'guests';
+  const onMaint = cur.key === 'maint';
 
   // Every number at the top counts the page you are actually looking at, or the
   // Airbnb page would sit under the offices' progress and read as its own.
@@ -16591,6 +16806,7 @@ function renderTV() {
   left.appendChild(el(`<div class="tv-brand">${onCal ? 'THE MONTH AHEAD'
     : onRounds ? 'THE ROUNDS'
     : onGuests ? 'WHO IS IN'
+    : onMaint ? 'REPAIRS'
     : onAir ? esc(tvAirTitle(air)) : 'CLEANING BOARD'}</div>`));
   // THE DAY THE BOARD IS ABOUT, NOT THE DAY THE CLOCK IS ON.
   // The work day rolls at 3am — a round that runs past midnight belongs to the morning
@@ -16640,6 +16856,14 @@ function renderTV() {
     mid.appendChild(tile(flats.length - inN, 'EMPTY', null));
     mid.appendChild(tile(flats.length, flats.length === 1 ? 'FLAT' : 'FLATS', null));
     top.appendChild(mid);
+  } else if (onMaint) {
+    // NOT A DAY'S WORK EITHER. A repair is open until it is fixed, so the numbers are
+    // what is waiting and how much of it cannot wait.
+    const open = maintOpen();
+    const urgent = open.filter((m) => m.urgent).length;
+    if (urgent) mid.appendChild(tile(urgent, 'URGENT', '#ef4444'));
+    mid.appendChild(tile(open.length, open.length === 1 ? 'REPAIR OPEN' : 'REPAIRS OPEN', '#f59e0b'));
+    top.appendChild(mid);
   } else if (onRounds) {
     const rd = tvRounds();
     const kept = rd.rounds.reduce((n, r) => n + r.rooms.length, 0);
@@ -16684,11 +16908,11 @@ function renderTV() {
   // numbers above it mean, and a full green bar over an occupancy count reads as a
   // claim about work nobody made.
   bar.firstChild.style.width = (onGuests ? 0 : pct) + '%';
-  if (!onGuests) wrap.appendChild(bar);
+  if (!onGuests && !onMaint) wrap.appendChild(bar);
 
   // The roll call is the morning's crew. Airbnb is not on it, so on that page the
   // strip would be naming people who are not doing this work.
-  if (!onAir && !onGuests) {
+  if (!onAir && !onGuests && !onMaint) {
     wrap.appendChild(tvCrewStrip());
     const also = tvAlsoStrip();
     if (also) wrap.appendChild(also);
@@ -16814,6 +17038,7 @@ function renderTV() {
   wrap.appendChild(onCal ? tvCalendarPage(shownDay)
     : onRounds ? roundsGrid
     : onGuests ? tvGuestsPage(flats)
+    : onMaint ? tvMaintPage()
     : onAir ? tvAirGrid(air) : grid);
 
   // THE REMOTE, SPELLED OUT. Left and right walk the pages, up and down walk the days —
@@ -17226,7 +17451,7 @@ function render() {
   const ROOMS_TITLE = { all: 'All Rooms', airbnb: 'Airbnb Rooms', office: 'Office Cleaning', building: 'Building Cleaning' };
   const titles = { board:'', setup:'Setup', more:'Setup', today:'', rollcall:'Morning set-up', tick:'',
     building:'Floors & Common Areas', exterior:'Exterior', history:'Cleaning History', unitsreport:'Units Report', teamrooms:'Rooms by Team', team:'Team',
-    settings:'Settings', plan:'Plan a Day', calendar:'Calendar', rooms: ROOMS_TITLE[roomsFilter()], tonight:'Tonight’s Round' };
+    settings:'Settings', plan:'Plan a Day', calendar:'Calendar', rooms: ROOMS_TITLE[roomsFilter()], tonight:'Tonight’s Round', maintenance:'Maintenance' };
   // A tab with no view renders an empty screen, so never trust it blindly.
   if (titles[state.tab] === undefined) state.tab = 'board';
   const onBoard = state.tab === 'board';
@@ -17374,6 +17599,7 @@ function render() {
   else if (state.tab==='teamrooms') app.appendChild(viewTeamRoomsReport());
   else if (state.tab==='team') app.appendChild(viewTeam());
   else if (state.tab==='settings') app.appendChild(viewSettings());
+  else if (state.tab==='maintenance') app.appendChild(viewMaintenance());
 
   // NOBODY SHOULD MISTAKE A STALE BOARD FOR A LIVE ONE. Says what it is, how old it
   // is, and that the work is not lost — the three things somebody needs to decide
