@@ -11073,6 +11073,20 @@ function assignPicked(kind, id, pid) {
   }
   const u = (kind === 'area') ? (state.areas || []).find((x) => x.id === id)
                               : (state.servicedUnits || []).find((x) => x.id === id);
+  // A CLEANED ROOM STAYS WITH WHOEVER CLEANED IT. 17 Nov: 705, ticked by Adan at 10:15,
+  // was dragged onto Ahmed Daahir at 13:40 — four seconds before the Airbnb room he was
+  // actually being given — and the wall then showed Ahmed as having cleaned it. Moving a
+  // finished room changes nothing about the work and rewrites who did it, so the board
+  // refuses and says how to do it on purpose: untick it first.
+  const finished = u && ((kind === 'area') ? areaDone(u) : cleanedToday(u));
+  if (finished && (pid || null) !== (u.assignedTo || null)) {
+    _picked = null;
+    render();
+    const what = (kind === 'area') ? (u.label || 'This job') : ('Unit ' + u.unit);
+    showInfo(what + ' is already cleaned',
+      'It stays with whoever cleaned it. If it was ticked by mistake, tap it to untick it first, then move it.');
+    return;
+  }
   if (u) {
     state.lastAutoAssign = {
       at: new Date().toISOString(),
@@ -13988,6 +14002,7 @@ function viewExterior() {
 // fixed, however many days that takes, and the oldest urgent one is always on top.
 // ============================================================
 let _maintDraft = { what: '', where: '', who: '', urgent: false };
+let _maintEditing = null;   // { id, what, where } — the repair open for editing, kept across redraws
 const maintJobs = () => (Array.isArray(state.maintenance) ? state.maintenance : []);
 function maintOpen() {
   return maintJobs().filter((m) => !m.doneOn).sort((a, b) =>
@@ -14041,9 +14056,6 @@ function maintPlaces() {
   const areas = (state.areas || []).filter((a) => !a.oneOff).map((a) => String(a.label || '')).filter(Boolean).sort();
   return [...new Set(rooms.concat(areas))];
 }
-function maintContractors() {
-  return [...new Set(maintJobs().map((m) => String(m.who || '').trim()).filter(Boolean))].sort();
-}
 function viewMaintenance() {
   const wrap = el('<div class="body"></div>');
 
@@ -14060,13 +14072,6 @@ function viewMaintenance() {
   const whereList = el('<datalist id="maintWhereList"></datalist>');
   maintPlaces().forEach((p) => { const o = document.createElement('option'); o.value = p; whereList.appendChild(o); });
   form.appendChild(whereList);
-  const who = el('<input list="maintWhoList" placeholder="Contractor — optional" style="margin-bottom:8px">');
-  who.value = _maintDraft.who;
-  who.oninput = () => { _maintDraft.who = who.value; };
-  form.appendChild(who);
-  const whoList = el('<datalist id="maintWhoList"></datalist>');
-  maintContractors().forEach((p) => { const o = document.createElement('option'); o.value = p; whoList.appendChild(o); });
-  form.appendChild(whoList);
   const urgRow = el('<div style="display:flex;gap:6px;margin-bottom:10px"></div>');
   const normalB = el(`<button class="freqpick${_maintDraft.urgent ? '' : ' on'}">Normal</button>`);
   const urgentB = el(`<button class="freqpick${_maintDraft.urgent ? ' on' : ''}">🔴 Urgent</button>`);
@@ -14108,12 +14113,35 @@ function maintCard(m) {
   const tone = done ? '#15803d' : m.urgent ? '#dc2626' : '#d97706';
   const card = el(`<div class="zone${done ? ' done' : ''}" style="flex-direction:column;align-items:stretch;gap:8px;`
     + `border-left:5px solid ${tone}"></div>`);
+  const ed = _maintEditing && _maintEditing.id === m.id ? _maintEditing : null;
+  if (ed) {
+    // EDITING IN PLACE. What and where, as typed when it was reported; Save writes both,
+    // Cancel leaves the repair exactly as it was.
+    const box = el('<div class="addbox" style="margin:0;padding:10px"></div>');
+    const what = el('<input placeholder="What is wrong" style="margin-bottom:8px">');
+    what.value = ed.what; what.oninput = () => { ed.what = what.value; };
+    const where = el('<input list="maintWhereList" placeholder="Where — room or area" style="margin-bottom:8px">');
+    where.value = ed.where; where.oninput = () => { ed.where = where.value; };
+    box.appendChild(what); box.appendChild(where);
+    const row = el('<div style="display:flex;gap:6px"></div>');
+    const save = el('<button class="zone-mark" style="flex:1;background:#0284c7">Save</button>');
+    save.onclick = () => {
+      if (!ed.what.trim()) { what.focus(); return; }
+      _maintEditing = null;
+      setMaint(m.id, { what: ed.what.trim(), where: ed.where.trim() });
+    };
+    const cancel = el('<button class="freqmini" style="flex:0 0 auto;padding:7px 14px">Cancel</button>');
+    cancel.onclick = () => { _maintEditing = null; render(); };
+    row.appendChild(save); row.appendChild(cancel);
+    box.appendChild(row);
+    card.appendChild(box);
+    return card;
+  }
   const head = el('<div></div>');
   head.appendChild(el(`<div class="zone-freq" style="color:${tone};font-size:11px;font-weight:800;letter-spacing:0.06em">`
     + `${done ? '✓ FIXED ' + esc(fmtDay(m.doneOn)) : (m.urgent ? 'URGENT · ' : '') + esc(maintAgeLabel(m)).toUpperCase()}</div>`));
   head.appendChild(el(`<div class="zone-name">${m.where ? '<b>' + esc(m.where) + '</b> · ' : ''}${esc(m.what)}</div>`));
-  head.appendChild(el(`<div style="font-size:12px;color:#5f7189;margin-top:2px">`
-    + `${m.who ? 'Contractor: ' + esc(m.who) : 'No contractor yet'} · reported ${esc(fmtDay(m.raisedOn))}</div>`));
+  head.appendChild(el(`<div style="font-size:12px;color:#5f7189;margin-top:2px">reported ${esc(fmtDay(m.raisedOn))}</div>`));
   card.appendChild(head);
   const row = el('<div style="display:flex;gap:6px;flex-wrap:wrap"></div>');
   if (!done) {
@@ -14123,23 +14151,14 @@ function maintCard(m) {
     const urg = el(`<button class="freqmini" style="flex:0 0 auto;padding:7px 10px">${m.urgent ? 'Not urgent' : '🔴 Make urgent'}</button>`);
     urg.onclick = () => setMaint(m.id, { urgent: !m.urgent });
     row.appendChild(urg);
-    const whoB = el(`<button class="freqmini" style="flex:0 0 auto;padding:7px 10px">${m.who ? 'Change contractor' : 'Add contractor'}</button>`);
-    whoB.onclick = () => {
-      const box = el('<div style="display:flex;gap:6px;width:100%"></div>');
-      const inp = el(`<input list="maintWhoList" placeholder="Contractor" style="flex:1;background:#f4f7fb;border:1px solid #d8e0ea;border-radius:8px;padding:9px">`);
-      inp.value = m.who || '';
-      const ok = el('<button class="zone-mark">Save</button>');
-      ok.onclick = () => setMaint(m.id, { who: inp.value.trim() });
-      box.appendChild(inp); box.appendChild(ok);
-      row.replaceWith(box);
-      inp.focus();
-    };
-    row.appendChild(whoB);
   } else {
     const re = el('<button class="freqmini" style="flex:0 0 auto;padding:7px 10px">Reopen</button>');
     re.onclick = () => setMaint(m.id, { doneOn: null });
     row.appendChild(re);
   }
+  const edit = el('<button class="freqmini" style="flex:0 0 auto;padding:7px 10px">✏️ Edit</button>');
+  edit.onclick = () => { _maintEditing = { id: m.id, what: m.what || '', where: m.where || '' }; render(); };
+  row.appendChild(edit);
   const del = el('<button class="freqmini" style="flex:0 0 auto;padding:7px 10px;color:#b91c1c">Delete</button>');
   del.onclick = () => removeMaint(m.id);
   row.appendChild(del);
@@ -16569,7 +16588,7 @@ function tvMaintPage() {
     card.appendChild(el(`<div class="tv-stayunit">${esc((m.where || 'NO PLACE GIVEN').toUpperCase())}</div>`));
     card.appendChild(el(`<div class="tv-stayname">${esc(m.what)}</div>`));
     card.appendChild(el(`<div class="tv-stayleft${m.urgent ? ' soon' : ''}" style="${m.urgent ? 'color:#ef4444' : ''}">`
-      + `${m.urgent ? 'URGENT · ' : ''}${esc(maintAgeLabel(m))}${m.who ? ' · ' + esc(m.who) : ''}</div>`));
+      + `${m.urgent ? 'URGENT · ' : ''}${esc(maintAgeLabel(m))}</div>`));
     grid.appendChild(card);
   });
   box.appendChild(grid);

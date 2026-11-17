@@ -86,7 +86,6 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
   // Report one through the form, the way the office would.
   await page.fill('input[placeholder^="What is wrong"]', 'AC not cooling');
   await page.fill('input[placeholder^="Where"]', 'Room 101');
-  await page.fill('input[placeholder^="Contractor"]', 'Cool Air Ltd');
   await page.click('button:has-text("Urgent")');
   await page.click('button:has-text("Add repair")');
   await page.waitForTimeout(500);
@@ -96,11 +95,35 @@ const check = (n, c, d) => { out.push([n, !!c]); console.log((c ? '  \x1b[32mPAS
     return { m, order: maintOpen().map((x) => x.what), today: todayKey() };
   });
   check('the form saves the repair', !!added.m, JSON.stringify(added));
-  check('with where, who and urgency', added.m && added.m.where === 'Room 101' && added.m.who === 'Cool Air Ltd' && added.m.urgent === true, JSON.stringify(added.m));
+  check('with where and urgency', added.m && added.m.where === 'Room 101' && added.m.urgent === true, JSON.stringify(added.m));
+  check('and no contractor box on the form', (await page.locator('input[placeholder^="Contractor"]').count()) === 0, '');
   check('stamped with today and an edit time', added.m && added.m.raisedOn === added.today && !!added.m.editedAt, JSON.stringify(added.m));
   check('an urgent repair goes above an older normal one', added.order[0] === 'AC not cooling', added.order.join(' | '));
   body = await page.locator('.body').first().textContent();
   check('the form is empty again for the next one', (await page.inputValue('input[placeholder^="What is wrong"]')) === '', '');
+
+  console.log('\n\x1b[1mA repair can be edited\x1b[0m');
+  const card = () => page.locator('.zone', { hasText: 'AC not cooling' }).first();
+  await card().locator('button:has-text("Edit")').click();
+  await page.waitForTimeout(300);
+  await page.locator('.zone input[placeholder="What is wrong"]').first().fill('AC dripping water');
+  await page.locator('.zone input[placeholder^="Where"]').first().fill('Room 102');
+  await page.locator('.zone button:has-text("Save")').first().click();
+  await page.waitForTimeout(300);
+  const edited = await page.evaluate(() => {
+    const m = state.maintenance.find((x) => x.what === 'AC dripping water');
+    return m ? { where: m.where, urgent: m.urgent, edited: !!m.editedAt } : null;
+  });
+  check('Edit changes what is wrong and where', edited && edited.where === 'Room 102', JSON.stringify(edited));
+  check('...and keeps everything else (still urgent)', edited && edited.urgent === true, JSON.stringify(edited));
+  await page.locator('.zone', { hasText: 'AC dripping water' }).first().locator('button:has-text("Edit")').click();
+  await page.waitForTimeout(300);
+  await page.locator('.zone input[placeholder="What is wrong"]').first().fill('something else');
+  await page.locator('.zone button:has-text("Cancel")').first().click();
+  await page.waitForTimeout(300);
+  const kept = await page.evaluate(() => state.maintenance.some((x) => x.what === 'AC dripping water'));
+  check('Cancel leaves it as it was', kept, '');
+  await page.evaluate(() => { const m = state.maintenance.find((x) => x.what === 'AC dripping water'); setMaint(m.id, { what: 'AC not cooling', where: 'Room 101' }); });
 
   console.log('\n\x1b[1mIt is not cleaning work\x1b[0m');
   const notCleaning = await page.evaluate(() => {
