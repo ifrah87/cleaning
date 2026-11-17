@@ -76,6 +76,18 @@
     background: #eef6fd; border: 1px solid #cfe8fb; border-radius: 8px; padding: 5px 10px;
   }
   .tb-btn:active { background: #dceefb; }
+  .tb-btn { white-space: nowrap; }
+  .hdr-short { display: none; }
+  /* PHONES. The top bar holds the menu, the day, the sync dot and the board's buttons on
+     one line: the long date, the sync words and the version stamp give way first, the
+     filter tabs share the width instead of running off the edge. */
+  @media (max-width: 560px) {
+    .hdr-long, .hdr-wide { display: none; }
+    .hdr-short { display: inline; }
+    .tb-btn { padding: 6px 8px; font-size: 12px; }
+    .bd-tab { min-width: 0; padding: 10px 4px; font-size: 12px; }
+    .bd-bar { flex-wrap: nowrap; gap: 6px; }
+  }
 
   /* THE SEARCH BOX SCROLLED AWAY WITH EVERYTHING ELSE. Sixty-six rooms is a long
      list, and the one control that makes it short sat at the very top of it — so
@@ -10931,17 +10943,19 @@ const NAV_GROUPS = [
   ['PEOPLE', [
     ['team', 'Team', '☺', 'Cleaners, teams, rota'],
   ]],
-  ['BUILDING', [
-    ['maintenance', 'Maintenance', '🔧', 'Repairs to be fixed'],
-  ]],
   ['REPORTS', [
     ['unitsreport', 'Units report', '≣', 'Every unit we clean'],
     ['teamrooms', 'Rooms by team', '☷', 'Who keeps which rooms'],
     ['history', 'Cleaning history', '◷', 'What was cleaned'],
   ]],
   ['SETTINGS', [
-    ['settings', 'Settings', '⚙', 'Switches and options'],
+    ['settings', 'Cleaning settings', '⚙', 'Switches for the cleaning'],
   ]],
+  // NOT CLEANING. Repairs are the building's, done by contractors — kept at the bottom,
+  // under their own heading, so the cleaning menu (and its settings) stays the cleaning's.
+  ['REPAIRS', [
+    ['maintenance', 'Maintenance', '🔧', 'Report and track repairs'],
+  ], 'MAINTENANCE'],
 ];
 // The board answers to three names; any of them lights the board tile.
 const navHere = (tab) => (tab === 'board' ? ['board', 'today', 'tick'] : [tab]).indexOf(state.tab) >= 0;
@@ -10949,9 +10963,15 @@ const navHere = (tab) => (tab === 'board' ? ['board', 'today', 'tick'] : [tab]).
 // number, and the hint text wrapped differently in every tile. A list reads top to
 // bottom, every row is the same height, and the whole row is the thing you tap.
 function navGrid(box, onPick) {
-  NAV_GROUPS.forEach(([label, items]) => {
-    box.appendChild(el(`<div style="font-size:11px;font-weight:800;letter-spacing:0.12em;color:#7f8ea3;`
+  const part = (txt, first) => el(`<div style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:800;`
+    + `letter-spacing:0.08em;color:#eaf1fb;margin:${first ? '10px' : '30px'} 2px 0;padding-top:${first ? '0' : '16px'};`
+    + `${first ? '' : 'border-top:2px solid #26395a;'}">${txt}</div>`);
+  box.appendChild(part('🧹 CLEANING', true));
+  NAV_GROUPS.forEach(([label, items, section]) => {
+    if (section === 'MAINTENANCE') { box.appendChild(part('🔧 MAINTENANCE', false)); }
+    else box.appendChild(el(`<div style="font-size:11px;font-weight:800;letter-spacing:0.12em;color:#7f8ea3;`
       + `margin:18px 4px 6px">${esc(label)}</div>`));
+    if (section === 'MAINTENANCE') box.appendChild(el('<div style="height:8px"></div>'));
     const list = el(`<div style="border-radius:12px;overflow:hidden;background:#16233a;border:1px solid #1e2f4d"></div>`);
     items.forEach(([tab, name, ico, hint], i) => {
       const here = navHere(tab);
@@ -14078,8 +14098,12 @@ function viewMaintenance() {
   const paintUrg = () => {
     normalB.classList.toggle('on', !_maintDraft.urgent);
     urgentB.classList.toggle('on', _maintDraft.urgent);
-    urgentB.style.background = _maintDraft.urgent ? '#dc2626' : '';
-    urgentB.style.borderColor = _maintDraft.urgent ? '#dc2626' : '';
+    urgentB.style.background = _maintDraft.urgent ? '#dc2626' : 'transparent';
+    urgentB.style.borderColor = _maintDraft.urgent ? '#dc2626' : '#3d557f';
+    urgentB.style.color = _maintDraft.urgent ? '#ffffff' : '#9fb3cc';
+    normalB.style.background = _maintDraft.urgent ? 'transparent' : '';
+    normalB.style.borderColor = _maintDraft.urgent ? '#3d557f' : '';
+    normalB.style.color = _maintDraft.urgent ? '#9fb3cc' : '';
   };
   normalB.onclick = () => { _maintDraft.urgent = false; paintUrg(); };
   urgentB.onclick = () => { _maintDraft.urgent = true; paintUrg(); };
@@ -17534,7 +17558,7 @@ function render() {
   const ROOMS_TITLE = { all: 'All Rooms', airbnb: 'Airbnb Rooms', office: 'Office Cleaning', building: 'Building Cleaning' };
   const titles = { board:'', setup:'Setup', more:'Setup', today:'', rollcall:'Morning set-up', tick:'',
     building:'Floors & Common Areas', exterior:'Exterior', history:'Cleaning History', unitsreport:'Units Report', teamrooms:'Rooms by Team', team:'Team',
-    settings:'Settings', plan:'Plan a Day', calendar:'Calendar', rooms: ROOMS_TITLE[roomsFilter()], tonight:'Tonight’s Round', maintenance:'Maintenance' };
+    settings:'Cleaning settings', plan:'Plan a Day', calendar:'Calendar', rooms: ROOMS_TITLE[roomsFilter()], tonight:'Tonight’s Round', maintenance:'Maintenance' };
   // A tab with no view renders an empty screen, so never trust it blindly.
   if (titles[state.tab] === undefined) state.tab = 'board';
   const onBoard = state.tab === 'board';
@@ -17552,17 +17576,22 @@ function render() {
     const bStr = _boardDay
       ? new Date(bDay + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
       : dateStr;
-    bar.appendChild(el(`<div style="min-width:0"><div style="font-size:15px;font-weight:800;`
-      + `color:${_boardDay ? '#fcd34d' : '#eaf1fb'}">${esc(bStr)}</div>`
-      + `<div style="font-size:12px;font-weight:700;color:#7f9abf">`
+    const bShort = new Date((_boardDay ? bDay : workToday()) + 'T00:00:00')
+      .toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+    bar.appendChild(el(`<div style="min-width:0"><div style="font-size:15px;font-weight:800;white-space:nowrap;`
+      + `color:${_boardDay ? '#fcd34d' : '#eaf1fb'}"><span class="hdr-long">${esc(bStr)}</span>`
+      + `<span class="hdr-short">${esc(bShort)}</span></div>`
+      + `<div style="font-size:12px;font-weight:700;color:#7f9abf;white-space:nowrap">`
       + (_boardDay
         ? `TOMORROW · ${c.all} planned`
         : `<b style="color:${c.all - c.done ? '#fbbf24' : '#22c55e'}">${c.all - c.done} left</b> · ${c.done} done`)
       + `</div></div>`));
   } else {
-    bar.appendChild(el(`<div style="min-width:0"><div style="font-size:15px;font-weight:800;color:#eaf1fb">`
-      + `${esc(titles[state.tab] || dateStr)}</div>`
-      + `<div style="font-size:12px;font-weight:700;color:#7f9abf">${esc(dateStr)}</div></div>`));
+    const shortDate = now.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+    bar.appendChild(el(`<div style="min-width:0"><div style="font-size:15px;font-weight:800;color:#eaf1fb;`
+      + `white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(titles[state.tab] || dateStr)}</div>`
+      + `<div style="font-size:12px;font-weight:700;color:#7f9abf;white-space:nowrap">`
+      + `<span class="hdr-long">${esc(dateStr)}</span><span class="hdr-short">${esc(shortDate)}</span></div></div>`));
   }
   bar.appendChild(el(`<div style="flex:1"></div>`));
   // IS THIS SCREEN TELLING ME THE TRUTH? A board nobody can tell is stale is worse than
@@ -17577,8 +17606,9 @@ function render() {
       : offlineMode ? ['#f59e0b', 'offline']
       : ['#22c55e', 'up to date'];
     const sync = el(`<div title="${esc(owed ? 'This device is holding a change it has not managed to send' : 'This device has the current board')}" `
-      + `style="display:flex;align-items:center;gap:5px;font-size:11px;font-weight:700;color:${dot[0]}">`
-      + `<span style="width:7px;height:7px;border-radius:4px;background:${dot[0]};display:inline-block"></span>${dot[1]}</div>`);
+      + `style="display:flex;align-items:center;gap:5px;margin-left:8px;font-size:11px;font-weight:700;color:${dot[0]}">`
+      + `<span style="width:7px;height:7px;border-radius:4px;background:${dot[0]};display:inline-block"></span>`
+      + `<span class="${owed > DEAF_LIMIT_MS || offlineMode ? '' : 'hdr-wide'}">${dot[1]}</span></div>`);
     bar.appendChild(sync);
     // WHICH CODE IS THIS SCREEN RUNNING? Nothing anywhere said. The dot above reports on
     // the DATA — whether this device is holding an unsent change — and says nothing about
@@ -17596,8 +17626,8 @@ function render() {
       if (!isNaN(lm.getTime())) {
         const v = lm.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
           + ' ' + lm.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-        bar.appendChild(el(`<div title="The version of the app this screen is running" `
-          + `style="font-size:11px;font-weight:700;color:#6f8ab0">app ${esc(v)}</div>`));
+        bar.appendChild(el(`<div class="hdr-wide" title="The version of the app this screen is running" `
+          + `style="font-size:11px;font-weight:700;color:#6f8ab0;white-space:nowrap">app ${esc(v)}</div>`));
       }
     } catch (e) {}
   }
