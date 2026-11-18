@@ -932,22 +932,24 @@
                     column-fill: balance; height: 100%; overflow: hidden; }
   .tv-cols.tv-hug > .tv-col { break-inside: avoid; margin-bottom: calc(1.2vw * var(--tvs)); overflow: visible; }
   .tv-cols.tv-hug > .tv-col .tv-body { overflow: visible; }
-  /* Board + repairs side by side. The grid keeps every bit of width the panel does not take. */
-  .tv-boardrow { flex: 1; min-height: 0; display: flex; gap: 1.2vw; }
-  .tv-boardrow > .tv-cols { min-width: 0; }
-  .tv-maint { flex: 0 0 17vw; min-height: 0; display: flex; flex-direction: column; gap: 0.8vh;
-              background: var(--tv-card); border-radius: 1vw; padding: 1.4vh 1vw; overflow: hidden; }
-  .tv-maint-hd { display: flex; justify-content: space-between; align-items: baseline;
-                 font-size: 1.15vw; font-weight: 800; letter-spacing: 0.12em; color: var(--tv-muted); }
-  .tv-maint-hd b { font-size: 2.2vw; letter-spacing: 0; line-height: 1; }
-  .tv-maint-urg { font-size: 1vw; font-weight: 800; letter-spacing: 0.1em; color: #ef4444; margin-top: -0.4vh; }
-  .tv-maint-list { display: flex; flex-direction: column; gap: 0.8vh; min-height: 0; overflow: hidden; }
-  .tv-maint-card { border-left: 0.4vw solid #f59e0b; background: rgba(245,158,11,0.10);
-                   border-radius: 0.6vw; padding: 0.7vh 0.8vw; }
+  /* Board with the repairs as one strip UNDER it. The side panel took 17vw off every
+     cleaner's column and squeezed the board; a strip costs a line or two of height and
+     the board's fit (tvFitColumns) shrinks to whatever is left. Nothing in the strip is
+     clipped: it wraps onto another line and the board gives up the height. */
+  .tv-boardrow { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 0.8vh; }
+  .tv-boardrow > .tv-cols { min-height: 0; }
+  .tv-maint { flex: 0 0 auto; display: flex; align-items: center; flex-wrap: wrap; gap: 0.5vh 0.6vw;
+              background: var(--tv-card); border-radius: 0.8vw; padding: 0.6vh 0.8vw; }
+  .tv-maint-hd { font-size: 0.95vw; font-weight: 800; letter-spacing: 0.12em; color: var(--tv-muted);
+                 white-space: nowrap; margin-right: 0.4vw; }
+  .tv-maint-hd b { font-size: 1.3vw; letter-spacing: 0; margin-left: 0.3vw; }
+  .tv-maint-hd .urg { color: #ef4444; margin-left: 0.5vw; }
+  .tv-maint-card { display: flex; align-items: baseline; gap: 0.4vw; border-left: 0.3vw solid #f59e0b;
+                   background: rgba(245,158,11,0.10); border-radius: 0.5vw; padding: 0.3vh 0.6vw; min-width: 0; }
   .tv-maint-card.urgent { border-left-color: #ef4444; background: rgba(239,68,68,0.14); }
-  .tv-maint-where { font-size: 0.95vw; font-weight: 800; letter-spacing: 0.1em; color: var(--tv-muted); }
-  .tv-maint-what { font-size: 1.2vw; font-weight: 800; line-height: 1.15; overflow-wrap: anywhere; }
-  .tv-maint-age { font-size: 0.95vw; font-weight: 700; color: #fbbf24; margin-top: 0.2vh; }
+  .tv-maint-where { font-size: 0.95vw; font-weight: 800; letter-spacing: 0.06em; color: var(--tv-fg); white-space: nowrap; }
+  .tv-maint-what { font-size: 0.95vw; font-weight: 700; overflow-wrap: anywhere; }
+  .tv-maint-age { font-size: 0.85vw; font-weight: 700; color: #fbbf24; white-space: nowrap; }
   .tv-maint-card.urgent .tv-maint-age { color: #fca5a5; }
   .tv-empty { font-size: 1.4vw; font-weight: 700; color: var(--tv-empty); padding: 1vh 0; }
   /* WHAT THE REMOTE DOES, ON THE SCREEN THAT THE REMOTE DRIVES. The keys have worked
@@ -16718,29 +16720,28 @@ function tvBoardWithRepairs(grid) {
   return row;
 }
 
-// THE REPAIRS, DOWN THE RIGHT OF THE BOARD. The cleaners' columns keep the left and
-// the middle; open repairs stand in a narrow panel beside them — urgent first and red,
-// the rest amber, oldest first — so nobody has to reach for the remote to know the AC
-// in 804 is still out. Gone entirely when nothing is open: the board is as it was.
-// The REPAIRS page on the remote is the full version, with contractors.
+// THE REPAIRS, ONE STRIP UNDER THE BOARD. They stood in a panel down the right, and
+// that panel took a sixth of the width from every cleaner's column — the board looked
+// crammed and shrank its names to fit. A strip along the bottom costs a line of height
+// instead, which the board's fit absorbs. Urgent first and red, the rest amber, oldest
+// first; every open repair is on it in full (it wraps, never clips), so nobody needs the
+// remote to know the AC in 804 is still out. Gone when nothing is open. The REPAIRS page
+// on the remote is the full version, with contractors.
 function tvMaintSide() {
   const open = maintOpen();
   if (!open.length) return null;
   const urgent = open.filter((m) => m.urgent).length;
   const side = el(`<div class="tv-maint"></div>`);
-  side.appendChild(el(`<div class="tv-maint-hd"><span>🔧 REPAIRS</span>`
-    + `<b style="color:${urgent ? '#ef4444' : '#f59e0b'}">${open.length}</b></div>`));
-  if (urgent) side.appendChild(el(`<div class="tv-maint-urg">${urgent} URGENT</div>`));
-  const list = el(`<div class="tv-maint-list"></div>`);
+  side.appendChild(el(`<div class="tv-maint-hd">🔧 REPAIRS<b style="color:${urgent ? '#ef4444' : '#f59e0b'}">${open.length}</b>`
+    + `${urgent ? `<span class="urg">${urgent} URGENT</span>` : ''}</div>`));
   open.forEach((m) => {
     const where = String(m.where || '').replace(/^room\s+/i, '');
     const card = el(`<div class="tv-maint-card${m.urgent ? ' urgent' : ''}"></div>`);
-    if (where) card.appendChild(el(`<div class="tv-maint-where">${esc(where.toUpperCase())}</div>`));
-    card.appendChild(el(`<div class="tv-maint-what">${esc(m.what)}</div>`));
-    card.appendChild(el(`<div class="tv-maint-age">${esc(maintAgeLabel(m))}</div>`));
-    list.appendChild(card);
+    if (where) card.appendChild(el(`<span class="tv-maint-where">${esc(where.toUpperCase())}</span>`));
+    card.appendChild(el(`<span class="tv-maint-what">${esc(m.what)}</span>`));
+    card.appendChild(el(`<span class="tv-maint-age">${esc(maintAgeLabel(m))}</span>`));
+    side.appendChild(card);
   });
-  side.appendChild(list);
   return side;
 }
 
