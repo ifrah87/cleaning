@@ -1980,6 +1980,71 @@ function recentRoomHolders(u, day) {
   }
   return w;
 }
+// ONCE A WEEK INSTEAD OF EVERY DAY. Ifrah, 20 Nov 2026, after five days of the daily
+// shuffle: "maybe we should shuffle once a week". Every day was a new set of rooms, so
+// nobody owned a room even for two days, and a crew that kept going to yesterday's rooms
+// left the board and the work disagreeing (604 on Mahad, cleaned by nobody, 19 Nov).
+// In week mode the rooms are dealt ONCE for the week that opens on Saturday, and each
+// day of that week hands every room to the same person — unless they are not in that
+// day, or it would put them over the early cap, when that day alone falls back to the
+// ordinary daily pick. A new Saturday deals the rooms again, away from last week's holder.
+//
+// The week's deal is STORED (dailyShuffle.weekMap), not recomputed: a crew that changes
+// on Tuesday must not rewrite who has which room on Wednesday. It is built once, by the
+// first device to lay out a day of that week, seeded by the week so two devices doing it
+// at once still agree.
+const shuffleWeekly = () => !!(state.dailyShuffle && state.dailyShuffle.mode === 'week');
+function shuffleWeekMap(day) {
+  const week = weekStartOf(day);
+  const ds = state.dailyShuffle || {};
+  const maps = ds.weekMaps || {};
+  if (maps[week]) return maps[week];
+  const days = []; for (let i = 0; i < 7; i += 1) days.push(shiftDay(week, i));
+  const crew = cleaningStaff().filter((p) => takesRooms(p) && p.isLeader && days.some((d) => worksOnDay(p, d)));
+  if (!crew.length) return {};
+  const ids = crew.map((p) => p.id);
+  const lastWeek = maps[shiftDay(week, -7)] || {};
+  const rooms = (state.servicedUnits || []).filter((u) => !u.paused && !isFixedRoom(u)
+    && !neverAutoDealt(u) && onRollCall(u));
+  const rnd = seededRandom('shuffle-week|' + week);
+  const tie = {}; ids.slice().sort().forEach((id) => { tie[id] = rnd(); });
+  const order = rooms.slice().sort((a, b) => String(a.id).localeCompare(String(b.id)))
+    .map((u) => ({ u, r: rnd(), e: timeSlot(u) === 'early' ? 0 : 1 }))
+    .sort((a, b) => (a.e - b.e) || (a.r - b.r)).map((x) => x.u);
+  const load = {}, early = {};
+  ids.forEach((id) => { load[id] = 0; early[id] = 0; });
+  // Fixed rooms count against their cleaner, so the rest is spread around them.
+  (state.servicedUnits || []).filter((u) => !u.paused && isFixedRoom(u) && load[u.usualTo] != null)
+    .forEach((u) => { load[u.usualTo] += 1; if (timeSlot(u) === 'early') early[u.usualTo] += 1; });
+  const CAP = earlyCap();
+  const map = {};
+  order.forEach((u) => {
+    const isEarly = timeSlot(u) === 'early';
+    const loose = { ...u, usualTo: null };
+    const able = ids.filter((id) => mayGiveRoomTo(loose, id, week) && (!isEarly || early[id] < CAP));
+    // Not last week's cleaner, and not the room's regular one either, if anybody else can.
+    const fresh = able.filter((id) => id !== lastWeek[u.id] && id !== u.usualTo);
+    const pool = fresh.length ? fresh : able;
+    const pick = pool.slice().sort((a, b) => (load[a] - load[b]) || (tie[a] - tie[b]))[0];
+    if (!pick) return;
+    map[u.id] = pick; load[pick] += 1; if (isEarly) early[pick] += 1;
+  });
+  // Only this week and last are kept: last week's is what the next deal steers away from.
+  const keep = {}; keep[shiftDay(week, -7)] = maps[shiftDay(week, -7)]; keep[week] = map;
+  Object.keys(keep).forEach((k) => { if (!keep[k]) delete keep[k]; });
+  state.dailyShuffle = { ...ds, weekMaps: keep };
+  return map;
+}
+function setShuffleMode(mode) {
+  const ds = state.dailyShuffle || {};
+  state.dailyShuffle = { ...ds, mode: mode === 'week' ? 'week' : 'day' };
+  // Days already laid out are dealt again under the new rule. Today is never touched.
+  if (dailyShuffleOn()) {
+    const today = workToday();
+    Object.keys(state.plans || {}).filter((d) => d > today).sort().forEach((d) => shuffleDay(d, true));
+  }
+  save(); render();
+}
 function shuffleDay(day, force) {
   if (TV_MODE || !dailyShuffleOn() || day <= workToday()) return 0;
   const plan = state.plans && state.plans[day];
@@ -2019,7 +2084,21 @@ function shuffleDay(day, force) {
   const order = open.slice().sort().map((k) => ({ k, r: rnd(), e: timeSlot(roomOf(k)) === 'early' ? 0 : 1 }))
     .sort((a, b) => (a.e - b.e) || (a.r - b.r)).map((x) => x.k);
   const CAP = earlyCap();
+  // WEEK MODE: the week's holder takes the room first, wherever they can. Only what they
+  // cannot take today (not in, or past the early cap) is dealt the daily way below.
+  const fromWeek = new Set();
+  const wm = shuffleWeekly() ? shuffleWeekMap(day) : null;
+  if (wm) {
+    order.forEach((k) => {
+      const u = roomOf(k), j = plan[k], id = wm[u.id];
+      if (!id || !inCrew.has(id)) return;
+      if (timeSlot(u) === 'early' && early[id] >= CAP) return;
+      if (!mayGiveRoomTo({ ...u, usualTo: null }, id, day)) return;
+      j.shuffled = true; j.assignedTo = id; j.byHand = true; count(k, id); fromWeek.add(k);
+    });
+  }
   order.forEach((k) => {
+    if (fromWeek.has(k)) return;
     const u = roomOf(k), j = plan[k];
     const isEarly = timeSlot(u) === 'early';
     const recent = recentRoomHolders(u, day);
@@ -2033,6 +2112,8 @@ function shuffleDay(day, force) {
     const pick = pool.slice().sort((a, b) => (load[a] - load[b])
       || ((recent[a] || 0) - (recent[b] || 0)) || (tie[a] - tie[b]))[0];
     j.shuffled = true;
+    // A room the week's deal never saw (added mid-week) keeps whoever it gets first.
+    if (pick && wm && !wm[u.id]) wm[u.id] = pick;
     if (pick) { j.assignedTo = pick; j.byHand = true; count(k, pick); }
     else { j.assignedTo = null; delete j.byHand; }           // nobody can take it: NOBODY YET
   });
@@ -2048,6 +2129,7 @@ function shuffleDay(day, force) {
     for (const from of ranked.slice().reverse()) {
       if (load[from] - load[lo] <= 1) break;
       const k = order.find((x) => {
+        if (fromWeek.has(x)) return false;          // the week's holder keeps it
         if (plan[x].assignedTo !== from) return false;
         const u = roomOf(x);
         // Levelling may hand back a room somebody had two or three days ago; never yesterday's.
@@ -14987,11 +15069,13 @@ function viewTeam() {
   // tick on the Rooms page is the only other setting.
   if (cleaners) {
     const box = el('<div style="margin-bottom:14px"></div>');
-    box.appendChild(el(`<div class="section-label">Rooms — shuffled every day</div>`));
+    const weekly = shuffleWeekly();
+    box.appendChild(el(`<div class="section-label">Rooms — shuffled ${weekly ? 'every Saturday' : 'every day'}</div>`));
     const on = dailyShuffleOn();
     const tog = el(`<button class="add-btn" style="background:${on ? '#15803d' : '#101c30'};`
       + `color:${on ? '#ffffff' : '#7ea6dc'};border:1px solid ${on ? '#15803d' : '#3d557f'}">`
-      + (on ? '🔀 Rooms shuffled daily — ON' : '🔀 Shuffle the rooms every day — OFF') + `</button>`);
+      + (on ? (weekly ? '🔀 Rooms shuffled weekly — ON' : '🔀 Rooms shuffled daily — ON')
+        : '🔀 Shuffle the rooms — OFF') + `</button>`);
     tog.onclick = () => {
       if (on) {
         showConfirm('Stop shuffling the rooms?',
@@ -15008,6 +15092,30 @@ function viewTeam() {
       }
     };
     box.appendChild(tog);
+    // HOW OFTEN. Every day was the first version; once a week keeps the same rooms with
+    // the same person from Saturday to Thursday and deals them again each Saturday.
+    if (on) {
+      const row = el('<div style="display:flex;gap:8px;margin-top:8px"></div>');
+      [['day', 'Every day'], ['week', 'Once a week (Saturday)']].forEach(([m, label]) => {
+        const cur = (m === 'week') === weekly;
+        const b = el(`<button class="add-btn" style="flex:1;margin:0;background:${cur ? '#1d4ed8' : '#101c30'};`
+          + `color:${cur ? '#ffffff' : '#7ea6dc'};border:1px solid ${cur ? '#1d4ed8' : '#3d557f'}">`
+          + (cur ? '✓ ' : '') + label + `</button>`);
+        if (!cur) {
+          b.onclick = () => showConfirm(m === 'week' ? 'Shuffle once a week?' : 'Shuffle every day?',
+            m === 'week'
+              ? 'Each Saturday the rooms are dealt out fresh, and every person keeps the same rooms '
+                + 'until the next Saturday — away from whoever had them the week before.\n\n'
+                + 'If somebody is not in on a day, just that day their rooms go to whoever is.\n\n'
+                + '📌 Fixed rooms and rooms you moved by hand stay put. Today is not changed.'
+              : 'Every day the rooms are dealt out fresh, so nobody gets a room they had in the last '
+                + SHUFFLE_LOOKBACK + ' days.\n\nToday is not changed.',
+            () => setShuffleMode(m), 'Change', 'safe');
+        }
+        row.appendChild(b);
+      });
+      box.appendChild(row);
+    }
     const fixed = (state.servicedUnits || []).filter((u) => u.fixed && !u.paused)
       .map((u) => String(u.unit)).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
     box.appendChild(el(`<div style="font-size:12px;font-weight:700;color:#b7c8de;background:#101c30;`
