@@ -7261,7 +7261,16 @@ function toggleServicedDone(id) {
   if (!state.logRefs) state.logRefs = {};
   if (!state.lastCleanUndo) state.lastCleanUndo = {};
   if (!state.untick) state.untick = {};
-  if (state.completions[k]) {
+  // A ROOM THAT SHOWS ✓ MUST UNTICK ON A TAP. The board calls a room cleaned when it is
+  // ticked OR its own last-cleaned date is today (cleanedToday). This used to look at the
+  // tick alone, and only put the date back from an undo record kept on THE DEVICE THAT
+  // TICKED IT. Ticked on a phone, a tick merged in from elsewhere, or a date stamped by
+  // Record a past day: the laptop had no undo, the date stayed today, the room stayed
+  // green, and every tap ticked/unticked underneath it with nothing changing on screen.
+  // 21 Nov: 403 stuck green on Mahad, who had not even badged in — so it could not be
+  // unticked, and being "cleaned" it could not be moved either.
+  const day = workToday();
+  if (state.completions[k] || (unit && lastCleanDate(unit) === day)) {
     // Un-mark: clear the checkmark and remove the history entry we created for it.
     delete state.completions[k];
     // AND LEAVE A HEADSTONE. Ticks now merge across devices rather than being
@@ -7278,6 +7287,28 @@ function toggleServicedDone(id) {
       unit.lastCleanedBy = undo.by || null;
       unit.lastCleanedByName = undo.byName || null;
       delete state.lastCleanUndo[k];
+    }
+    if (unit) {
+      // NO UNDO HERE, OR AN UNDO THAT WAS ITSELF TODAY: the room still claims today.
+      // Everything the history log has for this room inside today's work day (3am to
+      // 3am, not the calendar day) is what the tap is taking back, and the newest clean
+      // before it is the true last clean.
+      const start = new Date(day + 'T00:00:00'); start.setHours(WORKDAY_CUTOFF_HOUR);
+      const end = new Date(start); end.setDate(end.getDate() + 1);
+      const inDay = (r) => { const t = new Date(r.cleaned_at); return t >= start && t < end; };
+      const rows = (cleaningHistory || []).filter((r) => r.unit_id === unit.id);
+      rows.filter(inDay).forEach((r) => { if (r.id !== ref) unlogClean(r.id); });
+      if ((unit.lastCleaned || '') >= day) {
+        const prev = rows.find((r) => new Date(r.cleaned_at) < start);   // newest first
+        unit.lastCleaned = prev ? dayKeyLocal(prev.cleaned_at) : null;
+        unit.lastCleanedBy = prev ? (prev.cleaner_id || null) : null;
+        unit.lastCleanedByName = prev ? (prev.cleaner_name || null) : null;
+      }
+      // The log row is gone from the server but this device's copy still has it until
+      // the refresh lands; drop it now so lastCleanDate does not read today back off it.
+      cleaningHistory = (cleaningHistory || []).filter((r) => !(r.unit_id === unit.id && inDay(r)));
+      const newest = cleaningHistory.find((r) => r.unit_id === unit.id);
+      if (newest) lastCleanedByUnit[unit.id] = newest; else delete lastCleanedByUnit[unit.id];
     }
     save(); render();
   } else {
